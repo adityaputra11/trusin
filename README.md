@@ -19,6 +19,19 @@
 - **ngrok optional** — auto-starts tunnel when backend is remote
 - **MCP server** — AI agent integration via stdio JSON-RPC
 
+## Requirements
+
+| Resource | Minimum | Recommended |
+|----------|---------|-------------|
+| CPU | 1 core | 2 cores |
+| RAM | 256 MB | 512 MB |
+| Storage | 100 MB | 1 GB |
+| Postgres | 14+ | 16+ |
+| Redis | 6+ | 7+ |
+| Rust | 1.85+ | latest |
+
+**Binary sizes (release):** backend 8.7MB, web 7.6MB, CLI 4.4MB, MCP 3.5MB
+
 ## Quick start
 
 ```sh
