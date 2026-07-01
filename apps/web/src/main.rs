@@ -155,12 +155,16 @@ fn dashboard_html(ev: &[Option<WebhookEvent>], ngrok: Option<&str>, user: Option
 <td class="py-2.5 px-3 text-sm text-gray-400">{}</td></tr>"#,
         e.id, &e.id.to_string()[..8], e.source, badge(&e.status), e.status, e.retry_count, e.max_retries, e.created_at.format("%m/%d %H:%M"))).collect();
 
+    let public_url = std::env::var("PUBLIC_URL").unwrap_or_else(|_| "https://terusin-dev.my.id".to_string());
     let url_box = match ngrok {
         Some(u) => format!(r#"<div class="bg-emerald-50 border border-emerald-200 rounded-lg p-3 mb-5 flex items-center gap-3 text-sm"><span class="text-emerald-700 font-medium shrink-0">Webhook URL</span>
 <div class="flex-1 flex items-center gap-1 bg-white border border-emerald-300 rounded px-2 py-1"><input id="u" type="password" readonly value="{u}" class="flex-1 text-xs font-mono text-emerald-900 outline-none bg-transparent"/>
 <button onclick="var i=document.getElementById('u');i.type=i.type=='password'?'text':'password'" class="text-gray-400 hover:text-gray-600 shrink-0 text-sm">👁</button></div>
 <button onclick="navigator.clipboard.writeText(document.getElementById('u').value)" class="bg-emerald-600 text-white px-3 py-1.5 rounded text-xs hover:bg-emerald-700 shrink-0">Copy</button></div>"#),
-        None => r#"<div class="bg-amber-50 border border-amber-200 rounded-lg p-3 mb-5 text-sm text-amber-800">Ngrok gak jalan.</div>"#.to_string(),
+        None => format!(r#"<div class="bg-emerald-50 border border-emerald-200 rounded-lg p-3 mb-5 flex items-center gap-3 text-sm"><span class="text-emerald-700 font-medium shrink-0">Endpoint</span>
+<div class="flex-1 flex items-center gap-1 bg-white border border-emerald-300 rounded px-2 py-1"><input id="u" type="password" readonly value="{public_url}/{{source}}" class="flex-1 text-xs font-mono text-emerald-900 outline-none bg-transparent"/>
+<button onclick="var i=document.getElementById('u');i.type=i.type=='password'?'text':'password'" class="text-gray-400 hover:text-gray-600 shrink-0 text-sm">👁</button></div>
+<button onclick="navigator.clipboard.writeText(document.getElementById('u').value)" class="bg-emerald-600 text-white px-3 py-1.5 rounded text-xs hover:bg-emerald-700 shrink-0">Copy</button></div>"#),
     };
 
     let search_bar = format!(r#"<form class="flex flex-wrap gap-2 mb-4 items-end"><div class="flex-1 min-w-[150px]"><label class="text-xs text-gray-400 block mb-1">Search</label><input name="search" placeholder="source, target, body..." class="border rounded px-2.5 py-1.5 text-sm w-full" value=""/></div>
@@ -381,8 +385,6 @@ async fn main() {
         std::env::var("BACKEND_URL").unwrap_or_else(|_| format!("http://localhost:{}", std::env::var("BACKEND_PORT").unwrap_or_else(|_| "3001".to_string()))),
     );
     let port = std::env::var("WEB_PORT").or_else(|_| std::env::var("PORT")).unwrap_or_else(|_| "3002".to_string()).parse::<u16>().unwrap_or(3002);
-
-    tokio::process::Command::new(&ngrok_bin).args(["http", &backend_port, "--log", "stdout"]).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).spawn().ok();
 
     let db = PgPoolOptions::new().max_connections(5).connect(&db_url).await.expect("db");
     seed_default_user(&db).await;
