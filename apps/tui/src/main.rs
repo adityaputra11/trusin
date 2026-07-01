@@ -52,19 +52,7 @@ fn load_config() -> Config {
             return c;
         }
     }
-    // ponytail: first run — prompt for backend URL like create-expo-app
-    let default = Config::default();
-    print!(" Backend URL [{}]: ", default.backend);
-    io::stdout().flush().ok();
-    let mut input = String::new();
-    io::stdin().read_line(&mut input).ok();
-    let backend = input.trim();
-    let c = Config {
-        backend: if backend.is_empty() { default.backend } else { backend.to_string() },
-        ..default
-    };
-    save_config(&c);
-    c
+    Config::default()
 }
 
 fn save_config(c: &Config) {
@@ -158,14 +146,60 @@ async fn main() {
     match cli.command {
         Commands::Login { user, password, backend, web } => {
             let mut c = cfg;
-            if let Some(u) = user { c.user = u; }
-            if let Some(p) = password { c.password = p; }
+
+            let default = Config::default();
             if let Some(b) = backend { c.backend = b; }
             if let Some(w) = web { c.web = w; }
-            save_config(&c);
-            println!(" Saved to {}", config_path().display());
-            open::that(&c.web).ok();
-            println!(" Opening {}", c.web);
+
+            if user.is_none() || password.is_none() {
+                println!(" Login to {}", c.backend);
+            }
+            if let Some(u) = user { c.user = u; }
+            if c.user.is_empty() {
+                print!(" Username [{}]: ", default.user);
+                io::stdout().flush().ok();
+                let mut input = String::new();
+                io::stdin().read_line(&mut input).ok();
+                let u = input.trim();
+                c.user = if u.is_empty() { default.user.clone() } else { u.to_string() };
+            }
+            if let Some(p) = password { c.password = p; }
+            if c.password.is_empty() {
+                print!(" Password: ");
+                io::stdout().flush().ok();
+                let mut input = String::new();
+                io::stdin().read_line(&mut input).ok();
+                let p = input.trim();
+                c.password = if p.is_empty() { default.password.clone() } else { p.to_string() };
+            }
+
+            // verify credentials
+            let test = Client::builder()
+                .default_headers({
+                    let mut h = reqwest::header::HeaderMap::new();
+                    let b = base64::engine::general_purpose::STANDARD.encode(format!("{}:{}", c.user, c.password));
+                    h.insert(reqwest::header::AUTHORIZATION, format!("Basic {b}").parse().unwrap());
+                    h
+                })
+                .build().unwrap()
+                .get(format!("{}/events", c.backend))
+                .send()
+                .await;
+
+            match test {
+                Ok(r) if r.status().is_success() => {
+                    save_config(&c);
+                    println!(" Saved to {}", config_path().display());
+                    open::that(&c.web).ok();
+                    println!(" Opening {}", c.web);
+                }
+                Ok(_) => {
+                    eprintln!(" Login gagal — credential ditolak di {}", c.backend);
+                }
+                Err(e) => {
+                    eprintln!(" Gagal connect ke {}: {e}", c.backend);
+                }
+            }
         }
         Commands::Forward { port, url } => {
             let target = if let Some(u) = url {
