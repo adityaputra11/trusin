@@ -14,7 +14,11 @@ detect_platform() {
     aarch64|arm64) arch="aarch64" ;;
     *) echo "Unsupported arch: $arch"; exit 1 ;;
   esac
-  echo "${arch}-${os}-unknown-linux-gnu"
+  case "$os" in
+    darwin) echo "${arch}-apple-darwin" ;;
+    linux) echo "${arch}-unknown-linux-gnu" ;;
+    *) echo "Unsupported OS: $os"; exit 1 ;;
+  esac
 }
 
 main() {
