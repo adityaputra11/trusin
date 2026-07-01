@@ -65,6 +65,7 @@ jobs:
           port: ${{ secrets.SSH_PORT || '22' }}
           script: |
             chmod +x /opt/terusin/bin/*
+            sudo cp /opt/terusin/terusin-*.service /etc/systemd/system/
             sudo systemctl daemon-reload
             sudo systemctl enable terusin-backend terusin-web
             sudo systemctl restart terusin-backend terusin-web
