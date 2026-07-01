@@ -66,6 +66,17 @@ jobs:
           script: |
             chmod +x /opt/terusin/bin/*
             sudo cp /opt/terusin/terusin-*.service /etc/systemd/system/
+            cat > /opt/terusin/.env << EOF
+DATABASE_URL=postgres://postgres:${{ secrets.DB_PASSWORD }}@localhost:5432/terusin
+REDIS_URL=redis://localhost:6379
+BACKEND_URL=http://localhost:3011
+BACKEND_PORT=3011
+WEB_PORT=3012
+AUTH_USERNAME=${{ secrets.AUTH_USERNAME }}
+AUTH_PASSWORD=${{ secrets.AUTH_PASSWORD }}
+MAX_RETRIES=5
+WORKER_COUNT=4
+EOF
             sudo systemctl daemon-reload
             sudo systemctl enable terusin-backend terusin-web
             sudo systemctl restart terusin-backend terusin-web
