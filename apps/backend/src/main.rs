@@ -548,8 +548,11 @@ async fn ack_event(
         .bind(id)
         .execute(&state.db)
         .await
-        .map(|r| if r.rows_affected() > 0 { StatusCode::OK } else { StatusCode::NOT_FOUND })
-        .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR)
+        .ok();
+    let mut conn = state.redis.clone();
+    redis::cmd("LREM").arg(QUEUE_KEY).arg(0).arg(id.to_string()).query_async::<()>(&mut conn).await.ok();
+    redis::cmd("ZREM").arg(RETRY_KEY).arg(id.to_string()).query_async::<()>(&mut conn).await.ok();
+    StatusCode::OK
 }
 
 async fn list_rules(
