@@ -12,6 +12,12 @@ struct Config {
     user: String,
     password: String,
     backend: String,
+    #[serde(default = "default_web")]
+    web: String,
+}
+
+fn default_web() -> String {
+    WEB.to_string()
 }
 
 impl Default for Config {
@@ -20,6 +26,7 @@ impl Default for Config {
             user: "admin".into(),
             password: "change-me-in-production".into(),
             backend: BACKEND.into(),
+            web: WEB.into(),
         }
     }
 }
@@ -73,6 +80,8 @@ enum Commands {
         password: Option<String>,
         #[arg(short, long)]
         backend: Option<String>,
+        #[arg(long)]
+        web: Option<String>,
     },
     /// Forward webhooks to a local port
     Forward {
@@ -120,15 +129,16 @@ async fn main() {
     let auth = auth_client(&cfg);
 
     match cli.command {
-        Commands::Login { user, password, backend } => {
+        Commands::Login { user, password, backend, web } => {
             let mut c = cfg;
             if let Some(u) = user { c.user = u; }
             if let Some(p) = password { c.password = p; }
             if let Some(b) = backend { c.backend = b; }
+            if let Some(w) = web { c.web = w; }
             save_config(&c);
             println!(" Saved to {}", config_path().display());
-            open::that(WEB).ok();
-            println!(" Opening {WEB}");
+            open::that(&c.web).ok();
+            println!(" Opening {}", c.web);
         }
         Commands::Forward { port, url } => {
             let target = if let Some(u) = url {
@@ -200,8 +210,8 @@ async fn main() {
             }
         }
         Commands::Dashboard => {
-            open::that(WEB).ok();
-            println!(" Opening {WEB}");
+            open::that(&cfg.web).ok();
+            println!(" Opening {}", cfg.web);
         }
         Commands::Status => {
             let fwd = client
@@ -216,7 +226,7 @@ async fn main() {
                     println!(" Target:  {}", if c.default_target.is_empty() { "-" } else { &c.default_target });
                     println!(" User:    {}", cfg.user);
                     println!(" Backend: {}", cfg.backend);
-                    println!(" Web:     {WEB}");
+                    println!(" Web:     {}", cfg.web);
                     println!(" Config:  {}", config_path().display());
                 }
                 Err(e) => eprintln!("Error: {e}"),
