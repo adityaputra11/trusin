@@ -1,0 +1,57 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: terusin
+      POSTGRES_PASSWORD: terusin
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+
+  backend:
+    build: .
+    command: backend
+    ports:
+      - "3011:3011"
+    environment:
+      DATABASE_URL: postgres://postgres:terusin@postgres:5432/terusin
+      REDIS_URL: redis://redis:6379
+      PORT: "3011"
+      AUTH_USERNAME: ${AUTH_USERNAME:-admin}
+      AUTH_PASSWORD: ${AUTH_PASSWORD:-terusin123}
+      MAX_RETRIES: "5"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  web:
+    build: .
+    command: web
+    ports:
+      - "3012:3012"
+    environment:
+      DATABASE_URL: postgres://postgres:terusin@postgres:5432/terusin
+      BACKEND_URL: http://backend:3011
+      PORT: "3012"
+      AUTH_USERNAME: ${AUTH_USERNAME:-admin}
+      AUTH_PASSWORD: ${AUTH_PASSWORD:-terusin123}
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  pgdata:
