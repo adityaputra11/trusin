@@ -43,9 +43,21 @@ jobs:
           name: binaries
           path: binaries
 
-      - run: mkdir -p deploy/bin
-      - run: cp binaries/backend binaries/web deploy/bin/
-      - run: cp -r apps/backend/migrations deploy/
+      - run: |
+          mkdir -p deploy/bin
+          cp binaries/backend binaries/web deploy/bin/
+          cp -r apps/backend/migrations deploy/
+          cat > deploy/.env << EOF
+DATABASE_URL=${{ secrets.DATABASE_URL }}
+REDIS_URL=${{ secrets.REDIS_URL }}
+BACKEND_URL=http://localhost:3011
+BACKEND_PORT=3011
+WEB_PORT=3012
+AUTH_USERNAME=${{ secrets.AUTH_USERNAME }}
+AUTH_PASSWORD=${{ secrets.AUTH_PASSWORD }}
+MAX_RETRIES=5
+WORKER_COUNT=4
+EOF
 
       - uses: appleboy/scp-action@v0.1.7
         with:
@@ -64,19 +76,7 @@ jobs:
           key: ${{ secrets.SSH_KEY }}
           port: ${{ secrets.SSH_PORT || '22' }}
           script: |
-            chmod +x /opt/terusin/bin/*
             sudo cp /opt/terusin/terusin-*.service /etc/systemd/system/
-            cat > /opt/terusin/.env << EOF
-DATABASE_URL=${{ secrets.DATABASE_URL }}
-REDIS_URL=${{ secrets.REDIS_URL }}
-BACKEND_URL=http://localhost:3011
-BACKEND_PORT=3011
-WEB_PORT=3012
-AUTH_USERNAME=${{ secrets.AUTH_USERNAME }}
-AUTH_PASSWORD=${{ secrets.AUTH_PASSWORD }}
-MAX_RETRIES=5
-WORKER_COUNT=4
-EOF
             sudo systemctl daemon-reload
             sudo systemctl enable terusin-backend terusin-web
             sudo systemctl restart terusin-backend terusin-web
