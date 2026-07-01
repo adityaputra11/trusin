@@ -1,0 +1,56 @@
+app = "terusin"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[[services]]
+  name = "backend"
+  internal_port = 3011
+  protocol = "tcp"
+
+  [[services.ports]]
+    handlers = ["http"]
+    port = 80
+    force_https = true
+
+  [[env]]
+    key = "PORT"
+    value = "3011"
+  [[env]]
+    key = "DATABASE_URL"
+    value = "postgres://postgres:terusin@terusin-db.internal:5432/terusin"
+  [[env]]
+    key = "REDIS_URL"
+    value = "redis://terusin-redis.internal:6379"
+  [[env]]
+    key = "AUTH_USERNAME"
+    value = "admin"
+  [[env]]
+    key = "AUTH_PASSWORD"
+    value = "terusin123"
+  [[env]]
+    key = "WORKER_COUNT"
+    value = "4"
+
+[[services]]
+  name = "web"
+  internal_port = 3012
+  protocol = "tcp"
+
+  [[services.ports]]
+    handlers = ["http"]
+    port = 8080
+    force_https = true
+
+  [[env]]
+    key = "PORT"
+    value = "3012"
+  [[env]]
+    key = "BACKEND_URL"
+    value = "http://backend:3011"
+  [[env]]
+    key = "AUTH_USERNAME"
+    value = "admin"
+  [[env]]
+    key = "AUTH_PASSWORD"
+    value = "terusin123"

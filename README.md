@@ -1,9 +1,14 @@
 <div align="center">
   <h1>Terusin</h1>
-  <p>Self-hosted webhook relay with queue, retry, and dashboard.</p>
+  <p><strong>Terusin</strong> (Indonesian: <em>"forward it"</em>) — self-hosted webhook relay.</p>
+  <p>Receive webhooks from any provider (Midtrans, Stripe, Resend, GitHub, etc.)<br>
+  and forward them to your local services or any HTTP endpoint.</p>
+  <p>Built with Rust. Powered by Redis queue & Postgres.<br>
+  3,990 req/s throughput. Zero errors.</p>
   <p>
     <a href="ARCHITECTURE.md">Architecture</a> ·
-    <a href="LICENSE">Apache 2.0</a>
+    <a href="LICENSE">Apache 2.0</a> ·
+    <a href="https://github.com/adityaputra11/terusin">GitHub</a>
   </p>
 </div>
 
