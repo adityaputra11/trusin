@@ -35,11 +35,6 @@ jobs:
   deploy:
     needs: build
     runs-on: ubuntu-latest
-    env:
-      _DB: ${{ secrets.DATABASE_URL }}
-      _RD: ${{ secrets.REDIS_URL }}
-      _AU: ${{ secrets.AUTH_USERNAME }}
-      _AP: ${{ secrets.AUTH_PASSWORD }}
     steps:
       - uses: actions/checkout@v4
 
@@ -48,21 +43,21 @@ jobs:
           name: binaries
           path: binaries
 
-      - run: |
-          mkdir -p deploy/bin
-          cp binaries/backend binaries/web deploy/bin/
-          cp -r apps/backend/migrations deploy/
-          cat > deploy/.env << EOF
-DATABASE_URL=$_DB
-REDIS_URL=$_RD
-BACKEND_URL=http://localhost:3011
-BACKEND_PORT=3011
-WEB_PORT=3012
-AUTH_USERNAME=$_AU
-AUTH_PASSWORD=$_AP
-MAX_RETRIES=5
-WORKER_COUNT=4
-EOF
+      - run: mkdir -p deploy/bin binaries/backend binaries/web deploy/bin/
+
+      - run: cp binaries/backend deploy/bin/
+      - run: cp binaries/web deploy/bin/
+      - run: cp -r apps/backend/migrations deploy/
+
+      - run: echo "DATABASE_URL=${{ secrets.DATABASE_URL }}" > deploy/.env
+      - run: echo "REDIS_URL=${{ secrets.REDIS_URL }}" >> deploy/.env
+      - run: echo "BACKEND_URL=http://localhost:3011" >> deploy/.env
+      - run: echo "BACKEND_PORT=3011" >> deploy/.env
+      - run: echo "WEB_PORT=3012" >> deploy/.env
+      - run: echo "AUTH_USERNAME=${{ secrets.AUTH_USERNAME }}" >> deploy/.env
+      - run: echo "AUTH_PASSWORD=${{ secrets.AUTH_PASSWORD }}" >> deploy/.env
+      - run: echo "MAX_RETRIES=5" >> deploy/.env
+      - run: echo "WORKER_COUNT=4" >> deploy/.env
 
       - uses: appleboy/scp-action@v0.1.7
         with:
