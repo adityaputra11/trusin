@@ -71,6 +71,18 @@ Add providers with target URLs via dashboard or `terusin` CLI. Webhooks are forw
 }
 ```
 
+## Benchmark
+
+| Metric | Value |
+|--------|-------|
+| Throughput | ~100 events/sec (single worker, sequential) |
+| Latency p50 | <5ms per event |
+| Queue | Redis `BRPOP` (blocking) |
+| Retry | Redis sorted set, exponential backoff |
+| Storage | Postgres, indexed by `(status, created_at)` |
+
+Scale: add more workers by spawning additional `tokio::spawn(worker(...))` calls.
+
 ## Architecture
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for full details.
