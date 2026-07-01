@@ -1,0 +1,15 @@
+[Unit]
+Description=Terusin Web
+After=network.target terusin-backend.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/terusin
+EnvironmentFile=/opt/terusin/.env
+ExecStart=/opt/terusin/bin/web
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
