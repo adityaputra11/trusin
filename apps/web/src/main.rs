@@ -57,7 +57,7 @@ fn unauth() -> Response {
 fn backend_client(state: &AppState) -> reqwest::Client {
     let mut h = reqwest::header::HeaderMap::new();
     h.insert(reqwest::header::AUTHORIZATION, format!("Basic {}", state.backend_auth).parse().unwrap());
-    reqwest::Client::builder().default_headers(h).build().unwrap()
+    reqwest::Client::builder().default_headers(h).timeout(std::time::Duration::from_secs(5)).build().unwrap()
 }
 
 async fn auth_middleware(State(state): State<Arc<AppState>>, req: Request<Body>, next: Next) -> Result<Response, Response> {
@@ -229,7 +229,7 @@ async fn retry_event(State(state): State<Arc<AppState>>, Path(id): Path<uuid::Uu
 async fn providers_page(State(state): State<Arc<AppState>>, req: Request<Body>) -> Result<Html<String>, StatusCode> {
     let ngrok = state.ngrok_url.lock().await.clone();
     let url = ngrok.as_deref().unwrap_or("https://your-host");
-    let rules: Vec<serde_json::Value> = match backend_client(&state).get(format!("{}/rules", state.backend_url)).send().await { Ok(r) => r.json().await.unwrap_or_default(), Err(_) => vec![] };
+    let rules: Vec<serde_json::Value> = match backend_client(&state).get(format!("{}/rules", state.backend_url)).send().await { Ok(r) => r.json().await.unwrap_or_default(), Err(e) => { tracing::warn!("providers_page: {e}"); vec![] } };
 
     let mut rows = String::new();
     for r in &rules {
@@ -265,11 +265,13 @@ async fn providers_page(State(state): State<Arc<AppState>>, req: Request<Body>) 
 async fn create_provider(State(state): State<Arc<AppState>>, axum::extract::Form(form): axum::extract::Form<std::collections::HashMap<String, String>>) -> Result<Html<String>, StatusCode> {
     let name = form.get("name").map(|s| s.trim()).filter(|s| !s.is_empty()).unwrap_or("");
     let target = form.get("target_url").map(|s| s.trim()).unwrap_or("");
-    let existing: Vec<serde_json::Value> = match backend_client(&state).get(format!("{}/rules", state.backend_url)).send().await { Ok(r) => r.json().await.unwrap_or_default(), Err(_) => vec![] };
+    let existing: Vec<serde_json::Value> = match backend_client(&state).get(format!("{}/rules", state.backend_url)).send().await { Ok(r) => r.json().await.unwrap_or_default(), Err(e) => { tracing::warn!("create_provider: get rules: {e}"); vec![] } };
     if existing.iter().any(|r| r["name"].as_str() == Some(name)) {
         return Ok(Html(format!(r#"<!DOCTYPE html><html><head><meta http-equiv="refresh" content="2;url=/providers"></head><body class="flex items-center justify-center min-h-screen bg-gray-50"><div class="text-center"><p class="text-red-600 font-medium">"{name}" already exists</p><a href="/providers" class="text-blue-600 text-sm mt-2 inline-block">Back</a></div></body></html>"#)));
     }
-    backend_client(&state).post(format!("{}/rules", state.backend_url)).json(&serde_json::json!({"name": name, "source_pattern": name, "target_url": target})).send().await.ok();
+    if let Err(e) = backend_client(&state).post(format!("{}/rules", state.backend_url)).json(&serde_json::json!({"name": name, "source_pattern": name, "target_url": target})).send().await {
+        tracing::warn!("create_provider: {e}");
+    }
     Ok(Html(r#"<!DOCTYPE html><html><head><meta http-equiv="refresh" content="0;url=/providers"></head><body></body></html>"#.to_string()))
 }
 
