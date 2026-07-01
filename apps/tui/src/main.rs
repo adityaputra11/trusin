@@ -218,8 +218,8 @@ async fn main() {
             }
         }
         Commands::Listen { port, interval } => {
-            let local = format!("http://127.0.0.1:{port}");
-            println!(" Listening: polling {}/events → {local}", cfg.backend);
+            let fallback = format!("http://127.0.0.1:{port}");
+            println!(" Listening: polling {}/events", cfg.backend);
             let mut seen = HashSet::new();
             loop {
                 let resp = auth.get(format!("{}/events", cfg.backend)).send().await;
@@ -231,10 +231,11 @@ async fn main() {
                         if id.is_empty() || !seen.insert(id.clone()) { continue; }
                         let body = e["body"].clone();
                         if body.is_null() { continue; }
-                        let s = Client::new().post(&local).json(&body).send().await;
-                        match s {
-                            Ok(_) => println!("  Fwd {} → {local} OK", &id[..8]),
-                            Err(e) => println!("  Fwd {} → {local} ERR: {e}", &id[..8]),
+                        let target = e["target_url"].as_str().unwrap_or("").to_string();
+                        let url = if target.is_empty() || !target.starts_with("http") { fallback.clone() } else { target };
+                        match Client::new().post(&url).json(&body).send().await {
+                            Ok(_) => println!("  {} → {}", &id[..8], url),
+                            Err(e) => println!("  {} → {} ERR: {e}", &id[..8], url),
                         }
                     }
                 }
