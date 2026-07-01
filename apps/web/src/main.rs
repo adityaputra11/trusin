@@ -380,7 +380,7 @@ async fn main() {
         std::env::var("BACKEND_PORT").unwrap_or_else(|_| "3001".to_string()),
         std::env::var("BACKEND_URL").unwrap_or_else(|_| format!("http://localhost:{}", std::env::var("BACKEND_PORT").unwrap_or_else(|_| "3001".to_string()))),
     );
-    let port = std::env::var("PORT").unwrap_or_else(|_| "3002".to_string()).parse::<u16>().unwrap_or(3002);
+    let port = std::env::var("WEB_PORT").or_else(|_| std::env::var("PORT")).unwrap_or_else(|_| "3002".to_string()).parse::<u16>().unwrap_or(3002);
 
     tokio::process::Command::new(&ngrok_bin).args(["http", &backend_port, "--log", "stdout"]).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).spawn().ok();
 

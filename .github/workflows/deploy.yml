@@ -57,7 +57,7 @@ jobs:
           PUBLIC_URL=https://terusin-dev.my.id
           BACKEND_URL=http://localhost:3001
           BACKEND_PORT=3001
-          WEB_PORT=3012
+          WEB_PORT=3002
           AUTH_USERNAME=${{ secrets.AUTH_USERNAME }}
           AUTH_PASSWORD=${{ secrets.AUTH_PASSWORD }}
           MAX_RETRIES=5
