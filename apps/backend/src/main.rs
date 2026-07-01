@@ -31,6 +31,9 @@ struct WebhookEvent {
     retry_count: i32,
     max_retries: i32,
     created_at: chrono::NaiveDateTime,
+    response_status: Option<i32>,
+    response_headers: Option<serde_json::Value>,
+    response_body: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
@@ -247,6 +250,13 @@ async fn worker(db: sqlx::PgPool, mut redis: ConnectionManager, max_retries: i32
 
         let Some(event) = event.unwrap_or(None) else { continue };
 
+        if event.target_url.is_empty() {
+            tracing::warn!("skip {id}: no target URL");
+            sqlx::query("UPDATE webhook_events SET status = 'failed' WHERE id = $1")
+                .bind(id).execute(&db).await.ok();
+            continue;
+        }
+
         let res = client
             .post(&event.target_url)
             .json(&event.body)
@@ -254,45 +264,52 @@ async fn worker(db: sqlx::PgPool, mut redis: ConnectionManager, max_retries: i32
             .await;
 
         match res {
-            Ok(r) if r.status().is_success() => {
-                sqlx::query("UPDATE webhook_events SET status = 'delivered' WHERE id = $1")
-                    .bind(id)
-                    .execute(&db)
-                    .await
-                    .ok();
-                info!("delivered {id} -> {}", event.target_url);
-                forward_to_rules(&db, &event, &client).await;
+            Ok(r) => {
+                let status = r.status().as_u16() as i32;
+                let mut resp_h = serde_json::Map::new();
+                for (k, v) in r.headers() {
+                    resp_h.insert(k.to_string(), serde_json::Value::String(v.to_str().unwrap_or("").to_string()));
+                }
+                let resp_h = serde_json::Value::Object(resp_h);
+                let resp_b = r.text().await.ok();
+
+                if status < 300 {
+                    sqlx::query(
+                        "UPDATE webhook_events SET status = 'delivered', response_status = $1, response_headers = $2, response_body = $3 WHERE id = $4",
+                    )
+                    .bind(status).bind(&resp_h).bind(&resp_b).bind(id)
+                    .execute(&db).await.ok();
+                    info!("delivered {id} -> {} ({})", event.target_url, status);
+                    forward_to_rules(&db, &event, &client).await;
+                } else {
+                    sqlx::query(
+                        "UPDATE webhook_events SET status = 'failed', response_status = $1, response_headers = $2, response_body = $3 WHERE id = $4",
+                    )
+                    .bind(status).bind(&resp_h).bind(&resp_b).bind(id)
+                    .execute(&db).await.ok();
+                    tracing::warn!("failed {id} -> {} ({})", event.target_url, status);
+                }
             }
-            _ => {
+            Err(e) => {
                 let retry_count = event.retry_count + 1;
                 if retry_count > max_retries {
                     sqlx::query(
                         "UPDATE webhook_events SET status = 'failed', retry_count = $1 WHERE id = $2",
                     )
-                    .bind(retry_count)
-                    .bind(id)
-                    .execute(&db)
-                    .await
-                    .ok();
+                    .bind(retry_count).bind(id)
+                    .execute(&db).await.ok();
                     tracing::warn!("failed {id} after {retry_count} attempts");
                 } else {
                     sqlx::query(
                         "UPDATE webhook_events SET status = 'retrying', retry_count = $1 WHERE id = $2",
                     )
-                    .bind(retry_count)
-                    .bind(id)
-                    .execute(&db)
-                    .await
-                    .ok();
+                    .bind(retry_count).bind(id)
+                    .execute(&db).await.ok();
                     let delay = 10 * 2u64.pow(retry_count as u32);
                     let retry_at = Utc::now().timestamp() as i64 + delay as i64;
                     redis::cmd("ZADD")
-                        .arg(RETRY_KEY)
-                        .arg(retry_at)
-                        .arg(id.to_string())
-                        .query_async::<()>(&mut redis)
-                        .await
-                        .ok();
+                        .arg(RETRY_KEY).arg(retry_at).arg(id.to_string())
+                        .query_async::<()>(&mut redis).await.ok();
                     info!("queued {id} for retry #{retry_count} in {delay}s");
                 }
             }

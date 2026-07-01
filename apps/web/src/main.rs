@@ -1,9 +1,9 @@
 use axum::{
     body::Body,
-    extract::{Extension, Path, Request, State},
-    http::StatusCode,
+    extract::{Path, Request, State},
+    http::{StatusCode, header},
     middleware::{self, Next},
-    response::{Html, IntoResponse, Response},
+    response::{Html, IntoResponse, Redirect, Response},
     routing::get,
     Json, Router,
 };
@@ -25,6 +25,9 @@ struct WebhookEvent {
     retry_count: i32,
     max_retries: i32,
     created_at: chrono::NaiveDateTime,
+    response_status: Option<i32>,
+    response_headers: Option<serde_json::Value>,
+    response_body: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, sqlx::FromRow)]
@@ -90,8 +93,6 @@ async fn get_ngrok_url() -> Option<String> {
     d["tunnels"][0].get("public_url")?.as_str().map(|s| s.to_string())
 }
 
-fn hx(t: &str) -> String { std::fs::read_to_string(format!("apps/web/src/{t}")).unwrap_or_default() }
-
 // ── Layout ────────────────────────────────────────────────────────────────
 
 fn layout(title: &str, user: Option<&str>, content: &str) -> String {
@@ -102,7 +103,8 @@ fn layout(title: &str, user: Option<&str>, content: &str) -> String {
 </head><body class="bg-gray-50 text-gray-900"><nav class="bg-white border-b sticky top-0 z-10"><div class="max-w-7xl mx-auto px-4 h-12 flex items-center justify-between">
 <div class="flex items-center gap-6"><a href="/" class="font-bold text-base">Terusin</a>
 <a href="/providers" class="text-sm text-gray-500 hover:text-gray-900 {auth}">Providers</a>
-<a href="/hooks" class="text-sm text-gray-500 hover:text-gray-900 {auth}">Hooks</a></div>
+<a href="/hooks" class="text-sm text-gray-500 hover:text-gray-900 {auth}">Hooks</a>
+<a href="/send" class="text-sm text-gray-500 hover:text-gray-900 {auth}">Send</a></div>
 <div class="flex items-center gap-3 text-sm"><span class="text-gray-400">{u}</span><a href="/logout" class="text-red-500 hover:text-red-700">Logout</a></div>
 </div></nav><main class="max-w-7xl mx-auto px-4 py-6">{content}</main></body></html>"#, title=title, auth=auth, u=u, content=content)
 }
@@ -149,13 +151,15 @@ fn dashboard_html(ev: &[Option<WebhookEvent>], ngrok: Option<&str>, user: Option
 <td class="py-2.5 px-3"><span class="font-mono text-xs text-gray-400">{}</span></td>
 <td class="py-2.5 px-3"><span class="text-sm">{}</span></td>
 <td class="py-2.5 px-3"><span class="inline-block px-2 py-0.5 rounded-full text-xs font-medium {}">{}</span></td>
-<td class="py-2.5 px-3 text-sm text-gray-500 max-w-[200px] truncate">{}</td>
+<td class="py-2.5 px-3 text-sm text-gray-500">{}/{}</td>
 <td class="py-2.5 px-3 text-sm text-gray-400">{}</td></tr>"#,
-        e.id, &e.id.to_string()[..8], e.source, badge(&e.status), e.status, e.target_url, e.created_at.format("%m/%d %H:%M"))).collect();
+        e.id, &e.id.to_string()[..8], e.source, badge(&e.status), e.status, e.retry_count, e.max_retries, e.created_at.format("%m/%d %H:%M"))).collect();
 
     let url_box = match ngrok {
         Some(u) => format!(r#"<div class="bg-emerald-50 border border-emerald-200 rounded-lg p-3 mb-5 flex items-center gap-3 text-sm"><span class="text-emerald-700 font-medium shrink-0">Webhook URL</span>
-<input id="u" type="text" readonly value="{u}" class="flex-1 bg-white border border-emerald-300 rounded px-2 py-1.5 text-xs font-mono text-emerald-900"/><button onclick="navigator.clipboard.writeText(document.getElementById('u').value)" class="bg-emerald-600 text-white px-3 py-1.5 rounded text-xs hover:bg-emerald-700 shrink-0">Copy</button></div>"#),
+<div class="flex-1 flex items-center gap-1 bg-white border border-emerald-300 rounded px-2 py-1"><input id="u" type="password" readonly value="{u}" class="flex-1 text-xs font-mono text-emerald-900 outline-none bg-transparent"/>
+<button onclick="var i=document.getElementById('u');i.type=i.type=='password'?'text':'password'" class="text-gray-400 hover:text-gray-600 shrink-0 text-sm">👁</button></div>
+<button onclick="navigator.clipboard.writeText(document.getElementById('u').value)" class="bg-emerald-600 text-white px-3 py-1.5 rounded text-xs hover:bg-emerald-700 shrink-0">Copy</button></div>"#),
         None => r#"<div class="bg-amber-50 border border-amber-200 rounded-lg p-3 mb-5 text-sm text-amber-800">Ngrok gak jalan.</div>"#.to_string(),
     };
 
@@ -179,20 +183,24 @@ fn dashboard_html(ev: &[Option<WebhookEvent>], ngrok: Option<&str>, user: Option
         pagination = format!(r#"<div class="flex items-center justify-between px-3 py-3 text-sm text-gray-500"><span>{total} events</span><div class="flex gap-1">{links}</div></div>"#, total=total, links=links);
     }
 
-    layout("Dashboard", user, &format!(r#"{url_box}{search_bar}<div class="bg-white rounded-xl border shadow-sm overflow-hidden"><table class="w-full"><thead><tr class="text-left text-xs font-medium text-gray-400 uppercase bg-gray-50"><th class="py-3 px-3">ID</th><th class="py-3 px-3">Source</th><th class="py-3 px-3">Status</th><th class="py-3 px-3">Target</th><th class="py-3 px-3">Time</th></tr></thead><tbody>{rows}</tbody></table>{pagination}</div>"#))
+    layout("Dashboard", user, &format!(r#"{url_box}{search_bar}<div class="bg-white rounded-xl border shadow-sm overflow-hidden"><table class="w-full"><thead><tr class="text-left text-xs font-medium text-gray-400 uppercase bg-gray-50"><th class="py-3 px-3">ID</th><th class="py-3 px-3">Source</th><th class="py-3 px-3">Status</th><th class="py-3 px-3">Retry</th><th class="py-3 px-3">Time</th></tr></thead><tbody>{rows}</tbody></table>{pagination}</div>"#))
 }
 
 // ── Event Detail ──────────────────────────────────────────────────────────
 
-async fn event_detail(State(state): State<Arc<AppState>>, Extension(user): Extension<AuthUser>, Path(id): Path<uuid::Uuid>) -> Result<Html<String>, StatusCode> {
+async fn event_detail(State(state): State<Arc<AppState>>, Path(id): Path<uuid::Uuid>) -> Result<Html<String>, StatusCode> {
     let e = sqlx::query_as::<_, WebhookEvent>("SELECT * FROM webhook_events WHERE id = $1").bind(id).fetch_optional(&state.db).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    Ok(Html(match e { Some(e) => detail_html(&e, Some(&user.0)), None => not_found() }))
+    Ok(Html(match e { Some(e) => detail_html(&e), None => not_found() }))
 }
 
-fn detail_html(e: &WebhookEvent, _user: Option<&str>) -> String {
+fn detail_html(e: &WebhookEvent) -> String {
     let h = serde_json::to_string_pretty(&e.headers).unwrap_or_default();
     let b = serde_json::to_string_pretty(&e.body).unwrap_or_default();
-    layout("Event", _user, &format!(
+    let resp_h = e.response_headers.as_ref().and_then(|v| serde_json::to_string_pretty(v).ok()).unwrap_or_else(|| "-".to_string());
+    let resp_b = e.response_body.as_deref().unwrap_or("-");
+    let resp_s = e.response_status.map(|s| s.to_string()).unwrap_or_else(|| "-".to_string());
+
+    layout("Event", None, &format!(
 r#"<a href="/" class="text-sm text-blue-600 hover:text-blue-800">&larr; Back</a>
 <h2 class="text-lg font-bold mt-2 mb-4">Event <span class="font-mono text-sm font-normal text-gray-400">{id}</span></h2>
 <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
@@ -200,12 +208,15 @@ r#"<a href="/" class="text-sm text-blue-600 hover:text-blue-800">&larr; Back</a>
 <dl class="space-y-2 text-sm"><dt class="text-gray-400 text-xs">Status</dt><dd><span class="inline-block px-2 py-0.5 rounded-full text-xs font-medium {st}">{status}</span></dd>
 <dt class="text-gray-400 text-xs mt-3">Source</dt><dd>{source}</dd>
 <dt class="text-gray-400 text-xs mt-3">Target</dt><dd class="font-mono text-xs break-all">{target}</dd>
+<dt class="text-gray-400 text-xs mt-3">Response</dt><dd class="font-mono text-sm">{resp_status}</dd>
 <dt class="text-gray-400 text-xs mt-3">Retry</dt><dd>{retry}/{max}</dd>
 <dt class="text-gray-400 text-xs mt-3">Created</dt><dd>{created}</dd></dl>
 <form action="/api/events/{id}/retry" method="post" class="mt-4"><button class="bg-blue-600 text-white px-3 py-1.5 rounded text-sm hover:bg-blue-700">Retry</button></form></div>
-<div class="bg-white rounded-xl border shadow-sm p-4"><h3 class="text-xs font-semibold text-gray-400 uppercase mb-3">Headers</h3><pre class="bg-gray-50 rounded p-3 text-xs font-mono overflow-x-auto whitespace-pre-wrap">{headers}</pre></div>
-<div class="lg:col-span-2 bg-white rounded-xl border shadow-sm p-4"><h3 class="text-xs font-semibold text-gray-400 uppercase mb-3">Body</h3><pre class="bg-gray-50 rounded p-3 text-xs font-mono overflow-x-auto whitespace-pre-wrap">{body}</pre></div>
-</div>"#, id=e.id, st=badge(&e.status), status=e.status, source=e.source, target=e.target_url, retry=e.retry_count, max=e.max_retries, created=e.created_at.format("%Y-%m-%d %H:%M:%S"), headers=h, body=b))
+<div class="bg-white rounded-xl border shadow-sm p-4"><h3 class="text-xs font-semibold text-gray-400 uppercase mb-3">Request Headers</h3><pre class="bg-gray-50 rounded p-3 text-xs font-mono overflow-x-auto whitespace-pre-wrap">{headers}</pre></div>
+<div class="bg-white rounded-xl border shadow-sm p-4"><h3 class="text-xs font-semibold text-gray-400 uppercase mb-3">Response Headers</h3><pre class="bg-gray-50 rounded p-3 text-xs font-mono overflow-x-auto whitespace-pre-wrap">{resp_headers}</pre></div>
+<div class="lg:col-span-2 bg-white rounded-xl border shadow-sm p-4"><h3 class="text-xs font-semibold text-gray-400 uppercase mb-3">Request Body</h3><pre class="bg-gray-50 rounded p-3 text-xs font-mono overflow-x-auto whitespace-pre-wrap">{body}</pre></div>
+<div class="lg:col-span-2 bg-white rounded-xl border shadow-sm p-4"><h3 class="text-xs font-semibold text-gray-400 uppercase mb-3">Response Body</h3><pre class="bg-gray-50 rounded p-3 text-xs font-mono overflow-x-auto whitespace-pre-wrap">{resp_body}</pre></div>
+</div>"#, id=e.id, st=badge(&e.status), status=e.status, source=e.source, target=e.target_url, resp_status=resp_s, retry=e.retry_count, max=e.max_retries, created=e.created_at.format("%Y-%m-%d %H:%M:%S"), headers=h, body=b, resp_headers=resp_h, resp_body=resp_b))
 }
 
 async fn retry_event(State(state): State<Arc<AppState>>, Path(id): Path<uuid::Uuid>) -> Result<Html<String>, StatusCode> {
@@ -314,6 +325,31 @@ async fn delete_hook(State(state): State<Arc<AppState>>, Path(id): Path<String>)
 
 // ── Misc ──────────────────────────────────────────────────────────────────
 
+async fn send_page(State(state): State<Arc<AppState>>, req: Request<Body>) -> Result<Html<String>, StatusCode> {
+    let user = req.extensions().get::<AuthUser>().map(|u| u.0.as_str());
+    Ok(Html(layout("Send Webhook", user, r#"<div class="bg-white rounded-xl border shadow-sm p-4 mb-5"><h3 class="text-sm font-semibold mb-3">Send Custom Webhook</h3>
+<form action="/api/send" method="post" class="space-y-3"><div><label class="text-xs text-gray-400 block mb-1">Source</label>
+<input name="source" placeholder="e.g. custom" class="border rounded px-3 py-1.5 text-sm w-full"/></div>
+<div><label class="text-xs text-gray-400 block mb-1">Target URL (optional, uses default if empty)</label>
+<input name="target_url" placeholder="http://localhost:3000/webhook" class="border rounded px-3 py-1.5 text-sm font-mono w-full"/></div>
+<div><label class="text-xs text-gray-400 block mb-1">Body (JSON)</label>
+<textarea name="body" rows="8" class="border rounded px-3 py-1.5 text-sm font-mono w-full" placeholder='{"event":"push","data":{}}'></textarea></div>
+<button class="bg-blue-600 text-white px-4 py-1.5 rounded text-sm hover:bg-blue-700">Send</button></form></div>"#)))
+}
+
+async fn send_webhook(State(state): State<Arc<AppState>>, axum::extract::Form(form): axum::extract::Form<std::collections::HashMap<String, String>>) -> Response {
+    let source = form.get("source").map(|s| s.trim()).unwrap_or("web");
+    let target = form.get("target_url").map(|s| s.trim()).unwrap_or("");
+    let body: serde_json::Value = form.get("body").and_then(|s| serde_json::from_str(s).ok()).unwrap_or(serde_json::json!({}));
+
+    let mut req = backend_client(&state).post(&state.backend_url).json(&body);
+    req = req.header("X-Webhook-Source", source);
+    if !target.is_empty() { req = req.header("X-Target-Url", target); }
+    let resp = req.send().await.ok();
+
+    match resp { Some(_) => Redirect::to("/send").into_response(), None => Html(r#"<!DOCTYPE html><html><head><meta http-equiv="refresh" content="2;url=/send"></head><body class="flex items-center justify-center min-h-screen bg-gray-50"><div class="text-center"><p class="text-red-600 font-medium">Failed</p><a href="/send" class="text-blue-600 text-sm mt-2 inline-block">Back</a></div></body></html>"#.to_string()).into_response() }
+}
+
 async fn logout() -> Response {
     let mut r = (StatusCode::UNAUTHORIZED, "Logged out").into_response();
     r.headers_mut().insert("WWW-Authenticate", "Basic realm=\"Terusin\"".parse().unwrap());
@@ -356,6 +392,8 @@ async fn main() {
         .route("/events/{id}", get(event_detail))
         .route("/providers", get(providers_page))
         .route("/hooks", get(hooks_page))
+        .route("/send", get(send_page))
+        .route("/api/send", axum::routing::post(send_webhook))
         .route("/logout", get(logout))
         .route("/api/events", get(api_events))
         .route("/api/events/{id}/retry", axum::routing::post(retry_event))
