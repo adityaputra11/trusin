@@ -27,7 +27,7 @@ app = "terusin"
     value = "admin"
   [[env]]
     key = "AUTH_PASSWORD"
-    value = "terusin123"
+    value = "change-me-in-production"
   [[env]]
     key = "WORKER_COUNT"
     value = "4"
@@ -53,4 +53,4 @@ app = "terusin"
     value = "admin"
   [[env]]
     key = "AUTH_PASSWORD"
-    value = "terusin123"
+    value = "change-me-in-production"

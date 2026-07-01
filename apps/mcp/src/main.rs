@@ -6,7 +6,7 @@ const BACKEND_URL: &str = "http://127.0.0.1:3011";
 
 fn auth_header() -> String {
     let user = std::env::var("TERUSIN_USER").unwrap_or_else(|_| "admin".to_string());
-    let pass = std::env::var("TERUSIN_PASS").unwrap_or_else(|_| "terusin123".to_string());
+    let pass = std::env::var("TERUSIN_PASS").unwrap_or_else(|_| "change-me-in-production".to_string());
     format!("Basic {}", base64::engine::general_purpose::STANDARD.encode(format!("{user}:{pass}")))
 }
 

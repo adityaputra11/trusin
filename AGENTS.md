@@ -20,7 +20,7 @@ PORT=3011 cargo run --bin backend                 # terminal 1
 PORT=3012 BACKEND_URL=http://localhost:3011 cargo run --bin web  # terminal 2
 ```
 
-Auth defaults: `admin` / `terusin123` (set via `AUTH_USERNAME`/`AUTH_PASSWORD` env vars, seeded to DB on first run).
+Auth defaults: `admin` / `change-me-in-production` (set via `AUTH_USERNAME`/`AUTH_PASSWORD` env vars, seeded to DB on first run).
 
 ## Key architecture
 

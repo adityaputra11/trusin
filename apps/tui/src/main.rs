@@ -18,7 +18,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             user: "admin".into(),
-            password: "terusin123".into(),
+            password: "change-me-in-production".into(),
             backend: BACKEND.into(),
         }
     }

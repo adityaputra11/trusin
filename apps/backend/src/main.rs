@@ -156,6 +156,23 @@ async fn seed_default_user(db: &sqlx::PgPool) {
     }
 }
 
+async fn handle_root(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(payload): Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    handle_webhook_inner(state, "".to_string(), headers, payload).await
+}
+
+async fn handle_webhook(
+    State(state): State<Arc<AppState>>,
+    Path(source_path): Path<String>,
+    headers: HeaderMap,
+    Json(payload): Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    handle_webhook_inner(state, source_path, headers, payload).await
+}
+
 fn extract_source(path: &str) -> String {
     let p = path.trim_matches('/');
     if p.is_empty() {
@@ -164,11 +181,11 @@ fn extract_source(path: &str) -> String {
     p.split('/').next().unwrap_or("unknown").to_string()
 }
 
-async fn handle_webhook(
-    State(state): State<Arc<AppState>>,
-    Path(source_path): Path<String>,
+async fn handle_webhook_inner(
+    state: Arc<AppState>,
+    source_path: String,
     headers: HeaderMap,
-    Json(payload): Json<serde_json::Value>,
+    payload: serde_json::Value,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     let source = match headers.get("X-Webhook-Source").and_then(|v| v.to_str().ok()) {
         Some(s) if !s.is_empty() && s != "unknown" => s.to_string(),
@@ -648,8 +665,12 @@ async fn main() {
         default_target: std::sync::Mutex::new(default_target),
     });
 
-    let w_redis = ConnectionManager::new(redis_from_env()).await.unwrap();
-    tokio::spawn(worker(db.clone(), w_redis, max_retries));
+    let worker_count: usize = std::env::var("WORKER_COUNT")
+        .unwrap_or_else(|_| "4".to_string()).parse().unwrap_or(4);
+    for _ in 0..worker_count {
+        let w_redis = ConnectionManager::new(redis_from_env()).await.unwrap();
+        tokio::spawn(worker(db.clone(), w_redis, max_retries));
+    }
 
     let r_redis = ConnectionManager::new(redis_from_env()).await.unwrap();
     tokio::spawn(retry_worker(db, r_redis));
@@ -668,6 +689,7 @@ async fn main() {
         .route("/health", get(health))
         .merge(public)
         .merge(protected)
+        .route("/", post(handle_root))
         .route("/{*source}", post(handle_webhook))
         .with_state(state);
 

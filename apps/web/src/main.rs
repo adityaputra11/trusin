@@ -384,7 +384,7 @@ async fn main() {
     let db = PgPoolOptions::new().max_connections(5).connect(&db_url).await.expect("db");
     seed_default_user(&db).await;
 
-    let (u, p) = (std::env::var("AUTH_USERNAME").unwrap_or_else(|_| "admin".to_string()), std::env::var("AUTH_PASSWORD").unwrap_or_else(|_| "terusin123".to_string()));
+    let (u, p) = (std::env::var("AUTH_USERNAME").unwrap_or_else(|_| "admin".to_string()), std::env::var("AUTH_PASSWORD").unwrap_or_else(|_| "change-me-in-production".to_string()));
     let state = Arc::new(AppState { db, ngrok_url: Arc::new(Mutex::new(None)), backend_url, backend_auth: base64::engine::general_purpose::STANDARD.encode(format!("{u}:{p}")) });
 
     let app = Router::new()

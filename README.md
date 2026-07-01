@@ -44,13 +44,13 @@
 docker compose up -d postgres redis
 
 # Backend
-AUTH_USERNAME=admin AUTH_PASSWORD=terusin123 PORT=3011 cargo run --bin backend
+AUTH_USERNAME=admin AUTH_PASSWORD=change-me-in-production PORT=3011 cargo run --bin backend
 
 # Dashboard (another terminal)
-AUTH_USERNAME=admin AUTH_PASSWORD=terusin123 PORT=3012 BACKEND_URL=http://localhost:3011 cargo run --bin web
+AUTH_USERNAME=admin AUTH_PASSWORD=change-me-in-production PORT=3012 BACKEND_URL=http://localhost:3011 cargo run --bin web
 
 open http://localhost:3012
-# Login: admin / terusin123
+# Login: admin / change-me-in-production
 ```
 
 ## CLI
