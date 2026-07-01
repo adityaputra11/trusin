@@ -2,6 +2,7 @@ use base64::Engine;
 use clap::{Parser, Subcommand};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::path::PathBuf;
 
 const BACKEND: &str = "http://127.0.0.1:3011";
@@ -101,6 +102,13 @@ enum Commands {
     /// Retry a failed event
     Retry {
         id: String,
+    },
+    /// Poll events from server and forward to local port (no ngrok needed)
+    Listen {
+        #[arg(short, long, default_value = "3000")]
+        port: u16,
+        #[arg(short, long, default_value_t = 5)]
+        interval: u64,
     },
     /// Open web dashboard
     Dashboard,
@@ -207,6 +215,30 @@ async fn main() {
             match resp {
                 Ok(r) if r.status().is_success() => println!(" Retried {id}"),
                 _ => eprintln!(" Failed to retry {id}"),
+            }
+        }
+        Commands::Listen { port, interval } => {
+            let local = format!("http://127.0.0.1:{port}");
+            println!(" Listening: polling {}/events → {local}", cfg.backend);
+            let mut seen = HashSet::new();
+            loop {
+                let resp = auth.get(format!("{}/events", cfg.backend)).send().await;
+                if let Ok(r) = resp {
+                    let data: serde_json::Value = r.json().await.unwrap_or_default();
+                    let events = data["events"].as_array().cloned().unwrap_or_default();
+                    for e in &events {
+                        let id = e["id"].as_str().unwrap_or("").to_string();
+                        if id.is_empty() || !seen.insert(id.clone()) { continue; }
+                        let body = e["body"].clone();
+                        if body.is_null() { continue; }
+                        let s = Client::new().post(&local).json(&body).send().await;
+                        match s {
+                            Ok(_) => println!("  Fwd {} → {local} OK", &id[..8]),
+                            Err(e) => println!("  Fwd {} → {local} ERR: {e}", &id[..8]),
+                        }
+                    }
+                }
+                tokio::time::sleep(std::time::Duration::from_secs(interval)).await;
             }
         }
         Commands::Dashboard => {
