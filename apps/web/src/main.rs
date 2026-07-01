@@ -228,7 +228,8 @@ async fn retry_event(State(state): State<Arc<AppState>>, Path(id): Path<uuid::Uu
 
 async fn providers_page(State(state): State<Arc<AppState>>, req: Request<Body>) -> Result<Html<String>, StatusCode> {
     let ngrok = state.ngrok_url.lock().await.clone();
-    let url = ngrok.as_deref().unwrap_or("https://your-host");
+    let public_url = std::env::var("PUBLIC_URL").unwrap_or_else(|_| "https://terusin-dev.my.id".to_string());
+    let url = ngrok.as_deref().unwrap_or(&public_url);
     let rules: Vec<serde_json::Value> = match backend_client(&state).get(format!("{}/rules", state.backend_url)).send().await { Ok(r) => r.json().await.unwrap_or_default(), Err(e) => { tracing::warn!("providers_page: {e}"); vec![] } };
 
     let mut rows = String::new();

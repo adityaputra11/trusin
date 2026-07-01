@@ -54,6 +54,7 @@ jobs:
           DATABASE_URL=${{ secrets.DATABASE_URL }}
           REDIS_URL=${{ secrets.REDIS_URL }}
           PORT=3001
+          PUBLIC_URL=https://terusin-dev.my.id
           BACKEND_URL=http://localhost:3001
           BACKEND_PORT=3001
           WEB_PORT=3012
@@ -80,6 +81,7 @@ jobs:
           key: ${{ secrets.SSH_KEY }}
           port: ${{ secrets.SSH_PORT || '22' }}
           script: |
+            sudo chmod +x /opt/terusin/bin/backend /opt/terusin/bin/web
             sudo cp /opt/terusin/terusin-*.service /etc/systemd/system/
             sudo systemctl daemon-reload
             sudo systemctl enable terusin-backend terusin-web
