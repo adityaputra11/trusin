@@ -234,7 +234,10 @@ async fn main() {
                         let target = e["target_url"].as_str().unwrap_or("").to_string();
                         let url = if target.is_empty() || !target.starts_with("http") { fallback.clone() } else { target };
                         match Client::new().post(&url).json(&body).send().await {
-                            Ok(_) => println!("  {} → {}", &id[..8], url),
+                            Ok(_) => {
+                                auth.post(format!("{}/events/{id}/ack", cfg.backend)).send().await.ok();
+                                println!("  {} → {}", &id[..8], url);
+                            }
                             Err(e) => println!("  {} → {} ERR: {e}", &id[..8], url),
                         }
                     }

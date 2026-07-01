@@ -540,6 +540,18 @@ async fn retry_event(
     }
 }
 
+async fn ack_event(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+) -> StatusCode {
+    sqlx::query("UPDATE webhook_events SET status = 'delivered', response_status = 200 WHERE id = $1")
+        .bind(id)
+        .execute(&state.db)
+        .await
+        .map(|r| if r.rows_affected() > 0 { StatusCode::OK } else { StatusCode::NOT_FOUND })
+        .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR)
+}
+
 async fn list_rules(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<Vec<ForwardRule>>, StatusCode> {
@@ -681,6 +693,7 @@ async fn main() {
     let protected = Router::new()
         .route("/events", get(list_events))
         .route("/events/{id}/retry", post(retry_event))
+        .route("/events/{id}/ack", post(ack_event))
         .route("/rules", get(list_rules).post(create_rule))
         .route("/rules/{id}", delete(delete_rule))
         .layer(middleware::from_fn_with_state(state.clone(), auth_middleware));
