@@ -3,10 +3,15 @@ use clap::{Parser, Subcommand};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
+use std::io::{self, Write};
 use std::path::PathBuf;
 
 const BACKEND: &str = "http://127.0.0.1:3011";
 const WEB: &str = "http://localhost:3012";
+
+fn env_or_default(key: &str, fallback: &str) -> String {
+    std::env::var(key).unwrap_or_else(|_| fallback.to_string())
+}
 
 #[derive(Serialize, Deserialize)]
 struct Config {
@@ -24,10 +29,10 @@ fn default_web() -> String {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            user: "admin".into(),
-            password: "change-me-in-production".into(),
-            backend: BACKEND.into(),
-            web: WEB.into(),
+            user: env_or_default("TERUSIN_USER", "admin"),
+            password: env_or_default("TERUSIN_PASSWORD", "change-me-in-production"),
+            backend: env_or_default("TERUSIN_BACKEND", BACKEND),
+            web: env_or_default("TERUSIN_WEB", WEB),
         }
     }
 }
@@ -42,10 +47,24 @@ fn config_path() -> PathBuf {
 
 fn load_config() -> Config {
     let path = config_path();
-    std::fs::read_to_string(&path)
-        .ok()
-        .and_then(|s| toml::from_str(&s).ok())
-        .unwrap_or_default()
+    if let Ok(s) = std::fs::read_to_string(&path) {
+        if let Ok(c) = toml::from_str(&s) {
+            return c;
+        }
+    }
+    // ponytail: first run — prompt for backend URL like create-expo-app
+    let default = Config::default();
+    print!(" Backend URL [{}]: ", default.backend);
+    io::stdout().flush().ok();
+    let mut input = String::new();
+    io::stdin().read_line(&mut input).ok();
+    let backend = input.trim();
+    let c = Config {
+        backend: if backend.is_empty() { default.backend } else { backend.to_string() },
+        ..default
+    };
+    save_config(&c);
+    c
 }
 
 fn save_config(c: &Config) {
