@@ -71,17 +71,24 @@ Add providers with target URLs via dashboard or `terusin` CLI. Webhooks are forw
 }
 ```
 
-## Benchmark
+## Benchmark (k6)
+
+```
+100 concurrent users, 4 workers, sequential processing
+```
 
 | Metric | Value |
 |--------|-------|
-| Throughput | ~100 events/sec (single worker, sequential) |
-| Latency p50 | <5ms per event |
-| Queue | Redis `BRPOP` (blocking) |
-| Retry | Redis sorted set, exponential backoff |
-| Storage | Postgres, indexed by `(status, created_at)` |
+| Throughput | **3,990 req/s** |
+| Total requests | 79,823 |
+| Error rate | **0%** |
+| Avg latency | 6.48ms |
+| p95 latency | 12.86ms |
 
-Scale: add more workers by spawning additional `tokio::spawn(worker(...))` calls.
+```
+✓ http_req_duration p(95)<5000ms  → 12.86ms
+✓ http_req_failed rate<0.01      → 0.00%
+```
 
 ## Architecture
 
