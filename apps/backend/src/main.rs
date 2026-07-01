@@ -280,6 +280,11 @@ async fn worker(db: sqlx::PgPool, mut redis: ConnectionManager, max_retries: i32
             .send()
             .await;
 
+        let already = || async {
+            sqlx::query_scalar::<_, String>("SELECT status FROM webhook_events WHERE id = $1")
+                .bind(id).fetch_optional(&db).await.ok().flatten().unwrap_or_default() == "delivered"
+        };
+
         match res {
             Ok(r) => {
                 let status = r.status().as_u16() as i32;
@@ -292,7 +297,7 @@ async fn worker(db: sqlx::PgPool, mut redis: ConnectionManager, max_retries: i32
 
                 if status < 300 {
                     sqlx::query(
-                        "UPDATE webhook_events SET status = 'delivered', response_status = $1, response_headers = $2, response_body = $3 WHERE id = $4",
+                        "UPDATE webhook_events SET status = 'delivered', response_status = $1, response_headers = $2, response_body = $3 WHERE id = $4 AND status != 'delivered'",
                     )
                     .bind(status).bind(&resp_h).bind(&resp_b).bind(id)
                     .execute(&db).await.ok();
@@ -300,25 +305,26 @@ async fn worker(db: sqlx::PgPool, mut redis: ConnectionManager, max_retries: i32
                     forward_to_rules(&db, &event, &client).await;
                 } else {
                     sqlx::query(
-                        "UPDATE webhook_events SET status = 'failed', response_status = $1, response_headers = $2, response_body = $3 WHERE id = $4",
+                        "UPDATE webhook_events SET status = 'failed', response_status = $1, response_headers = $2, response_body = $3 WHERE id = $4 AND status != 'delivered'",
                     )
                     .bind(status).bind(&resp_h).bind(&resp_b).bind(id)
                     .execute(&db).await.ok();
                     tracing::warn!("failed {id} -> {} ({})", event.target_url, status);
                 }
             }
-            Err(e) => {
+            Err(_e) => {
+                if already().await { continue; }
                 let retry_count = event.retry_count + 1;
                 if retry_count > max_retries {
                     sqlx::query(
-                        "UPDATE webhook_events SET status = 'failed', retry_count = $1 WHERE id = $2",
+                        "UPDATE webhook_events SET status = 'failed', retry_count = $1 WHERE id = $2 AND status != 'delivered'",
                     )
                     .bind(retry_count).bind(id)
                     .execute(&db).await.ok();
                     tracing::warn!("failed {id} after {retry_count} attempts");
                 } else {
                     sqlx::query(
-                        "UPDATE webhook_events SET status = 'retrying', retry_count = $1 WHERE id = $2",
+                        "UPDATE webhook_events SET status = 'retrying', retry_count = $1 WHERE id = $2 AND status != 'delivered'",
                     )
                     .bind(retry_count).bind(id)
                     .execute(&db).await.ok();
@@ -379,10 +385,14 @@ async fn retry_worker(db: sqlx::PgPool, mut redis: ConnectionManager) {
                     .send()
                     .await;
 
+                let is_delivered = sqlx::query_scalar::<_, String>("SELECT status FROM webhook_events WHERE id = $1")
+                    .bind(id).fetch_optional(&db).await.ok().flatten().unwrap_or_default() == "delivered";
+                if is_delivered { continue; }
+
                 match res {
                     Ok(r) if r.status().is_success() => {
                         sqlx::query(
-                            "UPDATE webhook_events SET status = 'delivered' WHERE id = $1",
+                            "UPDATE webhook_events SET status = 'delivered' WHERE id = $1 AND status != 'delivered'",
                         )
                         .bind(id)
                         .execute(&db)
@@ -395,7 +405,7 @@ async fn retry_worker(db: sqlx::PgPool, mut redis: ConnectionManager) {
                         let retry_count = event.retry_count + 1;
                         if retry_count > event.max_retries {
                             sqlx::query(
-                                "UPDATE webhook_events SET status = 'failed', retry_count = $1 WHERE id = $2",
+                                "UPDATE webhook_events SET status = 'failed', retry_count = $1 WHERE id = $2 AND status != 'delivered'",
                             )
                             .bind(retry_count)
                             .bind(id)
