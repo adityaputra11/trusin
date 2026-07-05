@@ -215,13 +215,22 @@ async fn auth_middleware(
         }
     }
 
-    // 2) Fall back to HTTP Basic auth (CLI / MCP / password logins).
+    // 2) Try a Bearer API token (CLI / MCP pairing).
     let header = req
         .headers()
         .get("Authorization")
         .and_then(|v| v.to_str().ok())
         .unwrap_or("");
+    if let Some(bearer) = header.strip_prefix("Bearer ").map(str::trim) {
+        if bearer.starts_with("ts_") {
+            if let Some(cu) = auth::authenticate_bearer(&state, bearer).await {
+                req.extensions_mut().insert(cu);
+                return Ok(next.run(req).await);
+            }
+        }
+    }
 
+    // 3) Fall back to HTTP Basic auth (CLI / MCP / password logins).
     let creds = header.strip_prefix("Basic ").and_then(|encoded| {
         base64::engine::general_purpose::STANDARD
             .decode(encoded)
@@ -757,7 +766,7 @@ async fn list_events(
     Query(q): Query<EventQuery>,
 ) -> Result<Json<Value>, StatusCode> {
     let page = q.page.unwrap_or(1).max(1);
-    let per_page = q.per_page.unwrap_or(50).min(200);
+    let per_page = q.per_page.unwrap_or(10).min(200);
     let offset = (page - 1) * per_page;
 
     let mut sql = "SELECT * FROM webhook_events WHERE 1=1".to_string();
@@ -1521,7 +1530,9 @@ async fn main() {
         .route("/api/auth/callback/google", get(auth::google_callback))
         .route("/api/auth/me", get(auth::me))
         .route("/api/auth/login", axum::routing::post(auth::login))
-        .route("/api/auth/logout", axum::routing::post(auth::logout));
+        .route("/api/auth/logout", axum::routing::post(auth::logout))
+        // Pairing: the code IS the credential, so pair-complete is public.
+        .route("/api/auth/pair", axum::routing::post(auth::pair_complete));
 
     let protected = Router::new()
         .route("/events", get(list_events))
@@ -1536,6 +1547,10 @@ async fn main() {
         .route("/rules", get(list_rules).post(create_rule))
         .route("/rules/{id}", delete(delete_rule).patch(update_rule))
         .route("/stats", get(metrics))
+        // API token pairing + management (require the calling user to be authed).
+        .route("/api/auth/pair/init", axum::routing::post(auth::pair_init))
+        .route("/api/auth/tokens", get(auth::list_tokens))
+        .route("/api/auth/tokens/{id}", axum::routing::delete(auth::revoke_token))
         .layer(middleware::from_fn_with_state(state.clone(), auth_middleware));
 
     // CORS: allow the web frontend origin to call the backend API directly.

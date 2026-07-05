@@ -18,6 +18,7 @@ use axum::{
     response::{IntoResponse, Redirect, Response},
     Json,
 };
+use base64::Engine;
 use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation};
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
@@ -25,6 +26,16 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::{AppState, User};
+
+/// The authenticated principal, made available to handlers via the axum
+/// `Extension<CurrentUser>` extractor. Inserted by `auth_middleware` after any
+/// of cookie/Basic/Bearer auth succeeds. Handlers extract it to do per-user
+/// and role-based decisions.
+#[derive(Debug, Clone)]
+pub struct CurrentUser {
+    pub id: Uuid,
+    pub role: String,
+}
 
 /// Cloudflare Turnstile verification.
 ///
@@ -151,6 +162,139 @@ pub fn verify_jwt(token: &str, secret: &str) -> Option<Uuid> {
     )
     .ok()?;
     Uuid::parse_str(&data.claims.sub).ok()
+}
+
+// ── API tokens (CLI / MCP pairing) ────────────────────────────────────────
+//
+// Opaque, 256-bit random tokens (`ts_<base64url>`), stored as sha256 hex in
+// the `api_tokens` table. The cleartext is shown ONCE (on pair/creation) and
+// never persisted; lookups are by hash, so the table is index-able.
+
+/// Prefix so tokens are easy to grep/redact. `ts_` + 32 random bytes
+/// base64url-encoded (≈43 chars) ≈ 46 chars total, 256 bits of entropy.
+const TOKEN_PREFIX: &str = "ts_";
+
+/// Generate a fresh token (`ts_<43 chars>`). Returned to the CLI exactly once.
+pub fn generate_token() -> String {
+    use rand::RngCore;
+    let mut bytes = [0u8; 32];
+    rand::thread_rng().fill_bytes(&mut bytes);
+    let b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes);
+    format!("{TOKEN_PREFIX}{b64}")
+}
+
+/// sha256(token) → hex. This is what we store and index in `api_tokens`.
+/// Fast hash is safe here: tokens are 256-bit random, so brute force is
+/// infeasible, and a fast hash enables `WHERE token_hash = $1` lookups.
+pub fn hash_token(token: &str) -> String {
+    use sha2::{Sha256, Digest};
+    let mut hasher = Sha256::new();
+    hasher.update(token.as_bytes());
+    hex_encode(&hasher.finalize())
+}
+
+fn hex_encode(bytes: &[u8]) -> String {
+    let mut s = String::with_capacity(bytes.len() * 2);
+    for b in bytes {
+        s.push_str(&format!("{b:02x}"));
+    }
+    s
+}
+
+/// A token row as exposed to the user (no `token_hash`, no cleartext).
+#[derive(Debug, Serialize, sqlx::FromRow)]
+pub struct ApiTokenInfo {
+    pub id: Uuid,
+    pub name: String,
+    pub last_used_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+}
+
+/// Throttle `last_used_at` writes to once per minute per token (Redis NX lock)
+/// so chatty MCP/CLI clients don't write-hot the table.
+const TOKEN_TOUCH_TTL_SECS: usize = 60;
+const TOKEN_TOUCH_KEY_PREFIX: &str = "terusin:tokentouch:";
+
+/// Update `last_used_at` at most once per minute per token. Best-effort:
+/// errors (Redis down, etc.) are silently ignored so a touch failure never
+/// fails an authenticated request.
+pub async fn touch_token_last_used(
+    redis: &mut redis::aio::ConnectionManager,
+    db: &sqlx::PgPool,
+    id: &Uuid,
+) {
+    let key = format!("{TOKEN_TOUCH_KEY_PREFIX}{id}");
+    let won: Option<()> = redis::cmd("SET")
+        .arg(&key)
+        .arg("1")
+        .arg("NX")
+        .arg("EX")
+        .arg(TOKEN_TOUCH_TTL_SECS)
+        .query_async(redis)
+        .await
+        .ok();
+    if won.is_some() {
+        let _ = sqlx::query("UPDATE api_tokens SET last_used_at = NOW() WHERE id = $1")
+            .bind(id)
+            .execute(db)
+            .await;
+    }
+}
+
+// ── Pairing codes (Redis-backed, ephemeral) ───────────────────────────────
+//
+// Spotify-style: the dashboard mints a 6-digit code (5-min TTL) bound to the
+// current user; the CLI submits it and receives a token in exchange. The code
+// is consumed atomically via GETDEL so a race between two CLIs only pairs one.
+
+const PAIR_KEY_PREFIX: &str = "terusin:pair:";
+const PAIR_TTL_SECS: i64 = 300;
+const PAIR_CODE_MAX: u32 = 1_000_000;
+
+/// Init pairing: mint a unique 6-digit code, store `{user_id}|{name}` in Redis
+/// with a 5-min TTL. Returns the code (zero-padded) + expiry.
+pub async fn init_pair(
+    redis: &mut redis::aio::ConnectionManager,
+    user_id: &Uuid,
+    name: &str,
+) -> anyhow::Result<(String, i64)> {
+    use rand::Rng;
+    // Retry until we find a free code (collision is very rare).
+    for _ in 0..10 {
+        let n: u32 = rand::thread_rng().gen_range(0..PAIR_CODE_MAX);
+        let code = format!("{n:06}");
+        let key = format!("{PAIR_KEY_PREFIX}{code}");
+        let value = format!("{user_id}|{name}");
+        let inserted: Option<()> = redis::cmd("SET")
+            .arg(&key)
+            .arg(&value)
+            .arg("NX")
+            .arg("EX")
+            .arg(PAIR_TTL_SECS)
+            .query_async(redis)
+            .await?;
+        if inserted.is_some() {
+            return Ok((code, PAIR_TTL_SECS));
+        }
+    }
+    anyhow::bail!("could not allocate a pairing code, try again");
+}
+
+/// Consume a pairing code atomically. Returns (user_id, device_name) on hit.
+pub async fn consume_pair(
+    redis: &mut redis::aio::ConnectionManager,
+    code: &str,
+) -> Option<(Uuid, String)> {
+    let key = format!("{PAIR_KEY_PREFIX}{code}");
+    let value: Option<String> = redis::cmd("GETDEL")
+        .arg(&key)
+        .query_async(redis)
+        .await
+        .ok()?;
+    let v = value?;
+    let (uid, name) = v.split_once('|')?;
+    let uid = Uuid::parse_str(uid).ok()?;
+    Some((uid, name.to_string()))
 }
 
 // ── Google API types ──────────────────────────────────────────────────────
@@ -463,7 +607,20 @@ pub async fn me(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Respo
         }
     }
 
-    // 2) Fall back to Basic auth (CLI / password login).
+    // 2) Try a Bearer API token (CLI / MCP).
+    let auth_hdr = headers
+        .get(header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    if let Some(bearer) = auth_hdr.strip_prefix("Bearer ").map(str::trim) {
+        if let Some(cu) = authenticate_bearer(&state, bearer).await {
+            if let Some(u) = fetch_user(&state.db, cu.id).await {
+                return user_json(u).into_response();
+            }
+        }
+    }
+
+    // 3) Fall back to Basic auth (CLI / password login).
     if let Some(u) = user_from_basic(&state.db, &headers).await {
         return user_json(u).into_response();
     }
@@ -481,7 +638,6 @@ async fn fetch_user(db: &PgPool, id: Uuid) -> Option<User> {
 }
 
 async fn user_from_basic(db: &PgPool, headers: &HeaderMap) -> Option<User> {
-    use base64::Engine;
     let h = headers
         .get(header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())?;
@@ -606,4 +762,181 @@ pub async fn logout(State(_state): State<Arc<AppState>>) -> Response {
         header::HeaderValue::from_str(&value).expect("cookie value"),
     );
     res
+}
+
+// ── Endpoint: POST /api/auth/pair/init  (protected) ───────────────────────
+//
+// Dashboard calls this while signed in. We mint a 6-digit code, store it in
+// Redis bound to the caller's user id + the device name they typed, and show
+// the code in the UI with a 5-minute countdown.
+
+#[derive(Deserialize)]
+pub struct PairInitRequest {
+    pub name: String,
+}
+
+pub async fn pair_init(
+    State(state): State<Arc<AppState>>,
+    axum::Extension(cu): axum::Extension<CurrentUser>,
+    Json(body): Json<PairInitRequest>,
+) -> Response {
+    let name = body.name.trim();
+    if name.is_empty() || name.len() > 120 {
+        return (
+            StatusCode::BAD_REQUEST,
+            "device name must be 1-120 chars",
+        )
+            .into_response();
+    }
+    let mut conn = state.redis.clone();
+    match init_pair(&mut conn, &cu.id, name).await {
+        Ok((code, expires_in)) => Json(serde_json::json!({
+            "code": code,
+            "expires_in": expires_in,
+        }))
+        .into_response(),
+        Err(e) => {
+            tracing::warn!("pair_init: {e}");
+            StatusCode::INTERNAL_SERVER_ERROR.into_response()
+        }
+    }
+}
+
+// ── Endpoint: POST /api/auth/pair  (PUBLIC — code is the credential) ──────
+//
+// The CLI posts the 6-digit code here. We atomically consume it (GETDEL), look
+// up the bound user, mint + persist a token, and return it once. The code can
+// only be used by exactly one CLI.
+
+#[derive(Deserialize)]
+pub struct PairRequest {
+    pub code: String,
+}
+
+pub async fn pair_complete(
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<PairRequest>,
+) -> Response {
+    let code = body.code.trim();
+    if !code.chars().all(|c| c.is_ascii_digit()) || code.len() != 6 {
+        return (StatusCode::BAD_REQUEST, "code must be 6 digits").into_response();
+    }
+    let mut conn = state.redis.clone();
+    let Some((user_id, name)) = consume_pair(&mut conn, code).await else {
+        return (StatusCode::NOT_FOUND, "invalid or expired code").into_response();
+    };
+
+    // Fetch the user's role so the token carries it.
+    let user: Option<User> = sqlx::query_as::<_, User>("SELECT * FROM users WHERE id = $1")
+        .bind(user_id)
+        .fetch_optional(&state.db)
+        .await
+        .ok()
+        .flatten();
+    let Some(user) = user else {
+        return (StatusCode::NOT_FOUND, "user not found").into_response();
+    };
+
+    let token = generate_token();
+    let hash = hash_token(&token);
+    let id = Uuid::new_v4();
+    let inserted = sqlx::query(
+        r#"INSERT INTO api_tokens (id, user_id, name, token_hash)
+           VALUES ($1, $2, $3, $4)"#,
+    )
+    .bind(id)
+    .bind(user_id)
+    .bind(&name)
+    .bind(&hash)
+    .execute(&state.db)
+    .await;
+    if let Err(e) = inserted {
+        tracing::error!("pair token insert: {e}");
+        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+    }
+
+    Json(serde_json::json!({
+        "token": token,           // shown once, never persisted
+        "token_id": id,
+        "name": name,
+        "role": user.role,
+    }))
+    .into_response()
+}
+
+// ── Endpoint: GET /api/auth/tokens  (protected) ───────────────────────────
+//
+// List the current user's active tokens. Excludes the hash + revoked tokens.
+
+pub async fn list_tokens(
+    State(state): State<Arc<AppState>>,
+    axum::Extension(cu): axum::Extension<CurrentUser>,
+) -> Response {
+    match sqlx::query_as::<_, ApiTokenInfo>(
+        r#"SELECT id, name, last_used_at, created_at FROM api_tokens
+           WHERE user_id = $1 AND revoked_at IS NULL
+           ORDER BY created_at DESC"#,
+    )
+    .bind(cu.id)
+    .fetch_all(&state.db)
+    .await
+    {
+        Ok(rows) => Json(rows).into_response(),
+        Err(e) => {
+            tracing::warn!("list_tokens: {e}");
+            StatusCode::INTERNAL_SERVER_ERROR.into_response()
+        }
+    }
+}
+
+// ── Endpoint: DELETE /api/auth/tokens/{id}  (protected) ───────────────────
+//
+// Revoke (soft-delete) a token. Only succeeds if the token belongs to the
+// current user, so one user can't revoke another's tokens.
+
+pub async fn revoke_token(
+    State(state): State<Arc<AppState>>,
+    axum::Extension(cu): axum::Extension<CurrentUser>,
+    axum::extract::Path(id): axum::extract::Path<Uuid>,
+) -> Response {
+    let res = sqlx::query(
+        "UPDATE api_tokens SET revoked_at = NOW() WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL",
+    )
+    .bind(id)
+    .bind(cu.id)
+    .execute(&state.db)
+    .await;
+    match res {
+        Ok(r) if r.rows_affected() > 0 => Json(serde_json::json!({"ok": true})).into_response(),
+        Ok(_) => StatusCode::NOT_FOUND.into_response(),
+        Err(e) => {
+            tracing::warn!("revoke_token: {e}");
+            StatusCode::INTERNAL_SERVER_ERROR.into_response()
+        }
+    }
+}
+
+/// Resolve a Bearer token to a CurrentUser for the auth middleware. Throttles
+/// `last_used_at` writes via Redis NX. Returns None on miss/revoked/error so
+/// the middleware falls through to the next auth method.
+pub async fn authenticate_bearer(
+    state: &crate::AppState,
+    token: &str,
+) -> Option<CurrentUser> {
+    // (token_id, user_id, role)
+    let row: Option<(Uuid, Uuid, String)> = sqlx::query_as::<_, (Uuid, Uuid, String)>(
+        r#"SELECT api_tokens.id, api_tokens.user_id, users.role
+           FROM api_tokens
+           JOIN users ON users.id = api_tokens.user_id
+           WHERE api_tokens.token_hash = $1 AND api_tokens.revoked_at IS NULL"#,
+    )
+    .bind(hash_token(token))
+    .fetch_optional(&state.db)
+    .await
+    .ok()?;
+    let (token_id, user_id, role) = row?;
+    // Best-effort touch on the token row; never fail the request on it.
+    let mut conn = state.redis.clone();
+    touch_token_last_used(&mut conn, &state.db, &token_id).await;
+    Some(CurrentUser { id: user_id, role })
 }

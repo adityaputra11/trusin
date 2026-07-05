@@ -289,7 +289,7 @@ export function Dashboard() {
     from: from ? `${from}T00:00:00` : undefined,
     to: to ? `${to}T23:59:59` : undefined,
     page,
-    per_page: 50,
+    per_page: 10,
   };
 
   // Live updates via SSE; falls back gracefully if the stream is unavailable.
