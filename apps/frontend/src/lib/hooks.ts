@@ -1,5 +1,6 @@
 // React Query hooks for the backend API.
 
+import { useEffect } from "react";
 import {
   useMutation,
   useQuery,
@@ -22,6 +23,8 @@ function buildEventsQuery(q: EventQuery): string {
   if (q.search) p.set("search", q.search);
   if (q.status && q.status !== "all") p.set("status", q.status);
   if (q.source) p.set("source", q.source);
+  if (q.from) p.set("from", q.from);
+  if (q.to) p.set("to", q.to);
   if (q.page) p.set("page", String(q.page));
   if (q.per_page) p.set("per_page", String(q.per_page));
   const s = p.toString();
@@ -144,4 +147,56 @@ export function useDeleteEvent() {
     mutationFn: (id: string) => api.delete(`/events/${id}`),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["events"] }),
   });
+}
+
+/** Distinct sources, for the dashboard source-filter dropdown. */
+export function useSources() {
+  return useQuery<string[]>({
+    queryKey: ["sources"],
+    queryFn: () => api.get<string[]>(`/events/sources`),
+    staleTime: 60_000,
+  });
+}
+
+export function useBulkRetry() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (ids: string[]) =>
+      api.post<{ enqueued: number }>(`/events/bulk/retry`, { ids }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["events"] }),
+  });
+}
+
+export function useBulkDelete() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (ids: string[]) =>
+      api.post<{ deleted: number }>(`/events/bulk/delete`, { ids }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["events"] }),
+  });
+}
+
+/**
+ * Subscribe to the live SSE event stream and invalidate the events query when
+ * a new event arrives, so the dashboard table refreshes without polling.
+ * Returns nothing — it's a side-effect hook. Pass `enabled=false` to pause.
+ */
+export function useEventStream(enabled: boolean) {
+  const qc = useQueryClient();
+  useEffect(() => {
+    if (!enabled) return;
+    const es = new EventSource("/events/stream");
+    const onEvent = () => {
+      // Invalidate all events queries (any filter/page).
+      qc.invalidateQueries({ queryKey: ["events"] });
+    };
+    es.addEventListener("event", onEvent);
+    es.onerror = () => {
+      // EventSource auto-reconnects; nothing to do here.
+    };
+    return () => {
+      es.removeEventListener("event", onEvent);
+      es.close();
+    };
+  }, [enabled, qc]);
 }

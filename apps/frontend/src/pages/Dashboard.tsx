@@ -1,7 +1,14 @@
 import { memo, useCallback, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Inbox, Search, RotateCw } from "lucide-react";
-import { useEvents } from "../lib/hooks";
+import { Inbox, Search, RotateCw, Trash2 } from "lucide-react";
+import {
+  useEvents,
+  useEventStream,
+  useSources,
+  useBulkRetry,
+  useBulkDelete,
+} from "../lib/hooks";
+import { useCanWrite } from "../lib/user-context";
 import { EndpointBox } from "../components/EndpointBox";
 import { EventRow } from "../components/EventRow";
 import {
@@ -33,16 +40,30 @@ const STATUS_FILTERS: { value: string; label: string }[] = [
 const FilterBar = memo(function FilterBar({
   search,
   status,
+  source,
+  sources,
+  from,
+  to,
   isFetching,
   onSearchChange,
   onStatusChange,
+  onSourceChange,
+  onFromChange,
+  onToChange,
   onRefresh,
 }: {
   search: string;
   status: string;
+  source: string;
+  sources: string[];
+  from: string;
+  to: string;
   isFetching: boolean;
   onSearchChange: (v: string) => void;
   onStatusChange: (v: string) => void;
+  onSourceChange: (v: string) => void;
+  onFromChange: (v: string) => void;
+  onToChange: (v: string) => void;
   onRefresh: () => void;
 }) {
   return (
@@ -59,7 +80,7 @@ const FilterBar = memo(function FilterBar({
       <Select
         value={status}
         onChange={(e) => onStatusChange(e.target.value)}
-        className="w-44"
+        className="w-40"
       >
         {STATUS_FILTERS.map((s) => (
           <option key={s.value} value={s.value}>
@@ -67,6 +88,32 @@ const FilterBar = memo(function FilterBar({
           </option>
         ))}
       </Select>
+      <Select
+        value={source}
+        onChange={(e) => onSourceChange(e.target.value)}
+        className="w-40"
+      >
+        <option value="">All sources</option>
+        {sources.map((s) => (
+          <option key={s} value={s}>
+            {s}
+          </option>
+        ))}
+      </Select>
+      <Input
+        type="date"
+        value={from}
+        onChange={(e) => onFromChange(e.target.value)}
+        className="w-36"
+        title="From date"
+      />
+      <Input
+        type="date"
+        value={to}
+        onChange={(e) => onToChange(e.target.value)}
+        className="w-36"
+        title="To date"
+      />
       <Button variant="ghost" size="md" onClick={onRefresh} loading={isFetching}>
         <RotateCw className="h-4 w-4" />
         Refresh
@@ -77,27 +124,42 @@ const FilterBar = memo(function FilterBar({
 
 export function Dashboard() {
   const navigate = useNavigate();
+  const canWrite = useCanWrite();
 
   // UI state (what the user typed) vs committed state (what we query for).
   // Splitting them lets us debounce the actual fetch without throttling input.
   const [searchInput, setSearchInput] = useState("");
   const [committedSearch, setCommittedSearch] = useState("");
   const [status, setStatus] = useState("all");
+  const [source, setSource] = useState("");
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
   const [page, setPage] = useState(1);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
 
   // Debounce timer in a ref: setting it never triggers a re-render.
-  // (Previously this lived in state — two renders per keystroke.)
   const debounceRef = useRef<number | undefined>(undefined);
 
   const query: EventQuery = {
     search: committedSearch || undefined,
     status,
+    source: source || undefined,
+    // Date inputs are YYYY-MM-DD; treat as created_at bounds.
+    from: from ? `${from}T00:00:00` : undefined,
+    to: to ? `${to}T23:59:59` : undefined,
     page,
     per_page: 50,
   };
 
+  // Live updates via SSE; falls back gracefully if the stream is unavailable.
+  useEventStream(true);
+  const { data: sources } = useSources();
+  const bulkRetry = useBulkRetry();
+  const bulkDelete = useBulkDelete();
+
+  // SSE pushes invalidate the query; keep a slow refetchInterval as a backstop.
   const { data, isLoading, isFetching, refetch } = useEvents(query, {
-    refetchInterval: 5000,
+    refetchInterval: 15000,
   });
 
   const onSearchChange = useCallback((value: string) => {
@@ -110,10 +172,35 @@ export function Dashboard() {
     );
   }, []);
 
-  const onStatusChange = useCallback((value: string) => {
-    setStatus(value);
-    setPage(1);
-  }, []);
+  const resetPage = useCallback(() => setPage(1), []);
+  const onStatusChange = useCallback(
+    (v: string) => {
+      setStatus(v);
+      resetPage();
+    },
+    [resetPage],
+  );
+  const onSourceChange = useCallback(
+    (v: string) => {
+      setSource(v);
+      resetPage();
+    },
+    [resetPage],
+  );
+  const onFromChange = useCallback(
+    (v: string) => {
+      setFrom(v);
+      resetPage();
+    },
+    [resetPage],
+  );
+  const onToChange = useCallback(
+    (v: string) => {
+      setTo(v);
+      resetPage();
+    },
+    [resetPage],
+  );
 
   const onRefresh = useCallback(() => {
     refetch();
@@ -128,6 +215,46 @@ export function Dashboard() {
 
   const events = data?.events ?? [];
 
+  const allVisibleIds = events.map((e) => e.id);
+  const allSelected =
+    allVisibleIds.length > 0 && allVisibleIds.every((id) => selected.has(id));
+
+  const toggleAll = useCallback(() => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (allSelected) {
+        for (const id of allVisibleIds) next.delete(id);
+      } else {
+        for (const id of allVisibleIds) next.add(id);
+      }
+      return next;
+    });
+  }, [allSelected, allVisibleIds]);
+
+  const toggleOne = useCallback((id: string) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+
+  const clearSelection = useCallback(() => setSelected(new Set()), []);
+
+  const onBulkRetry = useCallback(() => {
+    const ids = Array.from(selected);
+    if (ids.length === 0) return;
+    bulkRetry.mutate(ids, { onSuccess: clearSelection });
+  }, [selected, bulkRetry, clearSelection]);
+
+  const onBulkDelete = useCallback(() => {
+    const ids = Array.from(selected);
+    if (ids.length === 0) return;
+    if (!confirm(`Delete ${ids.length} selected event(s)?`)) return;
+    bulkDelete.mutate(ids, { onSuccess: clearSelection });
+  }, [selected, bulkDelete, clearSelection]);
+
   return (
     <div>
       <EndpointBox />
@@ -136,11 +263,37 @@ export function Dashboard() {
         <FilterBar
           search={searchInput}
           status={status}
+          source={source}
+          sources={sources ?? []}
+          from={from}
+          to={to}
           isFetching={isFetching && !isLoading}
           onSearchChange={onSearchChange}
           onStatusChange={onStatusChange}
+          onSourceChange={onSourceChange}
+          onFromChange={onFromChange}
+          onToChange={onToChange}
           onRefresh={onRefresh}
         />
+
+        {selected.size > 0 && canWrite && (
+          <div className="flex items-center justify-between gap-3 px-4 py-2 bg-hover border-b border-border text-sm">
+            <span className="text-secondary">
+              {selected.size} selected
+            </span>
+            <div className="flex items-center gap-2">
+              <Button size="sm" variant="success" onClick={onBulkRetry} loading={bulkRetry.isPending}>
+                <RotateCw className="h-3.5 w-3.5" /> Retry
+              </Button>
+              <Button size="sm" variant="danger" onClick={onBulkDelete} loading={bulkDelete.isPending}>
+                <Trash2 className="h-3.5 w-3.5" /> Delete
+              </Button>
+              <Button size="sm" variant="ghost" onClick={clearSelection}>
+                Clear
+              </Button>
+            </div>
+          </div>
+        )}
 
         {isLoading ? (
           <FullSpinner label="Loading events…" />
@@ -154,6 +307,17 @@ export function Dashboard() {
           <>
             <Table>
               <THead>
+                <TH className="w-8">
+                  {canWrite && (
+                    <input
+                      type="checkbox"
+                      checked={allSelected}
+                      onChange={toggleAll}
+                      className="accent-success cursor-pointer"
+                      aria-label="Select all"
+                    />
+                  )}
+                </TH>
                 <TH>ID</TH>
                 <TH>Source</TH>
                 <TH>Status</TH>
@@ -163,7 +327,13 @@ export function Dashboard() {
               </THead>
               <TBody>
                 {events.map((ev) => (
-                  <EventRow key={ev.id} event={ev} onClick={onRowClick} />
+                  <EventRow
+                    key={ev.id}
+                    event={ev}
+                    onClick={onRowClick}
+                    selected={selected.has(ev.id)}
+                    onSelect={canWrite ? toggleOne : undefined}
+                  />
                 ))}
               </TBody>
             </Table>

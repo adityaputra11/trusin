@@ -75,6 +75,8 @@ export interface EventQuery {
   search?: string;
   status?: string;
   source?: string;
+  from?: string;
+  to?: string;
   page?: number;
   per_page?: number;
 }
