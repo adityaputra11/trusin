@@ -87,7 +87,7 @@ struct ProxyState {
 /// Routes that should be forwarded to the backend API. Anything else is
 /// served from the SPA bundle (or 404 → index.html for client routing).
 const API_PREFIXES: &[&str] =
-    &["/events", "/rules", "/config", "/health", "/api"];
+    &["/events", "/rules", "/config", "/health", "/stats", "/api"];
 
 fn is_api_path(path: &str) -> bool {
     API_PREFIXES

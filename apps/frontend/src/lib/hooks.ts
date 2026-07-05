@@ -14,6 +14,7 @@ import type {
   EventQuery,
   ForwardRule,
   ListEventsResponse,
+  Metrics,
   UpdateRuleInput,
   WebhookEvent,
 } from "../types/api";
@@ -155,6 +156,18 @@ export function useSources() {
     queryKey: ["sources"],
     queryFn: () => api.get<string[]>(`/events/sources`),
     staleTime: 60_000,
+  });
+}
+
+export type MetricsRange = "24h" | "7d" | "30d";
+
+/** Aggregated observability metrics. Polls every 30s. (Backend route is
+ * `/stats` to avoid clashing with the `/metrics` SPA route.) */
+export function useMetrics(range: MetricsRange) {
+  return useQuery<Metrics>({
+    queryKey: ["metrics", range],
+    queryFn: () => api.get<Metrics>(`/stats?range=${range}`),
+    refetchInterval: 30_000,
   });
 }
 

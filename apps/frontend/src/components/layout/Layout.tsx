@@ -8,6 +8,7 @@ const TITLES: Record<string, { title: string; subtitle: string }> = {
   "/": { title: "Dashboard", subtitle: "Webhook events & delivery status" },
   "/providers": { title: "Providers", subtitle: "Source → target mappings" },
   "/hooks": { title: "Hooks", subtitle: "Forwarding rules" },
+  "/metrics": { title: "Metrics", subtitle: "Throughput, success rate & top sources" },
   "/send": { title: "Send", subtitle: "Send a custom webhook" },
 };
 

@@ -21,6 +21,9 @@ export default defineConfig({
       "/rules": "http://localhost:3011",
       "/config": "http://localhost:3011",
       "/health": "http://localhost:3011",
+      // /stats is the backend metrics-aggregation endpoint (renamed from
+      // /metrics to avoid clashing with the SPA /metrics route).
+      "/stats": "http://localhost:3011",
       // OAuth + auth endpoints — same-origin so the session cookie set by the
       // backend's /api/auth/callback/google is sent on subsequent requests.
       "/api": {

@@ -85,3 +85,27 @@ export interface EndpointInfo {
   endpoint: string;
   ngrok: string | null;
 }
+
+export interface MetricsBucket {
+  bucket: string; // "YYYY-MM-DDTHH:MM:SS"
+  count: number;
+}
+
+export interface MetricsTopItem {
+  source?: string;
+  target?: string;
+  count: number;
+}
+
+export interface Metrics {
+  range_hours: number;
+  total: number;
+  delivered: number;
+  failed: number;
+  success_rate: number;
+  queue_depth: number;
+  retry_depth: number;
+  series: MetricsBucket[];
+  top_sources: MetricsTopItem[];
+  top_targets: MetricsTopItem[];
+}

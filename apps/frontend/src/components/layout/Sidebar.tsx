@@ -5,6 +5,7 @@ import {
   Webhook,
   Send,
   Settings2,
+  BarChart3,
   type LucideIcon,
 } from "lucide-react";
 import { useCanWrite } from "../../lib/user-context";
@@ -21,6 +22,7 @@ const NAV_ITEMS: NavItem[] = [
   { to: "/", label: "Dashboard", icon: LayoutDashboard, end: true },
   { to: "/providers", label: "Providers", icon: Settings2 },
   { to: "/hooks", label: "Hooks", icon: Webhook },
+  { to: "/metrics", label: "Metrics", icon: BarChart3 },
   { to: "/send", label: "Send", icon: Send, adminOnly: true },
 ];
 

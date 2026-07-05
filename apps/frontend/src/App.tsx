@@ -10,6 +10,7 @@ import { EventDetail } from "./pages/EventDetail";
 import { Providers } from "./pages/Providers";
 import { Hooks } from "./pages/Hooks";
 import { SendWebhook } from "./pages/SendWebhook";
+import { Metrics } from "./pages/Metrics";
 import { isLoggedIn } from "./lib/auth";
 import { useMe } from "./lib/hooks";
 import { FullSpinner } from "./components/ui";
@@ -44,6 +45,7 @@ const router = createBrowserRouter([
       { path: "/event/:id", element: <EventDetail /> },
       { path: "/providers", element: <Providers /> },
       { path: "/hooks", element: <Hooks /> },
+      { path: "/metrics", element: <Metrics /> },
       { path: "/send", element: <SendWebhook /> },
     ],
   },
