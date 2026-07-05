@@ -6,6 +6,7 @@ import {
   Send,
   Settings2,
   BarChart3,
+  Settings,
   type LucideIcon,
 } from "lucide-react";
 import { useCanWrite } from "../../lib/user-context";
@@ -24,6 +25,7 @@ const NAV_ITEMS: NavItem[] = [
   { to: "/hooks", label: "Hooks", icon: Webhook },
   { to: "/metrics", label: "Metrics", icon: BarChart3 },
   { to: "/send", label: "Send", icon: Send, adminOnly: true },
+  { to: "/settings", label: "Settings", icon: Settings },
 ];
 
 export const Sidebar = memo(function Sidebar() {

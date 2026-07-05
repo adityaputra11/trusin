@@ -10,6 +10,7 @@ const TITLES: Record<string, { title: string; subtitle: string }> = {
   "/hooks": { title: "Hooks", subtitle: "Forwarding rules" },
   "/metrics": { title: "Metrics", subtitle: "Throughput, success rate & top sources" },
   "/send": { title: "Send", subtitle: "Send a custom webhook" },
+  "/settings": { title: "Settings", subtitle: "MCP setup & system status" },
 };
 
 function titlesFor(pathname: string) {

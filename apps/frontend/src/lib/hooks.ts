@@ -73,6 +73,18 @@ export function useEndpoint() {
   });
 }
 
+export interface HealthStatus {
+  status: string;
+}
+
+export function useHealth() {
+  return useQuery<HealthStatus>({
+    queryKey: ["health"],
+    queryFn: () => api.get<HealthStatus>(`/health`),
+    refetchInterval: 15_000,
+  });
+}
+
 export interface SessionUser {
   id: string;
   username: string | null;
