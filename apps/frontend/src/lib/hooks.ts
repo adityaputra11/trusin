@@ -8,6 +8,7 @@ import {
 import { api } from "./api";
 import type {
   CreateRuleInput,
+  DeliveryAttempt,
   EndpointInfo,
   EventQuery,
   ForwardRule,
@@ -41,6 +42,22 @@ export function useEvent(id: string | undefined) {
     queryKey: ["event", id],
     queryFn: () => api.get<WebhookEvent>(`/events/${id}`),
     enabled: !!id,
+  });
+}
+
+/** Delivery attempts for the per-event timeline. Polls while the event is
+ * still in flight (queued/retrying) so the timeline updates live. */
+export function useAttempts(
+  eventId: string | undefined,
+  eventStatus: string | undefined,
+) {
+  const inFlight =
+    eventStatus === "queued" || eventStatus === "retrying";
+  return useQuery<DeliveryAttempt[]>({
+    queryKey: ["attempts", eventId],
+    queryFn: () => api.get<DeliveryAttempt[]>(`/events/${eventId}/attempts`),
+    enabled: !!eventId,
+    refetchInterval: inFlight ? 3000 : false,
   });
 }
 

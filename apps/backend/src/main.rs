@@ -41,6 +41,39 @@ fn hex_encode(bytes: &[u8]) -> String {
     s
 }
 
+/// Persist a single delivery attempt for the per-event timeline. Best-effort:
+/// logging must never break delivery. `attempt_number` is 1-based and reflects
+/// the event's retry_count *before* this attempt (so the first try is #1).
+#[allow(clippy::too_many_arguments)]
+async fn record_attempt(
+    db: &sqlx::PgPool,
+    event_id: Uuid,
+    attempt_number: i32,
+    status: &str,
+    http_status: Option<i32>,
+    response_headers: Option<&serde_json::Value>,
+    response_body: Option<&str>,
+    error: Option<&str>,
+    duration_ms: Option<i32>,
+) {
+    let _ = sqlx::query(
+        r#"INSERT INTO delivery_attempts
+           (event_id, attempt_number, status, http_status, response_headers, response_body, error, duration_ms)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)"#,
+    )
+    .bind(event_id)
+    .bind(attempt_number)
+    .bind(status)
+    .bind(http_status)
+    .bind(response_headers)
+    .bind(response_body)
+    .bind(error)
+    .bind(duration_ms)
+    .execute(db)
+    .await
+    .map(|_| ());
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 struct WebhookEvent {
     id: Uuid,
@@ -71,6 +104,21 @@ struct ForwardRule {
     signing_secret: Option<String>,
 }
 
+/// One outbound delivery attempt. Used for the per-event retry timeline.
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+struct DeliveryAttempt {
+    id: Uuid,
+    event_id: Uuid,
+    attempt_number: i32,
+    status: String,
+    http_status: Option<i32>,
+    response_headers: Option<serde_json::Value>,
+    response_body: Option<String>,
+    error: Option<String>,
+    duration_ms: Option<i32>,
+    created_at: chrono::NaiveDateTime,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 struct User {
     id: Uuid,
@@ -98,6 +146,11 @@ struct AppState {
     oauth: Option<Arc<auth::OAuthConfig>>,
     /// Present when Cloudflare Turnstile is configured (TURNSTILE_SECRET_KEY set).
     turnstile: Option<Arc<auth::TurnstileConfig>>,
+    /// Per-IP rate limiter for the login endpoint (5/min). Shared so handlers
+    /// can call `check_key` directly without a separate middleware layer.
+    login_limiter: Arc<KeyedLimiter>,
+    /// Per-IP rate limiter for /api/auth/me (30/min — called on every page load).
+    me_limiter: Arc<KeyedLimiter>,
 }
 
 mod auth;
@@ -363,7 +416,11 @@ async fn worker(db: sqlx::PgPool, mut redis: ConnectionManager, max_retries: i32
                 req = req.header("X-Terusin-Signature", sign_body(secret, &body_bytes));
             }
         }
+        let started = tokio::time::Instant::now();
         let res = req.send().await;
+        let duration_ms = Some(started.elapsed().as_millis() as i32);
+        // attempt_number is 1-based: first try is #1, matches retry_count before increment.
+        let attempt_number = event.retry_count + 1;
 
         let already = || async {
             sqlx::query_scalar::<_, String>("SELECT status FROM webhook_events WHERE id = $1")
@@ -379,8 +436,13 @@ async fn worker(db: sqlx::PgPool, mut redis: ConnectionManager, max_retries: i32
                 }
                 let resp_h = serde_json::Value::Object(resp_h);
                 let resp_b = r.text().await.ok();
+                let resp_b_ref = resp_b.as_deref();
 
                 if status < 300 {
+                    record_attempt(
+                        &db, id, attempt_number, "delivered", Some(status),
+                        Some(&resp_h), resp_b_ref, None, duration_ms,
+                    ).await;
                     sqlx::query(
                         "UPDATE webhook_events SET status = 'delivered', response_status = $1, response_headers = $2, response_body = $3 WHERE id = $4 AND status != 'delivered'",
                     )
@@ -389,6 +451,10 @@ async fn worker(db: sqlx::PgPool, mut redis: ConnectionManager, max_retries: i32
                     info!("delivered {id} -> {} ({})", event.target_url, status);
                     forward_to_rules(&db, &event, &client).await;
                 } else {
+                    record_attempt(
+                        &db, id, attempt_number, "failed", Some(status),
+                        Some(&resp_h), resp_b_ref, None, duration_ms,
+                    ).await;
                     sqlx::query(
                         "UPDATE webhook_events SET status = 'failed', response_status = $1, response_headers = $2, response_body = $3 WHERE id = $4 AND status != 'delivered'",
                     )
@@ -397,10 +463,15 @@ async fn worker(db: sqlx::PgPool, mut redis: ConnectionManager, max_retries: i32
                     tracing::warn!("failed {id} -> {} ({})", event.target_url, status);
                 }
             }
-            Err(_e) => {
+            Err(e) => {
                 if already().await { continue; }
+                let err_msg = e.to_string();
                 let retry_count = event.retry_count + 1;
                 if retry_count > max_retries {
+                    record_attempt(
+                        &db, id, attempt_number, "failed", None, None, None,
+                        Some(&err_msg), duration_ms,
+                    ).await;
                     sqlx::query(
                         "UPDATE webhook_events SET status = 'failed', retry_count = $1 WHERE id = $2 AND status != 'delivered'",
                     )
@@ -408,6 +479,10 @@ async fn worker(db: sqlx::PgPool, mut redis: ConnectionManager, max_retries: i32
                     .execute(&db).await.ok();
                     tracing::warn!("failed {id} after {retry_count} attempts");
                 } else {
+                    record_attempt(
+                        &db, id, attempt_number, "retrying", None, None, None,
+                        Some(&err_msg), duration_ms,
+                    ).await;
                     sqlx::query(
                         "UPDATE webhook_events SET status = 'retrying', retry_count = $1 WHERE id = $2 AND status != 'delivered'",
                     )
@@ -475,27 +550,76 @@ async fn retry_worker(db: sqlx::PgPool, mut redis: ConnectionManager) {
                         req = req.header("X-Terusin-Signature", sign_body(secret, &body_bytes));
                     }
                 }
+                let started = tokio::time::Instant::now();
                 let res = req.send().await;
+                let duration_ms = Some(started.elapsed().as_millis() as i32);
+                let attempt_number = event.retry_count + 1;
 
                 let is_delivered = sqlx::query_scalar::<_, String>("SELECT status FROM webhook_events WHERE id = $1")
                     .bind(id).fetch_optional(&db).await.ok().flatten().unwrap_or_default() == "delivered";
                 if is_delivered { continue; }
 
                 match res {
-                    Ok(r) if r.status().is_success() => {
-                        sqlx::query(
-                            "UPDATE webhook_events SET status = 'delivered' WHERE id = $1 AND status != 'delivered'",
-                        )
-                        .bind(id)
-                        .execute(&db)
-                        .await
-                        .ok();
-                        info!("retry delivered {id}");
-                        forward_to_rules(&db, &event, &client).await;
+                    Ok(r) => {
+                        let status = r.status().as_u16() as i32;
+                        let ok = status < 300;
+                        let mut resp_h = serde_json::Map::new();
+                        for (k, v) in r.headers() {
+                            resp_h.insert(k.to_string(), serde_json::Value::String(v.to_str().unwrap_or("").to_string()));
+                        }
+                        let resp_h = serde_json::Value::Object(resp_h);
+                        let resp_b = r.text().await.ok();
+                        let resp_b_ref = resp_b.as_deref();
+
+                        if ok {
+                            record_attempt(
+                                &db, id, attempt_number, "delivered", Some(status),
+                                Some(&resp_h), resp_b_ref, None, duration_ms,
+                            ).await;
+                            sqlx::query(
+                                "UPDATE webhook_events SET status = 'delivered', response_status = $1, response_headers = $2, response_body = $3 WHERE id = $4 AND status != 'delivered'",
+                            )
+                            .bind(status).bind(&resp_h).bind(&resp_b).bind(id)
+                            .execute(&db).await.ok();
+                            info!("retry delivered {id}");
+                            forward_to_rules(&db, &event, &client).await;
+                        } else {
+                            record_attempt(
+                                &db, id, attempt_number, "failed", Some(status),
+                                Some(&resp_h), resp_b_ref, None, duration_ms,
+                            ).await;
+                            let retry_count = event.retry_count + 1;
+                            if retry_count > event.max_retries {
+                                sqlx::query(
+                                    "UPDATE webhook_events SET status = 'failed', retry_count = $1 WHERE id = $2 AND status != 'delivered'",
+                                )
+                                .bind(retry_count)
+                                .bind(id)
+                                .execute(&db)
+                                .await
+                                .ok();
+                                tracing::warn!("retry failed {id} after {retry_count} attempts");
+                            } else {
+                                let delay = 10 * 2u64.pow(retry_count as u32);
+                                let retry_at = Utc::now().timestamp() as i64 + delay as i64;
+                                redis::cmd("ZADD")
+                                    .arg(RETRY_KEY)
+                                    .arg(retry_at)
+                                    .arg(id.to_string())
+                                    .query_async::<()>(&mut redis)
+                                    .await
+                                    .ok();
+                            }
+                        }
                     }
-                    _ => {
+                    Err(e) => {
+                        let err_msg = e.to_string();
                         let retry_count = event.retry_count + 1;
                         if retry_count > event.max_retries {
+                            record_attempt(
+                                &db, id, attempt_number, "failed", None, None, None,
+                                Some(&err_msg), duration_ms,
+                            ).await;
                             sqlx::query(
                                 "UPDATE webhook_events SET status = 'failed', retry_count = $1 WHERE id = $2 AND status != 'delivered'",
                             )
@@ -506,6 +630,10 @@ async fn retry_worker(db: sqlx::PgPool, mut redis: ConnectionManager) {
                             .ok();
                             tracing::warn!("retry failed {id} after {retry_count} attempts");
                         } else {
+                            record_attempt(
+                                &db, id, attempt_number, "retrying", None, None, None,
+                                Some(&err_msg), duration_ms,
+                            ).await;
                             let delay = 10 * 2u64.pow(retry_count as u32);
                             let retry_at = Utc::now().timestamp() as i64 + delay as i64;
                             redis::cmd("ZADD")
@@ -666,6 +794,21 @@ async fn get_event(
             .await
             .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     event.map(Json).ok_or(StatusCode::NOT_FOUND)
+}
+
+/// Delivery attempts for the per-event retry timeline (newest last).
+async fn list_attempts(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<Vec<DeliveryAttempt>>, StatusCode> {
+    let rows = sqlx::query_as::<_, DeliveryAttempt>(
+        "SELECT * FROM delivery_attempts WHERE event_id = $1 ORDER BY attempt_number ASC, created_at ASC",
+    )
+    .bind(id)
+    .fetch_all(&state.db)
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(rows))
 }
 
 async fn retry_event(
@@ -959,6 +1102,72 @@ fn build_cors_layer() -> tower_http::cors::CorsLayer {
     }
 }
 
+/// Keyed rate limiter type used for per-IP auth throttling.
+pub type KeyedLimiter = governor::RateLimiter<
+    std::net::IpAddr,
+    governor::state::keyed::DefaultKeyedStateStore<std::net::IpAddr>,
+    governor::clock::DefaultClock,
+>;
+
+/// Build a keyed rate limiter (GCRA via `governor`).
+///
+/// `period_secs` / `burst` define the quota. Requests are keyed on the
+/// forwarded client IP (Cloudflare → Caddy → backend sets XFF/X-Real-IP);
+/// when no forwarded header is present 0.0.0.0 is used as a fallback so the
+/// limiter always has a key. Wrap with
+/// `middleware::from_fn_with_state(limiter, rate_limit_middleware)` to attach
+/// to a router — over-quota requests get HTTP 429 + `Retry-After`.
+fn build_rate_limiter(period_secs: u64, burst: u32) -> std::sync::Arc<KeyedLimiter> {
+    use std::num::NonZeroU32;
+    let quota = governor::Quota::with_period(std::time::Duration::from_secs(period_secs))
+        .expect("non-zero period")
+        .allow_burst(NonZeroU32::new(burst).expect("non-zero burst"));
+    std::sync::Arc::new(governor::RateLimiter::keyed(quota))
+}
+
+/// Check a per-IP rate limiter; on quota exceeded, returns a 429 Response
+/// with `Retry-After` set. Otherwise returns None (caller continues).
+pub fn check_rate_limit(
+    limiter: &KeyedLimiter,
+    ip: std::net::IpAddr,
+) -> Option<Response> {
+    use governor::clock::{Clock, Reference};
+    match limiter.check_key(&ip) {
+        Ok(_) => None,
+        Err(negative) => {
+            let clock = governor::clock::DefaultClock::default();
+            let wait = negative.wait_time_from(clock.now());
+            let secs = wait.as_secs().max(1);
+            let mut res = (
+                StatusCode::TOO_MANY_REQUESTS,
+                Json(json!({ "error": "rate_limited", "retry_after": secs })),
+            )
+                .into_response();
+            res.headers_mut().insert(
+                axum::http::header::RETRY_AFTER,
+                axum::http::HeaderValue::from_str(&secs.to_string())
+                    .unwrap_or_else(|_| axum::http::HeaderValue::from_static("60")),
+            );
+            Some(res)
+        }
+    }
+}
+
+fn client_ip_from(req: &Request) -> Option<std::net::IpAddr> {
+    let h = req.headers();
+    h.get("CF-Connecting-IP")
+        .or_else(|| h.get("X-Real-IP"))
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.trim().parse().ok())
+        .or_else(|| {
+            h.get(axum::http::header::FORWARDED)
+                .or_else(|| h.get("X-Forwarded-For"))
+                .and_then(|v| v.to_str().ok())
+                .and_then(|s| s.split(',').next())
+                .and_then(|s| s.trim().parse().ok())
+        })
+}
+
 #[tokio::main]
 async fn main() {
     tracing_subscriber::fmt::init();
@@ -1000,6 +1209,10 @@ async fn main() {
         info!("turnstile captcha disabled (set TURNSTILE_SECRET_KEY to enable)");
     }
 
+    // Per-IP rate limiters for the auth endpoints. In-memory (per-process).
+    let login_limiter = build_rate_limiter(60, 5);
+    let me_limiter = build_rate_limiter(60, 30);
+
     let state = Arc::new(AppState {
         db: db.clone(),
         redis: main_redis,
@@ -1007,6 +1220,8 @@ async fn main() {
         default_target: std::sync::Mutex::new(default_target),
         oauth,
         turnstile,
+        login_limiter: login_limiter.clone(),
+        me_limiter: me_limiter.clone(),
     });
 
     let worker_count: usize = std::env::var("WORKER_COUNT")
@@ -1019,33 +1234,20 @@ async fn main() {
     let r_redis = ConnectionManager::new(redis_from_env()).await.unwrap();
     tokio::spawn(retry_worker(db, r_redis));
 
-    // Rate limit the auth endpoints that accept credentials. Two buckets:
-    //   - /api/auth/login : tight (5/min per IP) — primary brute-force target
-    //   - /api/auth/me    : looser (30/min per IP) — called on every page load
-    // In-memory (per-process). OK for a single-server deploy. Keyed on the
-    // forwarded client IP since traffic flows Cloudflare → Caddy → backend.
-    let login_limiter = build_rate_limiter(60, 5);
-    let me_limiter = build_rate_limiter(60, 30);
-
-    let auth_router = Router::new()
-        // Username/password login with optional Cloudflare Turnstile.
-        .route("/api/auth/login", axum::routing::post(auth::login))
-        .layer(login_limiter)
-        .route("/api/auth/me", get(auth::me))
-        .layer(me_limiter);
-
     let public = Router::new()
         .route("/config/default-target", get(get_default_target).post(set_default_target))
         .route("/config/endpoint", get(get_endpoint))
         // OAuth endpoints (callback must be reachable cross-origin via redirect).
         .route("/api/auth/google", get(auth::google_login))
         .route("/api/auth/callback/google", get(auth::google_callback))
-        .route("/api/auth/logout", axum::routing::post(auth::logout))
-        .merge(auth_router);
+        .route("/api/auth/me", get(auth::me))
+        .route("/api/auth/login", axum::routing::post(auth::login))
+        .route("/api/auth/logout", axum::routing::post(auth::logout));
 
     let protected = Router::new()
         .route("/events", get(list_events))
         .route("/events/{id}", get(get_event).delete(delete_event))
+        .route("/events/{id}/attempts", get(list_attempts))
         .route("/events/{id}/retry", post(retry_event))
         .route("/events/{id}/ack", post(ack_event))
         .route("/rules", get(list_rules).post(create_rule))

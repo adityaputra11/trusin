@@ -17,6 +17,20 @@ export interface WebhookEvent {
   response_body: string | null;
 }
 
+/** One outbound delivery attempt (retry timeline entry). */
+export interface DeliveryAttempt {
+  id: string;
+  event_id: string;
+  attempt_number: number;
+  status: "delivered" | "failed" | "retrying" | "network_error";
+  http_status: number | null;
+  response_headers: Record<string, string> | null;
+  response_body: string | null;
+  error: string | null;
+  duration_ms: number | null;
+  created_at: string;
+}
+
 export interface ForwardRule {
   id: string;
   name: string;

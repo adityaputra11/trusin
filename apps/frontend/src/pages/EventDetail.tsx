@@ -7,8 +7,9 @@ import {
   Clock,
   Inbox,
   Trash2,
+  History,
 } from "lucide-react";
-import { useEvent, useRetryEvent, useDeleteEvent } from "../lib/hooks";
+import { useEvent, useRetryEvent, useDeleteEvent, useAttempts } from "../lib/hooks";
 import { useCanWrite } from "../lib/user-context";
 import { StatusBadge } from "../components/StatusBadge";
 import {
@@ -53,6 +54,7 @@ export function EventDetail() {
   const retry = useRetryEvent();
   const deleteEvent = useDeleteEvent();
   const canWrite = useCanWrite();
+  const { data: attempts } = useAttempts(id, ev?.status);
 
   if (isLoading) return <FullSpinner label="Loading event…" />;
 
@@ -199,6 +201,76 @@ export function EventDetail() {
           )}
         </Card>
       </div>
+
+      <DeliveryTimeline attempts={attempts ?? []} />
     </div>
+  );
+}
+
+/** Vertical timeline of every delivery attempt for the event. */
+function DeliveryTimeline({
+  attempts,
+}: {
+  attempts: import("../types/api").DeliveryAttempt[];
+}) {
+  if (attempts.length === 0) return null;
+  return (
+    <Card className="mt-6">
+      <CardHeader
+        title="Delivery attempts"
+        subtitle={`${attempts.length} attempt${attempts.length === 1 ? "" : "s"}`}
+      />
+      <ol className="relative border-l border-border ml-3 space-y-4">
+        {attempts.map((a) => {
+          const ok = a.status === "delivered";
+          const retry = a.status === "retrying";
+          return (
+            <li key={a.id} className="ml-6">
+              <span
+                className={`absolute -left-[9px] flex h-4 w-4 items-center justify-center rounded-full ring-4 ring-card ${
+                  ok
+                    ? "bg-success"
+                    : retry
+                      ? "bg-warning"
+                      : "bg-danger"
+                }`}
+              />
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                <span className="text-sm font-semibold text-foreground">
+                  #{a.attempt_number}
+                </span>
+                <StatusBadge status={a.status} />
+                {a.http_status !== null && (
+                  <code className="text-xs text-secondary font-mono">
+                    HTTP {a.http_status}
+                  </code>
+                )}
+                {a.duration_ms !== null && (
+                  <span className="text-xs text-muted">{a.duration_ms} ms</span>
+                )}
+                <span className="text-xs text-muted">
+                  {formatDateTime(a.created_at)}
+                </span>
+              </div>
+              {a.error && (
+                <p className="mt-1 text-xs text-danger font-mono break-all">
+                  {a.error}
+                </p>
+              )}
+              {a.response_body && (
+                <details className="mt-2 group">
+                  <summary className="text-xs text-muted cursor-pointer hover:text-secondary select-none flex items-center gap-1">
+                    <History className="h-3 w-3" /> response body
+                  </summary>
+                  <pre className="mt-2 bg-surface border border-border rounded-md p-3 text-xs text-secondary font-mono overflow-x-auto max-h-60">
+                    {prettyJson(a.response_body)}
+                  </pre>
+                </details>
+              )}
+            </li>
+          );
+        })}
+      </ol>
+    </Card>
   );
 }
