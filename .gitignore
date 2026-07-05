@@ -1,3 +1,10 @@
 target/
 .env
 *.log
+
+# Frontend (Vite / React)
+apps/frontend/node_modules/
+apps/frontend/dist/
+
+# TypeScript build artifacts
+*.tsbuildinfo

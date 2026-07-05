@@ -50,9 +50,19 @@ struct ForwardRule {
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 struct User {
     id: Uuid,
-    username: String,
-    password_hash: String,
+    username: Option<String>,
+    password_hash: Option<String>,
     role: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    email: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    display_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    avatar_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    oauth_provider: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    oauth_subject: Option<String>,
 }
 
 struct AppState {
@@ -60,7 +70,11 @@ struct AppState {
     redis: ConnectionManager,
     max_retries: i32,
     default_target: std::sync::Mutex<String>,
+    /// Present when Google OAuth is configured (GOOGLE_CLIENT_ID/SECRET set).
+    oauth: Option<Arc<auth::OAuthConfig>>,
 }
+
+mod auth;
 
 fn headers_to_json(headers: &HeaderMap) -> serde_json::Value {
     let mut map = serde_json::Map::new();
@@ -86,6 +100,27 @@ async fn auth_middleware(
     req: Request<Body>,
     next: Next,
 ) -> Result<Response, Response> {
+    // 1) Try the session JWT cookie first (Google OAuth users).
+    if let Some(cfg) = &state.oauth {
+        if let Some(cookie) = req.headers().get("Cookie").and_then(|v| v.to_str().ok()) {
+            if let Some(token) = extract_session_cookie(cookie) {
+                if let Some(uid) = auth::verify_jwt(&token, &cfg.jwt_secret) {
+                    let exists =
+                        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM users WHERE id = $1")
+                            .bind(uid)
+                            .fetch_one(&state.db)
+                            .await
+                            .map(|n| n > 0)
+                            .unwrap_or(false);
+                    if exists {
+                        return Ok(next.run(req).await);
+                    }
+                }
+            }
+        }
+    }
+
+    // 2) Fall back to HTTP Basic auth (CLI / MCP / password logins).
     let header = req
         .headers()
         .get("Authorization")
@@ -114,7 +149,12 @@ async fn auth_middleware(
             .map_err(|_| unauth())?;
 
             match db_user {
-                Some(u) if bcrypt::verify(&pass, &u.password_hash).unwrap_or(false) => {
+                Some(u)
+                    if u.password_hash
+                        .as_ref()
+                        .map(|h| bcrypt::verify(&pass, h).unwrap_or(false))
+                        .unwrap_or(false) =>
+                {
                     Ok(next.run(req).await)
                 }
                 _ => Err(unauth()),
@@ -122,6 +162,17 @@ async fn auth_middleware(
         }
         None => Err(unauth()),
     }
+}
+
+/// Pull the value of the `terusin_session` cookie out of a Cookie header.
+fn extract_session_cookie(cookie_header: &str) -> Option<String> {
+    for kv in cookie_header.split(';') {
+        let kv = kv.trim();
+        if let Some(rest) = kv.strip_prefix(&format!("{}=", auth::COOKIE_NAME)) {
+            return Some(rest.to_string());
+        }
+    }
+    None
 }
 
 async fn seed_default_user(db: &sqlx::PgPool) {
@@ -525,6 +576,19 @@ async fn list_events(
     })))
 }
 
+async fn get_event(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<WebhookEvent>, StatusCode> {
+    let event =
+        sqlx::query_as::<_, WebhookEvent>("SELECT * FROM webhook_events WHERE id = $1")
+            .bind(id)
+            .fetch_optional(&state.db)
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    event.map(Json).ok_or(StatusCode::NOT_FOUND)
+}
+
 async fn retry_event(
     State(state): State<Arc<AppState>>,
     Path(id): Path<Uuid>,
@@ -651,9 +715,81 @@ async fn health() -> Json<serde_json::Value> {
     Json(serde_json::json!({"status": "ok"}))
 }
 
+/// Probe ngrok's local API (port 4040) for an active public tunnel.
+/// Only reachable when ngrok runs on the same host as the backend.
+async fn get_ngrok_url() -> Option<String> {
+    let d: serde_json::Value = reqwest::get("http://127.0.0.1:4040/api/tunnels")
+        .await
+        .ok()?
+        .json()
+        .await
+        .ok()?;
+    for t in d["tunnels"].as_array()? {
+        if t["proto"].as_str() == Some("https") {
+            return t["public_url"].as_str().map(|s| s.to_string());
+        }
+    }
+    d["tunnels"][0]
+        .get("public_url")?
+        .as_str()
+        .map(|s| s.to_string())
+}
+
+/// Public endpoint info for the dashboard: the configured PUBLIC_URL plus the
+/// live ngrok tunnel if one is running. Replaces the SSR web app's server-side
+/// ngrok probe, which a browser cannot reach directly.
+async fn get_endpoint() -> Json<serde_json::Value> {
+    let public_url = std::env::var("PUBLIC_URL")
+        .unwrap_or_else(|_| "https://terusin-dev.my.id".to_string());
+    let ngrok = get_ngrok_url().await;
+    Json(serde_json::json!({
+        "endpoint": public_url,
+        "ngrok": ngrok,
+    }))
+}
+
 fn redis_from_env() -> redis::Client {
     let url = std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1:6379".to_string());
     redis::Client::open(url).expect("invalid redis url")
+}
+
+/// Build the CORS layer from WEB_URL env (comma-separated origins).
+/// Defaults to the Vite dev server and the embedded prod binary origins.
+fn build_cors_layer() -> tower_http::cors::CorsLayer {
+    use tower_http::cors::{Any, CorsLayer};
+
+    let raw = std::env::var("WEB_URL").unwrap_or_else(|_| {
+        "http://localhost:5173,http://localhost:3012,http://127.0.0.1:5173,http://127.0.0.1:3012"
+            .to_string()
+    });
+
+    let origins: Vec<_> = raw
+        .split(',')
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .filter_map(|s| s.parse::<axum::http::HeaderValue>().ok())
+        .collect();
+
+    if origins.is_empty() {
+        CorsLayer::new().allow_origin(Any).allow_methods(Any).allow_headers(Any)
+    } else {
+        CorsLayer::new()
+            .allow_origin(origins)
+            .allow_methods([
+                axum::http::Method::GET,
+                axum::http::Method::POST,
+                axum::http::Method::DELETE,
+                axum::http::Method::OPTIONS,
+            ])
+            .allow_headers([
+                axum::http::header::AUTHORIZATION,
+                axum::http::header::CONTENT_TYPE,
+                axum::http::header::COOKIE,
+                axum::http::HeaderName::from_static("x-webhook-source"),
+                axum::http::HeaderName::from_static("x-target-url"),
+            ])
+            .allow_credentials(true)
+    }
 }
 
 #[tokio::main]
@@ -683,11 +819,19 @@ async fn main() {
     sqlx::migrate!("./migrations").run(&db).await.ok();
     seed_default_user(&db).await;
 
+    let oauth = auth::OAuthConfig::from_env().map(Arc::new);
+    if oauth.is_some() {
+        info!("google oauth enabled (redirect_uri will be set per env)");
+    } else {
+        info!("google oauth disabled (set GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET to enable)");
+    }
+
     let state = Arc::new(AppState {
         db: db.clone(),
         redis: main_redis,
         max_retries,
         default_target: std::sync::Mutex::new(default_target),
+        oauth,
     });
 
     let worker_count: usize = std::env::var("WORKER_COUNT")
@@ -701,15 +845,27 @@ async fn main() {
     tokio::spawn(retry_worker(db, r_redis));
 
     let public = Router::new()
-        .route("/config/default-target", get(get_default_target).post(set_default_target));
+        .route("/config/default-target", get(get_default_target).post(set_default_target))
+        .route("/config/endpoint", get(get_endpoint))
+        // OAuth endpoints (callback must be reachable cross-origin via redirect).
+        .route("/api/auth/google", get(auth::google_login))
+        .route("/api/auth/callback/google", get(auth::google_callback))
+        .route("/api/auth/me", get(auth::me))
+        .route("/api/auth/logout", axum::routing::post(auth::logout));
 
     let protected = Router::new()
         .route("/events", get(list_events))
+        .route("/events/{id}", get(get_event))
         .route("/events/{id}/retry", post(retry_event))
         .route("/events/{id}/ack", post(ack_event))
         .route("/rules", get(list_rules).post(create_rule))
         .route("/rules/{id}", delete(delete_rule))
         .layer(middleware::from_fn_with_state(state.clone(), auth_middleware));
+
+    // CORS: allow the web frontend origin to call the backend API directly.
+    // Default covers the Vite dev server (:5173) and the embedded prod binary
+    // (:3012). Override with WEB_URL env (comma-separated for multiple).
+    let cors = build_cors_layer();
 
     let app = Router::new()
         .route("/health", get(health))
@@ -717,6 +873,7 @@ async fn main() {
         .merge(protected)
         .route("/", post(handle_root))
         .route("/{*source}", post(handle_webhook))
+        .layer(cors)
         .with_state(state);
 
     let addr = format!("0.0.0.0:{port}");

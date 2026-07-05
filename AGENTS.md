@@ -6,19 +6,30 @@
 |--------|-----|-------------|
 | Backend | `apps/backend` | `cargo run --bin backend` |
 | Web dashboard | `apps/web` | `cargo run --bin web` |
+| Frontend (Vite) | `apps/frontend` | `npm run dev` / `npm run build` |
 | CLI | `apps/tui` | `cargo run --bin terusin` |
 | MCP server | `apps/mcp` | `cargo run --bin mcp` |
 | Example receiver | `apps/receiver` | `cargo run --bin receiver` |
 
 Build all: `cargo build --release --bin backend --bin web --bin terusin --bin mcp`
 
+> The frontend must be built before the `web` binary can embed it:
+> `cd apps/frontend && npm install && npm run build` produces `apps/frontend/dist/`,
+> which `rust-embed` bakes into the `web` binary at compile time.
+
 ## Dev loop
 
 ```sh
 docker compose up -d postgres redis
-PORT=3011 cargo run --bin backend                 # terminal 1
-PORT=3012 BACKEND_URL=http://localhost:3011 cargo run --bin web  # terminal 2
+PORT=3011 cargo run --bin backend                              # T1: backend API + worker
+cd apps/frontend && npm run dev                                 # T2: Vite dev server (:5173, proxies API → :3011)
+# Optional, to test the embedded prod build:
+cd apps/frontend && npm run build && PORT=3012 cargo run --bin web  # T3: serves embedded SPA on :3012
 ```
+
+The Vite dev server (`:5173`) proxies `/events`, `/rules`, `/config`, `/health` to the backend,
+so during development you only need T1 + T2. Use T3 to verify the production single-binary
+experience (SPA + reverse-proxy in one `web` process).
 
 Auth defaults: `admin` / `change-me-in-production` (set via `AUTH_USERNAME`/`AUTH_PASSWORD` env vars, seeded to DB on first run).
 
@@ -27,13 +38,16 @@ Auth defaults: `admin` / `change-me-in-production` (set via `AUTH_USERNAME`/`AUT
 - **backend** receives webhooks at `/{source}` (catch-all), stores in Postgres, pushes event ID to Redis list `terusin:queue`.
 - **Worker** (in backend) pops from Redis, forwards to `event.target_url`, on failure pushes to Redis sorted set `terusin:retry` with exponential backoff timestamp.
 - **forward_rules** table stores provider→target mappings. Source is extracted from first URL segment. Rules matched in `handle_webhook` to set `target_url` fallback, and again in `forward_to_rules()` after main delivery.
-- **web** is server-side rendered HTML (no JS framework). Dashboard calls backend API with Basic auth via `backend_client()` helper.
+- **frontend** (`apps/frontend`) is a React + Vite + TypeScript SPA with a dark, data-first design system. It calls the backend API directly (Basic auth header attached by `lib/api.ts`). In dev it runs on Vite's :5173 with a proxy; in prod the built `dist/` is embedded into the `web` binary.
+- **web** is now a thin static-file + reverse-proxy server: it serves the embedded React bundle (`rust-embed`) and forwards API paths (`/events`, `/rules`, `/config`, `/health`, `/api`) to the backend with Basic auth injected server-side. The old SSR HTML handlers have been removed.
 - **CLI** reads `~/.config/terusin/config.toml` for credentials. `forward` command starts ngrok automatically for remote backends.
 
 ## Gotchas
 
-- `reqwest::Client::new()` calls without auth headers will 401 on `/events` and `/rules` endpoints. Use `backend_client()` in web app or `auth_client()` in CLI/MCP.
+- The SPA stores credentials as `Basic base64(user:pass)` in `sessionStorage` and attaches them on every API call. In the embedded/prod setup, the `web` proxy injects its own Basic auth server-side, so the browser cred is only used in Vite dev mode.
+- Backend CORS is configured via `WEB_URL` env (comma-separated origins). Defaults to `http://localhost:5173,http://localhost:3012` (+ 127.0.0.1 variants) for dev.
+- `apps/frontend/dist/` must exist before `cargo build --bin web` — a placeholder `index.html` ships in the repo so the binary compiles even without a frontend build. Run `npm run build` for the real bundle, then rebuild the `web` binary (`touch apps/web/src/main.rs` to force rust-embed to re-read `dist/`).
 - `axum_extra::response::sse` does not exist in axum-extra 0.10. Implement SSE manually if needed.
 - SQLx migrations use timestamp-prefixed files in `apps/backend/migrations/`.
 - MCP server uses `reqwest::blocking` — keep it simple, avoid adding the whole tokio runtime to MCP.
-- `/config/default-target` is public (no auth). All other API endpoints require auth.
+- Public backend endpoints: `/health`, `/config/default-target`, `/config/endpoint`, and the webhook ingests `POST /` and `POST /{source}`. All other API endpoints require auth.

@@ -1,0 +1,107 @@
+@import "tailwindcss";
+@import "@fontsource/inter/400.css";
+@import "@fontsource/inter/500.css";
+@import "@fontsource/inter/600.css";
+@import "@fontsource/inter/700.css";
+@import "./theme/tokens.css";
+
+/*
+ * Tailwind v4 theme mapping.
+ * Maps design tokens to Tailwind color utilities so we can write
+ * `bg-background`, `text-foreground`, `border-border`, etc.
+ */
+@theme {
+  --color-background: var(--background);
+  --color-surface: var(--surface);
+  --color-card: var(--card);
+  --color-card-secondary: var(--card-secondary);
+  --color-hover: var(--hover);
+
+  --color-border: var(--border);
+  --color-border-light: var(--border-light);
+  --color-border-hover: var(--border-hover);
+
+  --color-foreground: var(--foreground);
+  --color-secondary: var(--foreground-secondary);
+  --color-muted: var(--foreground-muted);
+
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-danger: var(--danger);
+  --color-info: var(--info);
+  --color-purple: var(--purple);
+
+  --radius-sm: var(--radius-sm);
+  --radius-md: var(--radius-md);
+  --radius-lg: var(--radius-lg);
+  --radius-xl: var(--radius-xl);
+
+  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system,
+    BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-mono: "SF Mono", ui-monospace, Menlo, Monaco, monospace;
+}
+
+@layer base {
+  * {
+    border-color: var(--border);
+  }
+
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    margin: 0;
+    background-color: var(--background);
+    color: var(--foreground);
+    font-family: var(--font-sans);
+    font-size: 14px;
+    line-height: 1.4;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  /* Scrollbar — slim, dark */
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    background: var(--background);
+  }
+  ::-webkit-scrollbar-thumb {
+    background: #2a2a2a;
+    border-radius: var(--radius-full);
+    border: 2px solid var(--background);
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: #383838;
+  }
+
+  /* Focus ring */
+  :focus-visible {
+    outline: 2px solid var(--success);
+    outline-offset: 2px;
+  }
+}
+
+@layer utilities {
+  /* Animation utilities */
+  .transition-base {
+    transition: all var(--duration) var(--ease);
+  }
+
+  /* Card hover lift effect from design spec */
+  .card-hover {
+    transition: background var(--duration) var(--ease),
+      border-color var(--duration) var(--ease),
+      transform var(--duration) var(--ease);
+  }
+  .card-hover:hover {
+    background-color: var(--card-secondary);
+    border-color: var(--border-hover);
+    transform: translateY(-2px);
+  }
+}
