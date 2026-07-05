@@ -73,6 +73,21 @@ export function useEndpoint() {
   });
 }
 
+export interface OAuthStatus {
+  enabled: boolean;
+}
+
+/** Whether the backend has Google OAuth configured. The login page uses this
+ * to decide whether to render the "Continue with Google" button — hides the
+ * button entirely when OAuth is disabled so users never hit a 503. */
+export function useOAuthStatus() {
+  return useQuery<OAuthStatus>({
+    queryKey: ["oauth-status"],
+    queryFn: () => api.get<OAuthStatus>(`/config/oauth`),
+    staleTime: 5 * 60_000,
+  });
+}
+
 export interface HealthStatus {
   status: string;
 }

@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import { AlertCircle, Loader2 } from "lucide-react";
 import { api } from "../lib/api";
 import { setAuth } from "../lib/auth";
+import { useOAuthStatus } from "../lib/hooks";
 import { Button, Input, Field } from "../components/ui";
 import { TURNSTILE_SITE_KEY } from "../config";
 
@@ -10,6 +11,10 @@ export function Login() {
   const navigate = useNavigate();
   const [params] = useSearchParams();
   const oauthError = params.get("error");
+  // Whether the backend has Google OAuth configured. The button + divider
+  // are only rendered when enabled, so users never see a broken 503 path.
+  const { data: oauthStatus } = useOAuthStatus();
+  const oauthEnabled = oauthStatus?.enabled === true;
 
   const [user, setUser] = useState("");
   const [password, setPassword] = useState("");
@@ -110,21 +115,26 @@ export function Login() {
           <p className="text-sm text-muted mt-1">Sign in to your webhook relay</p>
         </div>
 
-        {/* Google sign-in */}
-        <button
-          onClick={google}
-          className="w-full flex items-center justify-center gap-3 bg-card hover:bg-card-secondary border border-border hover:border-border-hover rounded-md px-4 py-3 text-sm font-medium text-foreground transition-base mb-4"
-        >
-          <GoogleIcon />
-          Continue with Google
-        </button>
+        {/* Google sign-in — hidden entirely when OAuth is not configured on
+            the backend, so users never hit a 503 by clicking it. */}
+        {oauthEnabled && (
+          <>
+            <button
+              onClick={google}
+              className="w-full flex items-center justify-center gap-3 bg-card hover:bg-card-secondary border border-border hover:border-border-hover rounded-md px-4 py-3 text-sm font-medium text-foreground transition-base mb-4"
+            >
+              <GoogleIcon />
+              Continue with Google
+            </button>
 
-        {/* Divider */}
-        <div className="flex items-center gap-3 my-4">
-          <div className="flex-1 h-px bg-border" />
-          <span className="text-xs text-muted uppercase tracking-wider">or</span>
-          <div className="flex-1 h-px bg-border" />
-        </div>
+            {/* Divider */}
+            <div className="flex items-center gap-3 my-4">
+              <div className="flex-1 h-px bg-border" />
+              <span className="text-xs text-muted uppercase tracking-wider">or</span>
+              <div className="flex-1 h-px bg-border" />
+            </div>
+          </>
+        )}
 
         <form
           onSubmit={submit}

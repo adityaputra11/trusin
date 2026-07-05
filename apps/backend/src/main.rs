@@ -176,9 +176,20 @@ fn unauth() -> Response {
     res
 }
 
+/// Returns Ok if `cu` is an admin, else a 403. Handlers that mutate state
+/// call this on the extracted `Extension<auth::CurrentUser>`. Works for both
+/// `StatusCode` and `Response` return types via `IntoResponse`.
+fn require_admin(cu: &auth::CurrentUser) -> Result<(), StatusCode> {
+    if cu.role == "admin" {
+        Ok(())
+    } else {
+        Err(StatusCode::FORBIDDEN)
+    }
+}
+
 async fn auth_middleware(
     State(state): State<Arc<AppState>>,
-    req: Request<Body>,
+    mut req: Request<Body>,
     next: Next,
 ) -> Result<Response, Response> {
     // 1) Try the session JWT cookie first (Google OAuth users).
@@ -186,14 +197,17 @@ async fn auth_middleware(
         if let Some(cookie) = req.headers().get("Cookie").and_then(|v| v.to_str().ok()) {
             if let Some(token) = extract_session_cookie(cookie) {
                 if let Some(uid) = auth::verify_jwt(&token, &cfg.jwt_secret) {
-                    let exists =
-                        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM users WHERE id = $1")
+                    let user =
+                        sqlx::query_as::<_, User>("SELECT * FROM users WHERE id = $1")
                             .bind(uid)
-                            .fetch_one(&state.db)
+                            .fetch_optional(&state.db)
                             .await
-                            .map(|n| n > 0)
-                            .unwrap_or(false);
-                    if exists {
+                            .map_err(|_| unauth())?;
+                    if let Some(u) = user {
+                        req.extensions_mut().insert(auth::CurrentUser {
+                            id: u.id,
+                            role: u.role.clone(),
+                        });
                         return Ok(next.run(req).await);
                     }
                 }
@@ -236,6 +250,10 @@ async fn auth_middleware(
                         .map(|h| bcrypt::verify(&pass, h).unwrap_or(false))
                         .unwrap_or(false) =>
                 {
+                    req.extensions_mut().insert(auth::CurrentUser {
+                        id: u.id,
+                        role: u.role.clone(),
+                    });
                     Ok(next.run(req).await)
                 }
                 _ => Err(unauth()),
@@ -897,8 +915,10 @@ async fn event_stream(State(state): State<Arc<AppState>>) -> Response {
 
 async fn retry_event(
     State(state): State<Arc<AppState>>,
+    axum::Extension(cu): axum::Extension<auth::CurrentUser>,
     Path(id): Path<Uuid>,
-) -> StatusCode {
+) -> Result<StatusCode, StatusCode> {
+    require_admin(&cu)?;
     let event =
         sqlx::query_as::<_, WebhookEvent>("SELECT * FROM webhook_events WHERE id = $1")
             .bind(id)
@@ -914,16 +934,18 @@ async fn retry_event(
                 .query_async::<()>(&mut conn)
                 .await
                 .ok();
-            StatusCode::OK
+            Ok(StatusCode::OK)
         }
-        _ => StatusCode::NOT_FOUND,
+        _ => Err(StatusCode::NOT_FOUND),
     }
 }
 
 async fn ack_event(
     State(state): State<Arc<AppState>>,
+    axum::Extension(cu): axum::Extension<auth::CurrentUser>,
     Path(id): Path<Uuid>,
-) -> StatusCode {
+) -> Result<StatusCode, StatusCode> {
+    require_admin(&cu)?;
     sqlx::query("UPDATE webhook_events SET status = 'delivered', response_status = 200 WHERE id = $1")
         .bind(id)
         .execute(&state.db)
@@ -932,14 +954,16 @@ async fn ack_event(
     let mut conn = state.redis.clone();
     redis::cmd("LREM").arg(QUEUE_KEY).arg(0).arg(id.to_string()).query_async::<()>(&mut conn).await.ok();
     redis::cmd("ZREM").arg(RETRY_KEY).arg(id.to_string()).query_async::<()>(&mut conn).await.ok();
-    StatusCode::OK
+    Ok(StatusCode::OK)
 }
 
 /// Permanently delete an event and remove it from any in-flight Redis queue.
 async fn delete_event(
     State(state): State<Arc<AppState>>,
+    axum::Extension(cu): axum::Extension<auth::CurrentUser>,
     Path(id): Path<Uuid>,
-) -> StatusCode {
+) -> Result<StatusCode, StatusCode> {
+    require_admin(&cu)?;
     let res = sqlx::query("DELETE FROM webhook_events WHERE id = $1")
         .bind(id)
         .execute(&state.db)
@@ -949,9 +973,9 @@ async fn delete_event(
         let mut conn = state.redis.clone();
         redis::cmd("LREM").arg(QUEUE_KEY).arg(0).arg(id.to_string()).query_async::<()>(&mut conn).await.ok();
         redis::cmd("ZREM").arg(RETRY_KEY).arg(id.to_string()).query_async::<()>(&mut conn).await.ok();
-        StatusCode::OK
+        Ok(StatusCode::OK)
     } else {
-        StatusCode::NOT_FOUND
+        Err(StatusCode::NOT_FOUND)
     }
 }
 
@@ -1271,6 +1295,13 @@ async fn health() -> Json<serde_json::Value> {
     Json(serde_json::json!({"status": "ok"}))
 }
 
+/// Public flag telling the frontend whether the "Continue with Google"
+/// button should be shown. Driven by whether GOOGLE_CLIENT_ID/SECRET were
+/// set at startup (state.oauth.is_some()).
+async fn get_oauth_status(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
+    Json(serde_json::json!({ "enabled": state.oauth.is_some() }))
+}
+
 /// Probe ngrok's local API (port 4040) for an active public tunnel.
 /// Only reachable when ngrok runs on the same host as the backend.
 async fn get_ngrok_url() -> Option<String> {
@@ -1484,6 +1515,7 @@ async fn main() {
     let public = Router::new()
         .route("/config/default-target", get(get_default_target).post(set_default_target))
         .route("/config/endpoint", get(get_endpoint))
+        .route("/config/oauth", get(get_oauth_status))
         // OAuth endpoints (callback must be reachable cross-origin via redirect).
         .route("/api/auth/google", get(auth::google_login))
         .route("/api/auth/callback/google", get(auth::google_callback))
