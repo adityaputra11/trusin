@@ -1,9 +1,10 @@
-import { useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { AlertCircle, Loader2 } from "lucide-react";
 import { api } from "../lib/api";
 import { setAuth } from "../lib/auth";
 import { Button, Input, Field } from "../components/ui";
+import { TURNSTILE_SITE_KEY } from "../config";
 
 export function Login() {
   const navigate = useNavigate();
@@ -16,21 +17,75 @@ export function Login() {
   const [error, setError] = useState<string | null>(
     oauthError ? decodeURIComponent(oauthError) : null,
   );
+  const [turnstileToken, setTurnstileToken] = useState<string | null>(null);
+  const turnstileContainerRef = useRef<HTMLDivElement>(null);
+  const turnstileWidgetId = useRef<string | null>(null);
+
+  // Render the Turnstile widget explicitly so we can capture the token via
+  // callback and reset it after each attempt. Skipped entirely when no site
+  // key is configured (local dev / Turnstile disabled).
+  useEffect(() => {
+    if (!TURNSTILE_SITE_KEY || !turnstileContainerRef.current) return;
+    if (turnstileWidgetId.current) return; // already rendered
+    if (!window.turnstile) return; // script still loading; will retry on next effect
+
+    turnstileWidgetId.current = window.turnstile.render(
+      turnstileContainerRef.current,
+      {
+        sitekey: TURNSTILE_SITE_KEY,
+        callback: (token: string) => setTurnstileToken(token),
+      },
+    );
+  }, []);
+
+  const resetTurnstile = () => {
+    setTurnstileToken(null);
+    if (turnstileWidgetId.current && window.turnstile) {
+      window.turnstile.reset(turnstileWidgetId.current);
+    }
+  };
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
     setError(null);
+    // If captcha is enabled but no token yet, refuse to submit.
+    if (TURNSTILE_SITE_KEY && !turnstileToken) {
+      setError("Please complete the captcha before signing in.");
+      return;
+    }
     setLoading(true);
-    setAuth(user, password);
     try {
-      await api.get("/events?per_page=1");
+      // POST /api/auth/login verifies the Turnstile token (when configured),
+      // then the credentials. Only on 200 do we persist the Basic cred.
+      await api.post(
+        "/api/auth/login",
+        {
+          username: user,
+          password,
+          turnstile_token: turnstileToken,
+        },
+        { noAuth: true },
+      );
+      setAuth(user, password);
       navigate("/", { replace: true });
     } catch (err) {
-      setError(
-        err instanceof Error && err.message
-          ? `Login failed: ${err.message}`
-          : "Login failed. Check your credentials.",
-      );
+      const status = (err as { status?: number }).status;
+      if (status === 400) {
+        setError("Captcha verification failed. Please try again.");
+        resetTurnstile();
+      } else if (status === 429) {
+        setError("Too many attempts. Please wait a minute and try again.");
+      } else if (status === 401) {
+        setError("Invalid username or password.");
+        resetTurnstile();
+      } else {
+        setError(
+          err instanceof Error && err.message
+            ? `Login failed: ${err.message}`
+            : "Login failed. Please try again.",
+        );
+        resetTurnstile();
+      }
     } finally {
       setLoading(false);
     }
@@ -98,6 +153,12 @@ export function Login() {
             />
           </Field>
 
+          {/* Cloudflare Turnstile widget. Only rendered when a site key is
+              configured at build time. */}
+          {TURNSTILE_SITE_KEY && (
+            <div ref={turnstileContainerRef} className="min-h-[65px]" />
+          )}
+
           {error && (
             <div className="flex items-start gap-2 text-sm text-danger bg-[rgba(239,68,68,.1)] border border-[rgba(239,68,68,.25)] rounded-md p-3">
               <AlertCircle className="h-4 w-4 mt-0.5 shrink-0" />
@@ -105,7 +166,12 @@ export function Login() {
             </div>
           )}
 
-          <Button type="submit" className="w-full" loading={loading}>
+          <Button
+            type="submit"
+            className="w-full"
+            loading={loading}
+            disabled={!!TURNSTILE_SITE_KEY && !turnstileToken}
+          >
             {loading ? (
               <>
                 <Loader2 className="h-4 w-4 animate-spin" /> Signing in…

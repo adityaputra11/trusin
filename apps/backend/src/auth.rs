@@ -441,6 +441,13 @@ fn oauth_error(cfg: &OAuthConfig, msg: &str) -> Response {
 // ── Endpoint: GET /api/auth/me ────────────────────────────────────────────
 
 pub async fn me(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Response {
+    // 0) Per-IP rate limit (30/min) — /api/auth/me is called on every page load.
+    let ip = crate::client_ip_from(&headers)
+        .unwrap_or(std::net::IpAddr::V4(std::net::Ipv4Addr::new(0, 0, 0, 0)));
+    if let Some(res) = crate::check_rate_limit(&state.me_limiter, ip) {
+        return res;
+    }
+
     // 1) Try cookie session (Google OAuth users).
     if let Some(cfg) = state.oauth.clone() {
         let cookie = headers
@@ -526,6 +533,13 @@ pub async fn login(
     headers: HeaderMap,
     Json(req): Json<LoginRequest>,
 ) -> Response {
+    // 0) Per-IP rate limit (5/min) — primary brute-force guard.
+    let ip = crate::client_ip_from(&headers)
+        .unwrap_or(std::net::IpAddr::V4(std::net::Ipv4Addr::new(0, 0, 0, 0)));
+    if let Some(res) = crate::check_rate_limit(&state.login_limiter, ip) {
+        return res;
+    }
+
     // 1) Turnstile (if configured). Treat missing token as captcha failure.
     if let Some(cfg) = state.turnstile.as_ref() {
         let token = req.turnstile_token.as_deref().filter(|t| !t.is_empty());
@@ -536,8 +550,8 @@ pub async fn login(
             )
                 .into_response();
         };
-        let remoteip = client_ip(&headers);
-        if !cfg.verify(token, remoteip.as_deref()).await {
+        let remoteip = ip.to_string();
+        if !cfg.verify(token, Some(&remoteip)).await {
             return (
                 StatusCode::BAD_REQUEST,
                 Json(serde_json::json!({"error": "captcha_failed"})),
@@ -555,33 +569,6 @@ pub async fn login(
         )
             .into_response(),
     }
-}
-
-/// Best-effort client-IP extraction for Turnstile's `remoteip` field.
-/// Order: CF-Connecting-IP (when behind Cloudflare) → X-Real-IP → first hop
-/// of X-Forwarded-For. Returns None if nothing usable is present.
-fn client_ip(headers: &HeaderMap) -> Option<String> {
-    if let Some(v) = headers
-        .get("CF-Connecting-IP")
-        .and_then(|v| v.to_str().ok())
-        .filter(|s| !s.is_empty())
-    {
-        return Some(v.to_string());
-    }
-    if let Some(v) = headers
-        .get("X-Real-IP")
-        .and_then(|v| v.to_str().ok())
-        .filter(|s| !s.is_empty())
-    {
-        return Some(v.to_string());
-    }
-    headers
-        .get(header::FORWARDED)
-        .or_else(|| headers.get("X-Forwarded-For"))
-        .and_then(|v| v.to_str().ok())
-        .and_then(|s| s.split(',').next())
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
 }
 
 fn user_json(u: User) -> Json<serde_json::Value> {

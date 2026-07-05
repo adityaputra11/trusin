@@ -5,6 +5,10 @@
     <link rel="icon" type="image/png" href="/icon-terusin.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Terusin — Webhook Relay</title>
+    <!-- Cloudflare Turnstile (captcha) — only loads if a site key is set.
+         Safe to include unconditionally; the widget only renders when a
+         data-sitekey is present. -->
+    <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
   </head>
   <body class="bg-background text-foreground">
     <div id="root"></div>

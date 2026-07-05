@@ -24,6 +24,10 @@ jobs:
 
       - name: Build frontend
         working-directory: apps/frontend
+        env:
+          # Public Cloudflare Turnstile site key. Optional — when unset, the
+          # captcha widget is not rendered and login submits no token.
+          VITE_TURNSTILE_SITE_KEY: ${{ secrets.TURNSTILE_SITE_KEY }}
         run: |
           npm ci
           npm run build
@@ -76,6 +80,10 @@ jobs:
           AUTH_PASSWORD=${{ secrets.AUTH_PASSWORD }}
           MAX_RETRIES=5
           WORKER_COUNT=4
+          # Cloudflare Turnstile — optional. When SECRET_KEY is empty/unset,
+          # captcha verification is skipped (login works without a token).
+          TURNSTILE_SITE_KEY=${{ secrets.TURNSTILE_SITE_KEY }}
+          TURNSTILE_SECRET_KEY=${{ secrets.TURNSTILE_SECRET_KEY }}
           ENVEOF
 
       - uses: appleboy/scp-action@v0.1.7

@@ -8,6 +8,7 @@ use axum::{
     Json, Router,
 };
 use base64::Engine;
+use bytes::Bytes;
 use chrono::Utc;
 use hmac::{Hmac, Mac};
 use redis::aio::ConnectionManager;
@@ -16,6 +17,7 @@ use serde_json::{json, Value};
 use sha2::Sha256;
 use sqlx::postgres::PgPoolOptions;
 use std::sync::Arc;
+use tokio_stream::StreamExt;
 use tracing::info;
 use uuid::Uuid;
 
@@ -724,6 +726,10 @@ struct EventQuery {
     search: Option<String>,
     status: Option<String>,
     source: Option<String>,
+    /// ISO timestamp lower bound (inclusive) on created_at.
+    from: Option<String>,
+    /// ISO timestamp upper bound (exclusive) on created_at.
+    to: Option<String>,
     page: Option<i64>,
     per_page: Option<i64>,
 }
@@ -758,6 +764,18 @@ async fn list_events(
         sql += &format!(" AND source = ${idx}");
         count_sql += &format!(" AND source = ${idx}");
         params.push(s.clone());
+    }}
+    if let Some(ref ts) = q.from { if !ts.is_empty() {
+        let idx = params.len() + 1;
+        sql += &format!(" AND created_at >= ${idx}::timestamp");
+        count_sql += &format!(" AND created_at >= ${idx}::timestamp");
+        params.push(ts.clone());
+    }}
+    if let Some(ref ts) = q.to { if !ts.is_empty() {
+        let idx = params.len() + 1;
+        sql += &format!(" AND created_at < ${idx}::timestamp");
+        count_sql += &format!(" AND created_at < ${idx}::timestamp");
+        params.push(ts.clone());
     }}
 
     sql += &format!(" ORDER BY created_at DESC LIMIT {per_page} OFFSET {offset}");
@@ -809,6 +827,72 @@ async fn list_attempts(
     .await
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(rows))
+}
+
+/// Distinct sources (for the dashboard source filter dropdown).
+async fn list_sources(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<Vec<String>>, StatusCode> {
+    let rows: Vec<(String,)> = sqlx::query_as(
+        "SELECT DISTINCT source FROM webhook_events ORDER BY source ASC",
+    )
+    .fetch_all(&state.db)
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(rows.into_iter().map(|(s,)| s).collect()))
+}
+
+/// Server-Sent Events stream of newly-created events. Polls the DB every 2s
+/// for events newer than the last seen created_at and emits each as an SSE
+/// `data:` line (JSON). Manual impl because axum-extra 0.10 has no SSE helper.
+async fn event_stream(State(state): State<Arc<AppState>>) -> Response {
+    let db = state.db.clone();
+    let (tx, rx) = tokio::sync::mpsc::channel::<Result<String, std::io::Error>>(16);
+
+    tokio::spawn(async move {
+        let mut last_seen = chrono::Utc::now().naive_utc();
+        let mut ticker = tokio::time::interval(std::time::Duration::from_secs(2));
+        // Send an initial comment so the client knows the stream is alive.
+        let _ = tx.send(Ok(": connected\n\n".to_string())).await;
+        loop {
+            ticker.tick().await;
+            let rows: Vec<WebhookEvent> = match sqlx::query_as::<_, WebhookEvent>(
+                "SELECT * FROM webhook_events WHERE created_at > $1 ORDER BY created_at ASC LIMIT 100",
+            )
+            .bind(last_seen)
+            .fetch_all(&db)
+            .await
+            {
+                Ok(r) => r,
+                Err(_) => continue,
+            };
+            if let Some(last) = rows.last() {
+                last_seen = last.created_at;
+            }
+            for ev in rows {
+                let payload = match serde_json::to_string(&ev) {
+                    Ok(s) => s,
+                    Err(_) => continue,
+                };
+                let chunk = format!("event: event\ndata: {payload}\n\n");
+                if tx.send(Ok(chunk)).await.is_err() {
+                    return; // client disconnected
+                }
+            }
+        }
+    });
+
+    let body = Body::from_stream(
+        tokio_stream::wrappers::ReceiverStream::new(rx)
+            .map(|r| r.map(|s| Bytes::from(s))),
+    );
+    Response::builder()
+        .status(StatusCode::OK)
+        .header("content-type", "text/event-stream")
+        .header("cache-control", "no-cache")
+        .header("x-accel-buffering", "no")
+        .body(body)
+        .unwrap()
 }
 
 async fn retry_event(
@@ -869,6 +953,61 @@ async fn delete_event(
     } else {
         StatusCode::NOT_FOUND
     }
+}
+
+#[derive(Deserialize)]
+struct BulkIds {
+    ids: Vec<Uuid>,
+}
+
+/// Re-enqueue many events at once (LPUSH each id to the queue).
+async fn bulk_retry(
+    State(state): State<Arc<AppState>>,
+    Json(input): Json<BulkIds>,
+) -> Json<Value> {
+    let mut enqueued = 0;
+    let mut conn = state.redis.clone();
+    for id in &input.ids {
+        let exists: bool = sqlx::query_scalar::<_, bool>(
+            "SELECT EXISTS(SELECT 1 FROM webhook_events WHERE id = $1)",
+        )
+        .bind(id)
+        .fetch_one(&state.db)
+        .await
+        .unwrap_or(false);
+        if !exists {
+            continue;
+        }
+        redis::cmd("LPUSH")
+            .arg(QUEUE_KEY)
+            .arg(id.to_string())
+            .query_async::<()>(&mut conn)
+            .await
+            .ok();
+        enqueued += 1;
+    }
+    Json(json!({ "enqueued": enqueued, "requested": input.ids.len() }))
+}
+
+/// Delete many events at once and scrub them from Redis.
+async fn bulk_delete(
+    State(state): State<Arc<AppState>>,
+    Json(input): Json<BulkIds>,
+) -> Json<Value> {
+    let mut conn = state.redis.clone();
+    let mut deleted = 0;
+    for id in &input.ids {
+        let res = sqlx::query("DELETE FROM webhook_events WHERE id = $1")
+            .bind(id)
+            .execute(&state.db)
+            .await;
+        if matches!(res, Ok(r) if r.rows_affected() > 0) {
+            redis::cmd("LREM").arg(QUEUE_KEY).arg(0).arg(id.to_string()).query_async::<()>(&mut conn).await.ok();
+            redis::cmd("ZREM").arg(RETRY_KEY).arg(id.to_string()).query_async::<()>(&mut conn).await.ok();
+            deleted += 1;
+        }
+    }
+    Json(json!({ "deleted": deleted, "requested": input.ids.len() }))
 }
 
 async fn list_rules(
@@ -1131,7 +1270,7 @@ pub fn check_rate_limit(
     limiter: &KeyedLimiter,
     ip: std::net::IpAddr,
 ) -> Option<Response> {
-    use governor::clock::{Clock, Reference};
+    use governor::clock::Clock;
     match limiter.check_key(&ip) {
         Ok(_) => None,
         Err(negative) => {
@@ -1153,15 +1292,16 @@ pub fn check_rate_limit(
     }
 }
 
-fn client_ip_from(req: &Request) -> Option<std::net::IpAddr> {
-    let h = req.headers();
-    h.get("CF-Connecting-IP")
-        .or_else(|| h.get("X-Real-IP"))
+pub fn client_ip_from(headers: &HeaderMap) -> Option<std::net::IpAddr> {
+    headers
+        .get("CF-Connecting-IP")
+        .or_else(|| headers.get("X-Real-IP"))
         .and_then(|v| v.to_str().ok())
         .and_then(|s| s.trim().parse().ok())
         .or_else(|| {
-            h.get(axum::http::header::FORWARDED)
-                .or_else(|| h.get("X-Forwarded-For"))
+            headers
+                .get(axum::http::header::FORWARDED)
+                .or_else(|| headers.get("X-Forwarded-For"))
                 .and_then(|v| v.to_str().ok())
                 .and_then(|s| s.split(',').next())
                 .and_then(|s| s.trim().parse().ok())
@@ -1246,6 +1386,10 @@ async fn main() {
 
     let protected = Router::new()
         .route("/events", get(list_events))
+        .route("/events/sources", get(list_sources))
+        .route("/events/stream", get(event_stream))
+        .route("/events/bulk/retry", post(bulk_retry))
+        .route("/events/bulk/delete", post(bulk_delete))
         .route("/events/{id}", get(get_event).delete(delete_event))
         .route("/events/{id}/attempts", get(list_attempts))
         .route("/events/{id}/retry", post(retry_event))
