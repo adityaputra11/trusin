@@ -32,13 +32,12 @@ export const Sidebar = memo(function Sidebar() {
 
   return (
     <aside className="w-60 shrink-0 border-r border-border bg-surface flex flex-col">
-      <div className="h-14 flex items-center gap-2.5 px-5 border-b border-border">
+      <div className="h-14 flex items-center px-5 border-b border-border">
         <img
           src="/icon-terusin.png"
           alt="Terusin"
-          className="h-8 w-8 rounded-md object-cover"
+          className="h-14 w-auto object-contain"
         />
-        <span className="font-bold text-foreground tracking-tight">Terusin</span>
       </div>
 
       <nav className="flex-1 py-3 px-2 space-y-0.5">

@@ -50,9 +50,8 @@ export function Login() {
           <img
             src="/icon-terusin.png"
             alt="Terusin"
-            className="h-12 w-12 rounded-xl object-cover mb-4"
+            className="h-32 w-auto object-contain mb-4"
           />
-          <h1 className="text-2xl font-bold text-foreground">Terusin</h1>
           <p className="text-sm text-muted mt-1">Sign in to your webhook relay</p>
         </div>
 
