@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from "react";
 import { useCanWrite } from "../lib/user-context";
 import { Webhook, Plus, Trash2 } from "lucide-react";
-import { useRules, useCreateRule, useDeleteRule } from "../lib/hooks";
+import { useRules, useCreateRule, useDeleteRule, useUpdateRule } from "../lib/hooks";
 import {
   Badge,
   Button,
@@ -32,6 +32,7 @@ export function Hooks() {
   const { data: rules, isLoading } = useRules();
   const createRule = useCreateRule();
   const deleteRule = useDeleteRule();
+  const updateRule = useUpdateRule();
 
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState<FormState>(EMPTY);
@@ -110,9 +111,27 @@ export function Hooks() {
                   </code>
                 </TD>
                 <TD>
-                  <Badge variant={rule.active ? "success" : "neutral"}>
-                    {rule.active ? "active" : "inactive"}
-                  </Badge>
+                  <button
+                    type="button"
+                    disabled={!canWrite}
+                    onClick={() =>
+                      canWrite &&
+                      updateRule.mutate({
+                        id: rule.id,
+                        active: !rule.active,
+                      })
+                    }
+                    className="disabled:cursor-default"
+                    title={
+                      canWrite
+                        ? `Click to ${rule.active ? "disable" : "enable"}`
+                        : undefined
+                    }
+                  >
+                    <Badge variant={rule.active ? "success" : "neutral"}>
+                      {rule.active ? "active" : "inactive"}
+                    </Badge>
+                  </button>
                 </TD>
                 {canWrite && (
                 <TD className="text-right">

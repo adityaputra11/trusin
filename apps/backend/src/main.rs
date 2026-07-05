@@ -9,16 +9,37 @@ use axum::{
 };
 use base64::Engine;
 use chrono::Utc;
+use hmac::{Hmac, Mac};
 use redis::aio::ConnectionManager;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use sha2::Sha256;
 use sqlx::postgres::PgPoolOptions;
 use std::sync::Arc;
 use tracing::info;
 use uuid::Uuid;
 
+type HmacSha256 = Hmac<Sha256>;
+
 const QUEUE_KEY: &str = "terusin:queue";
 const RETRY_KEY: &str = "terusin:retry";
+
+/// Compute `sha256=<hex>` HMAC-SHA256 signature of the request body bytes.
+/// Receivers verify by recomputing over the raw body using the shared secret.
+fn sign_body(secret: &str, body: &[u8]) -> String {
+    let mut mac = HmacSha256::new_from_slice(secret.as_bytes()).expect("hmac key any length");
+    mac.update(body);
+    format!("sha256={}", hex_encode(mac.finalize().into_bytes().as_slice()))
+}
+
+/// Lowercase hex encoding (no external dep).
+fn hex_encode(bytes: &[u8]) -> String {
+    let mut s = String::with_capacity(bytes.len() * 2);
+    for b in bytes {
+        s.push_str(&format!("{:02x}", b));
+    }
+    s
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 struct WebhookEvent {
@@ -45,6 +66,9 @@ struct ForwardRule {
     method: String,
     headers: serde_json::Value,
     active: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[sqlx(default)]
+    signing_secret: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
@@ -72,6 +96,8 @@ struct AppState {
     default_target: std::sync::Mutex<String>,
     /// Present when Google OAuth is configured (GOOGLE_CLIENT_ID/SECRET set).
     oauth: Option<Arc<auth::OAuthConfig>>,
+    /// Present when Cloudflare Turnstile is configured (TURNSTILE_SECRET_KEY set).
+    turnstile: Option<Arc<auth::TurnstileConfig>>,
 }
 
 mod auth;
@@ -296,6 +322,8 @@ async fn handle_webhook_inner(
 
 async fn worker(db: sqlx::PgPool, mut redis: ConnectionManager, max_retries: i32) {
     let client = reqwest::Client::new();
+    // Optional global signing secret applied to every main-target delivery.
+    let default_signing_secret = std::env::var("DEFAULT_SIGNING_SECRET").ok();
     loop {
         let result: Option<(String, String)> = redis::cmd("BRPOP")
             .arg(QUEUE_KEY)
@@ -325,11 +353,17 @@ async fn worker(db: sqlx::PgPool, mut redis: ConnectionManager, max_retries: i32
             continue;
         }
 
-        let res = client
+        let body_bytes = serde_json::to_vec(&event.body).unwrap_or_default();
+        let mut req = client
             .post(&event.target_url)
-            .json(&event.body)
-            .send()
-            .await;
+            .header("content-type", "application/json")
+            .body(body_bytes.clone());
+        if let Some(secret) = &default_signing_secret {
+            if !secret.is_empty() {
+                req = req.header("X-Terusin-Signature", sign_body(secret, &body_bytes));
+            }
+        }
+        let res = req.send().await;
 
         let already = || async {
             sqlx::query_scalar::<_, String>("SELECT status FROM webhook_events WHERE id = $1")
@@ -393,6 +427,7 @@ async fn worker(db: sqlx::PgPool, mut redis: ConnectionManager, max_retries: i32
 
 async fn retry_worker(db: sqlx::PgPool, mut redis: ConnectionManager) {
     let client = reqwest::Client::new();
+    let default_signing_secret = std::env::var("DEFAULT_SIGNING_SECRET").ok();
     loop {
         let result: Option<(String, String)> = redis::cmd("ZPOPMIN")
             .arg(RETRY_KEY)
@@ -430,11 +465,17 @@ async fn retry_worker(db: sqlx::PgPool, mut redis: ConnectionManager) {
 
                 let Some(event) = event.unwrap_or(None) else { continue };
 
-                let res = client
+                let body_bytes = serde_json::to_vec(&event.body).unwrap_or_default();
+                let mut req = client
                     .post(&event.target_url)
-                    .json(&event.body)
-                    .send()
-                    .await;
+                    .header("content-type", "application/json")
+                    .body(body_bytes.clone());
+                if let Some(secret) = &default_signing_secret {
+                    if !secret.is_empty() {
+                        req = req.header("X-Terusin-Signature", sign_body(secret, &body_bytes));
+                    }
+                }
+                let res = req.send().await;
 
                 let is_delivered = sqlx::query_scalar::<_, String>("SELECT status FROM webhook_events WHERE id = $1")
                     .bind(id).fetch_optional(&db).await.ok().flatten().unwrap_or_default() == "delivered";
@@ -489,6 +530,43 @@ async fn rule_matches(source: &str, event: &WebhookEvent) -> bool {
     source == "*" || source == &event.source
 }
 
+/// Build an outbound request honoring the rule's `method`, custom `headers`,
+/// and optional HMAC `signing_secret`. When a secret is present, an
+/// `X-Terusin-Signature: sha256=<hex>` header is added over the body bytes.
+fn build_rule_request(
+    client: &reqwest::Client,
+    rule: &ForwardRule,
+    body: &serde_json::Value,
+) -> reqwest::RequestBuilder {
+    let method = match rule.method.to_uppercase().as_str() {
+        "GET" => reqwest::Method::GET,
+        "PUT" => reqwest::Method::PUT,
+        "PATCH" => reqwest::Method::PATCH,
+        "DELETE" => reqwest::Method::DELETE,
+        _ => reqwest::Method::POST,
+    };
+    // Serialize once so the signature covers the exact bytes we send.
+    let body_bytes = serde_json::to_vec(body).unwrap_or_default();
+    let mut req = client
+        .request(method, &rule.target_url)
+        .header("content-type", "application/json")
+        .body(body_bytes.clone());
+
+    if let Some(obj) = rule.headers.as_object() {
+        for (k, v) in obj {
+            if let Some(s) = v.as_str() {
+                req = req.header(k, s);
+            }
+        }
+    }
+    if let Some(secret) = &rule.signing_secret {
+        if !secret.is_empty() {
+            req = req.header("X-Terusin-Signature", sign_body(secret, &body_bytes));
+        }
+    }
+    req
+}
+
 async fn forward_to_rules(
     db: &sqlx::PgPool,
     event: &WebhookEvent,
@@ -505,7 +583,8 @@ async fn forward_to_rules(
         if !rule_matches(&rule.source_pattern, event).await {
             continue;
         }
-        let res = client.post(&rule.target_url).json(&event.body).send().await;
+        let req = build_rule_request(client, &rule, &event.body);
+        let res = req.send().await;
         if let Ok(r) = res {
             tracing::info!("hook {} -> {}: {}", rule.name, rule.target_url, r.status());
         }
@@ -629,6 +708,26 @@ async fn ack_event(
     StatusCode::OK
 }
 
+/// Permanently delete an event and remove it from any in-flight Redis queue.
+async fn delete_event(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+) -> StatusCode {
+    let res = sqlx::query("DELETE FROM webhook_events WHERE id = $1")
+        .bind(id)
+        .execute(&state.db)
+        .await;
+    let removed = matches!(res, Ok(r) if r.rows_affected() > 0);
+    if removed {
+        let mut conn = state.redis.clone();
+        redis::cmd("LREM").arg(QUEUE_KEY).arg(0).arg(id.to_string()).query_async::<()>(&mut conn).await.ok();
+        redis::cmd("ZREM").arg(RETRY_KEY).arg(id.to_string()).query_async::<()>(&mut conn).await.ok();
+        StatusCode::OK
+    } else {
+        StatusCode::NOT_FOUND
+    }
+}
+
 async fn list_rules(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<Vec<ForwardRule>>, StatusCode> {
@@ -647,6 +746,9 @@ struct CreateRule {
     source_pattern: Option<String>,
     target_url: String,
     method: Option<String>,
+    /// Custom headers to send on outbound delivery. Defaults to `{}`.
+    #[serde(default)]
+    headers: Option<serde_json::Value>,
 }
 
 async fn create_rule(
@@ -656,16 +758,21 @@ async fn create_rule(
     let id = Uuid::new_v4();
     let pattern = input.source_pattern.unwrap_or_else(|| "*".to_string());
     let method = input.method.unwrap_or_else(|| "POST".to_string());
+    let headers = input
+        .headers
+        .filter(|h| h.is_object())
+        .unwrap_or_else(|| serde_json::json!({}));
 
     sqlx::query(
-        r#"INSERT INTO forward_rules (id, name, source_pattern, target_url, method, active)
-        VALUES ($1, $2, $3, $4, $5, true)"#,
+        r#"INSERT INTO forward_rules (id, name, source_pattern, target_url, method, headers, active)
+        VALUES ($1, $2, $3, $4, $5, $6, true)"#,
     )
     .bind(id)
     .bind(&input.name)
     .bind(&pattern)
     .bind(&input.target_url)
     .bind(&method)
+    .bind(&headers)
     .execute(&state.db)
     .await
     .map_err(|e| {
@@ -689,6 +796,66 @@ async fn delete_rule(State(state): State<Arc<AppState>>, Path(id): Path<Uuid>) -
         .await
         .map(|_| StatusCode::OK)
         .unwrap_or(StatusCode::NOT_FOUND)
+}
+
+/// Partial update of a forward rule. Any of the fields may be omitted; only
+/// provided fields are written. `active` lets the UI toggle a rule on/off.
+#[derive(Deserialize)]
+struct UpdateRule {
+    name: Option<String>,
+    source_pattern: Option<String>,
+    target_url: Option<String>,
+    method: Option<String>,
+    headers: Option<serde_json::Value>,
+    active: Option<bool>,
+}
+
+async fn update_rule(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+    Json(input): Json<UpdateRule>,
+) -> Result<Json<ForwardRule>, StatusCode> {
+    // Coalesce: read current row, apply overrides, write back. Simpler than
+    // building a dynamic UPDATE with a variable column list.
+    let current =
+        sqlx::query_as::<_, ForwardRule>("SELECT * FROM forward_rules WHERE id = $1")
+            .bind(id)
+            .fetch_optional(&state.db)
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+            .ok_or(StatusCode::NOT_FOUND)?;
+
+    let name = input.name.unwrap_or(current.name);
+    let source_pattern = input.source_pattern.unwrap_or(current.source_pattern);
+    let target_url = input.target_url.unwrap_or(current.target_url);
+    let method = input.method.unwrap_or(current.method);
+    let headers = input
+        .headers
+        .filter(|h| h.is_object())
+        .unwrap_or(current.headers);
+    let active = input.active.unwrap_or(current.active);
+
+    let rule = sqlx::query_as::<_, ForwardRule>(
+        r#"UPDATE forward_rules
+           SET name = $2, source_pattern = $3, target_url = $4, method = $5, headers = $6, active = $7
+           WHERE id = $1
+           RETURNING *"#,
+    )
+    .bind(id)
+    .bind(&name)
+    .bind(&source_pattern)
+    .bind(&target_url)
+    .bind(&method)
+    .bind(&headers)
+    .bind(active)
+    .fetch_one(&state.db)
+    .await
+    .map_err(|e| {
+        tracing::error!("update rule: {e}");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+
+    Ok(Json(rule))
 }
 
 #[derive(Deserialize)]
@@ -826,12 +993,20 @@ async fn main() {
         info!("google oauth disabled (set GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET to enable)");
     }
 
+    let turnstile = auth::TurnstileConfig::from_env().map(Arc::new);
+    if turnstile.is_some() {
+        info!("turnstile captcha enabled on /api/auth/login");
+    } else {
+        info!("turnstile captcha disabled (set TURNSTILE_SECRET_KEY to enable)");
+    }
+
     let state = Arc::new(AppState {
         db: db.clone(),
         redis: main_redis,
         max_retries,
         default_target: std::sync::Mutex::new(default_target),
         oauth,
+        turnstile,
     });
 
     let worker_count: usize = std::env::var("WORKER_COUNT")
@@ -844,22 +1019,37 @@ async fn main() {
     let r_redis = ConnectionManager::new(redis_from_env()).await.unwrap();
     tokio::spawn(retry_worker(db, r_redis));
 
+    // Rate limit the auth endpoints that accept credentials. Two buckets:
+    //   - /api/auth/login : tight (5/min per IP) — primary brute-force target
+    //   - /api/auth/me    : looser (30/min per IP) — called on every page load
+    // In-memory (per-process). OK for a single-server deploy. Keyed on the
+    // forwarded client IP since traffic flows Cloudflare → Caddy → backend.
+    let login_limiter = build_rate_limiter(60, 5);
+    let me_limiter = build_rate_limiter(60, 30);
+
+    let auth_router = Router::new()
+        // Username/password login with optional Cloudflare Turnstile.
+        .route("/api/auth/login", axum::routing::post(auth::login))
+        .layer(login_limiter)
+        .route("/api/auth/me", get(auth::me))
+        .layer(me_limiter);
+
     let public = Router::new()
         .route("/config/default-target", get(get_default_target).post(set_default_target))
         .route("/config/endpoint", get(get_endpoint))
         // OAuth endpoints (callback must be reachable cross-origin via redirect).
         .route("/api/auth/google", get(auth::google_login))
         .route("/api/auth/callback/google", get(auth::google_callback))
-        .route("/api/auth/me", get(auth::me))
-        .route("/api/auth/logout", axum::routing::post(auth::logout));
+        .route("/api/auth/logout", axum::routing::post(auth::logout))
+        .merge(auth_router);
 
     let protected = Router::new()
         .route("/events", get(list_events))
-        .route("/events/{id}", get(get_event))
+        .route("/events/{id}", get(get_event).delete(delete_event))
         .route("/events/{id}/retry", post(retry_event))
         .route("/events/{id}/ack", post(ack_event))
         .route("/rules", get(list_rules).post(create_rule))
-        .route("/rules/{id}", delete(delete_rule))
+        .route("/rules/{id}", delete(delete_rule).patch(update_rule))
         .layer(middleware::from_fn_with_state(state.clone(), auth_middleware));
 
     // CORS: allow the web frontend origin to call the backend API directly.

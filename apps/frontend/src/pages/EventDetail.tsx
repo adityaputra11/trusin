@@ -6,8 +6,9 @@ import {
   XCircle,
   Clock,
   Inbox,
+  Trash2,
 } from "lucide-react";
-import { useEvent, useRetryEvent } from "../lib/hooks";
+import { useEvent, useRetryEvent, useDeleteEvent } from "../lib/hooks";
 import { useCanWrite } from "../lib/user-context";
 import { StatusBadge } from "../components/StatusBadge";
 import {
@@ -50,6 +51,7 @@ export function EventDetail() {
   const navigate = useNavigate();
   const { data: ev, isLoading } = useEvent(id);
   const retry = useRetryEvent();
+  const deleteEvent = useDeleteEvent();
   const canWrite = useCanWrite();
 
   if (isLoading) return <FullSpinner label="Loading event…" />;
@@ -76,14 +78,30 @@ export function EventDetail() {
           <ArrowLeft className="h-4 w-4" /> Back
         </Button>
         {canWrite && (
-        <Button
-          variant="success"
-          size="sm"
-          onClick={() => retry.mutate(ev.id)}
-          loading={retry.isPending}
-        >
-          <RotateCw className="h-4 w-4" /> Retry
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button
+            variant="success"
+            size="sm"
+            onClick={() => retry.mutate(ev.id)}
+            loading={retry.isPending}
+          >
+            <RotateCw className="h-4 w-4" /> Retry
+          </Button>
+          <Button
+            variant="danger"
+            size="sm"
+            loading={deleteEvent.isPending}
+            onClick={() => {
+              if (confirm("Delete this event permanently?")) {
+                deleteEvent.mutate(ev.id, {
+                  onSuccess: () => navigate("/"),
+                });
+              }
+            }}
+          >
+            <Trash2 className="h-4 w-4" /> Delete
+          </Button>
+        </div>
         )}
       </div>
 

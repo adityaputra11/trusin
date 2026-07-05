@@ -21,3 +21,6 @@ tower-http.workspace = true
 jsonwebtoken.workspace = true
 serde_urlencoded.workspace = true
 anyhow.workspace = true
+hmac.workspace = true
+sha2.workspace = true
+governor.workspace = true

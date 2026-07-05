@@ -26,6 +26,52 @@ use uuid::Uuid;
 
 use crate::{AppState, User};
 
+/// Cloudflare Turnstile verification.
+///
+/// `verify` calls the siteverify API; returns false on any network/parsing
+/// error so a misconfigured Turnstile can't lock everyone out — instead, set
+/// `TURNSTILE_SECRET_KEY` to empty/unset to disable verification entirely.
+pub struct TurnstileConfig {
+    pub secret: String,
+    pub http: reqwest::Client,
+}
+
+impl TurnstileConfig {
+    /// Build from env; None when Turnstile is disabled (no secret set).
+    pub fn from_env() -> Option<Self> {
+        let secret = std::env::var("TURNSTILE_SECRET_KEY").ok()?;
+        if secret.trim().is_empty() {
+            return None;
+        }
+        Some(Self {
+            secret,
+            http: reqwest::Client::builder()
+                .build()
+                .expect("reqwest client"),
+        })
+    }
+
+    /// Verify a Turnstile token. Always-fail-silent: false on any error.
+    pub async fn verify(&self, token: &str, remoteip: Option<&str>) -> bool {
+        let mut form = vec![("secret", self.secret.as_str()), ("response", token)];
+        if let Some(ip) = remoteip {
+            form.push(("remoteip", ip));
+        }
+        match self
+            .http
+            .post("https://challenges.cloudflare.com/turnstile/v0/siteverify")
+            .form(&form)
+            .send()
+            .await
+        {
+            Ok(r) => r.json::<serde_json::Value>().await.map_or(false, |v| {
+                v.get("success").and_then(|s| s.as_bool()).unwrap_or(false)
+            }),
+            Err(_) => false,
+        }
+    }
+}
+
 /// OAuth + JWT configuration, built once from env vars at startup.
 #[derive(Clone)]
 pub struct OAuthConfig {
@@ -438,17 +484,104 @@ async fn user_from_basic(db: &PgPool, headers: &HeaderMap) -> Option<User> {
     let mut parts = creds.splitn(2, ':');
     let user = parts.next()?.to_string();
     let pass = parts.next()?.to_string();
+    verify_password(db, &user, &pass).await
+}
+
+/// Look a user up by username + verify the bcrypt password. Shared between
+/// Basic-auth header parsing (`user_from_basic`) and the JSON-body login
+/// endpoint (`login`).
+async fn verify_password(db: &PgPool, user: &str, pass: &str) -> Option<User> {
     let db_user = sqlx::query_as::<_, User>("SELECT * FROM users WHERE username = $1")
-        .bind(&user)
+        .bind(user)
         .fetch_optional(db)
         .await
         .ok()??;
     if let Some(hash) = db_user.password_hash.as_ref() {
-        if bcrypt::verify(&pass, hash).unwrap_or(false) {
+        if bcrypt::verify(pass, hash).unwrap_or(false) {
             return Some(db_user);
         }
     }
     None
+}
+
+// ── Endpoint: POST /api/auth/login ────────────────────────────────────────
+//
+// Username/password login for the browser, optionally gated by Cloudflare
+// Turnstile. Returns the same user JSON shape as `/api/auth/me` on success.
+// The frontend stores the Basic cred in sessionStorage after a 200, mirroring
+// the CLI/MCP Basic-auth path — so no session/cookie is created here.
+
+#[derive(Debug, Deserialize)]
+pub struct LoginRequest {
+    pub username: String,
+    pub password: String,
+    /// Turnstile token from the browser widget. Required when
+    /// `TURNSTILE_SECRET_KEY` is set on the server; ignored otherwise.
+    #[serde(default)]
+    pub turnstile_token: Option<String>,
+}
+
+pub async fn login(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(req): Json<LoginRequest>,
+) -> Response {
+    // 1) Turnstile (if configured). Treat missing token as captcha failure.
+    if let Some(cfg) = state.turnstile.as_ref() {
+        let token = req.turnstile_token.as_deref().filter(|t| !t.is_empty());
+        let Some(token) = token else {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({"error": "captcha_required"})),
+            )
+                .into_response();
+        };
+        let remoteip = client_ip(&headers);
+        if !cfg.verify(token, remoteip.as_deref()).await {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({"error": "captcha_failed"})),
+            )
+                .into_response();
+        }
+    }
+
+    // 2) Verify credentials.
+    match verify_password(&state.db, &req.username, &req.password).await {
+        Some(u) => user_json(u).into_response(),
+        None => (
+            StatusCode::UNAUTHORIZED,
+            Json(serde_json::json!({"error": "invalid_credentials"})),
+        )
+            .into_response(),
+    }
+}
+
+/// Best-effort client-IP extraction for Turnstile's `remoteip` field.
+/// Order: CF-Connecting-IP (when behind Cloudflare) → X-Real-IP → first hop
+/// of X-Forwarded-For. Returns None if nothing usable is present.
+fn client_ip(headers: &HeaderMap) -> Option<String> {
+    if let Some(v) = headers
+        .get("CF-Connecting-IP")
+        .and_then(|v| v.to_str().ok())
+        .filter(|s| !s.is_empty())
+    {
+        return Some(v.to_string());
+    }
+    if let Some(v) = headers
+        .get("X-Real-IP")
+        .and_then(|v| v.to_str().ok())
+        .filter(|s| !s.is_empty())
+    {
+        return Some(v.to_string());
+    }
+    headers
+        .get(header::FORWARDED)
+        .or_else(|| headers.get("X-Forwarded-For"))
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.split(',').next())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
 }
 
 fn user_json(u: User) -> Json<serde_json::Value> {

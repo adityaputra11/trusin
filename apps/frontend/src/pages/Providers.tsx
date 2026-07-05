@@ -1,7 +1,12 @@
 import { useState, type FormEvent } from "react";
 import { useCanWrite } from "../lib/user-context";
 import { Settings2, Plus, Pencil, Trash2 } from "lucide-react";
-import { useRules, useCreateRule, useDeleteRule } from "../lib/hooks";
+import {
+  useRules,
+  useCreateRule,
+  useDeleteRule,
+  useUpdateRule,
+} from "../lib/hooks";
 import {
   Button,
   Card,
@@ -10,27 +15,64 @@ import {
   FullSpinner,
   Input,
   Modal,
+  Select,
   Table,
   TBody,
   TD,
   TH,
   THead,
   TR,
+  Textarea,
 } from "../components/ui";
 import type { ForwardRule } from "../types/api";
+
+const METHODS = ["POST", "PUT", "PATCH", "GET", "DELETE"] as const;
 
 interface FormState {
   name: string;
   target_url: string;
   source_pattern: string;
+  method: string;
+  headers_text: string; // newline-separated "Key: value" lines, edited as text
+  signing_secret: string;
 }
 
-const EMPTY: FormState = { name: "", target_url: "", source_pattern: "" };
+const EMPTY: FormState = {
+  name: "",
+  target_url: "",
+  source_pattern: "",
+  method: "POST",
+  headers_text: "",
+  signing_secret: "",
+};
+
+/** Parse "Key: value" lines (one per line) into a headers object. */
+function parseHeadersText(text: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const line of text.split("\n")) {
+    const raw = line.trim();
+    if (!raw) continue;
+    const idx = raw.indexOf(":");
+    if (idx <= 0) continue;
+    const key = raw.slice(0, idx).trim();
+    const val = raw.slice(idx + 1).trim();
+    if (key) out[key] = val;
+  }
+  return out;
+}
+
+function headersToText(h: Record<string, string> | null | undefined): string {
+  if (!h) return "";
+  return Object.entries(h)
+    .map(([k, v]) => `${k}: ${v}`)
+    .join("\n");
+}
 
 export function Providers() {
   const canWrite = useCanWrite();
   const { data: rules, isLoading } = useRules();
   const createRule = useCreateRule();
+  const updateRule = useUpdateRule();
   const deleteRule = useDeleteRule();
 
   const [open, setOpen] = useState(false);
@@ -55,6 +97,11 @@ export function Providers() {
       target_url: rule.target_url,
       source_pattern:
         rule.source_pattern === "*" ? rule.name : rule.source_pattern,
+      method: METHODS.includes(rule.method as (typeof METHODS)[number])
+        ? rule.method
+        : "POST",
+      headers_text: headersToText(rule.headers),
+      signing_secret: rule.signing_secret ?? "",
     });
     setError(null);
     setOpen(true);
@@ -64,19 +111,34 @@ export function Providers() {
     e.preventDefault();
     setError(null);
     const source_pattern = form.source_pattern.trim() || form.name.trim();
-    // Edit = create-new + delete-old (mirrors current SSR backend behavior).
+    const headers = parseHeadersText(form.headers_text);
     try {
-      await createRule.mutateAsync({
-        name: form.name.trim(),
-        target_url: form.target_url.trim(),
-        source_pattern,
-      });
-      if (editing) await deleteRule.mutateAsync(editing.id);
+      if (editing) {
+        await updateRule.mutateAsync({
+          id: editing.id,
+          target_url: form.target_url.trim(),
+          source_pattern,
+          method: form.method,
+          headers,
+          signing_secret: form.signing_secret.trim() || undefined,
+        });
+      } else {
+        await createRule.mutateAsync({
+          name: form.name.trim(),
+          target_url: form.target_url.trim(),
+          source_pattern,
+          method: form.method,
+          headers,
+          signing_secret: form.signing_secret.trim() || undefined,
+        });
+      }
       setOpen(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to save");
     }
   };
+
+  const saving = createRule.isPending || updateRule.isPending;
 
   return (
     <Card className="p-0 overflow-hidden">
@@ -110,6 +172,7 @@ export function Providers() {
           <THead>
             <TH>Name</TH>
             <TH>Source</TH>
+            <TH>Method</TH>
             <TH>Target URL</TH>
             {canWrite && <TH className="text-right">Actions</TH>}
           </THead>
@@ -124,6 +187,11 @@ export function Providers() {
                 <TD>
                   <code className="text-xs text-secondary font-mono">
                     {rule.source_pattern}
+                  </code>
+                </TD>
+                <TD>
+                  <code className="text-xs text-secondary font-mono">
+                    {rule.method}
                   </code>
                 </TD>
                 <TD>
@@ -175,7 +243,7 @@ export function Providers() {
             </Button>
             <Button
               onClick={submit as unknown as () => void}
-              loading={createRule.isPending}
+              loading={saving}
               type="submit"
               form="provider-form"
             >
@@ -219,6 +287,52 @@ export function Providers() {
               }
               placeholder="https://example.com/webhook"
               required
+            />
+          </Field>
+          <Field
+            label="HTTP method"
+            htmlFor="method"
+            hint="HTTP method used for the outbound delivery."
+          >
+            <Select
+              id="method"
+              value={form.method}
+              onChange={(e) => setForm({ ...form, method: e.target.value })}
+            >
+              {METHODS.map((m) => (
+                <option key={m} value={m}>
+                  {m}
+                </option>
+              ))}
+            </Select>
+          </Field>
+          <Field
+            label="Custom headers"
+            htmlFor="headers"
+            hint={`One "Key: value" per line. Sent on every outbound delivery.`}
+          >
+            <Textarea
+              id="headers"
+              value={form.headers_text}
+              onChange={(e) =>
+                setForm({ ...form, headers_text: e.target.value })
+              }
+              placeholder={"X-Custom-Header: value\nAuthorization: Bearer ..."}
+              rows={3}
+            />
+          </Field>
+          <Field
+            label="Signing secret"
+            htmlFor="signing"
+            hint="Optional. If set, outbound deliveries include an X-Terusin-Signature header (HMAC-SHA256)."
+          >
+            <Input
+              id="signing"
+              value={form.signing_secret}
+              onChange={(e) =>
+                setForm({ ...form, signing_secret: e.target.value })
+              }
+              placeholder="leave empty to disable signing"
             />
           </Field>
           {error && (

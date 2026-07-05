@@ -275,7 +275,7 @@ async fn main() {
             println!(" Listening: polling {}/events", cfg.backend);
             let mut seen = HashSet::new();
             loop {
-                let resp = auth.get(format!("{}/events", cfg.backend)).send().await;
+                let resp = auth.get(format!("{}/events?per_page=100", cfg.backend)).send().await;
                 if let Ok(r) = resp {
                     let data: serde_json::Value = r.json().await.unwrap_or_default();
                     let events = data["events"].as_array().cloned().unwrap_or_default();

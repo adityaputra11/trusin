@@ -25,6 +25,7 @@ export interface ForwardRule {
   method: string;
   headers: Record<string, string> | null;
   active: boolean;
+  signing_secret?: string | null;
   created_at?: string;
 }
 
@@ -33,6 +34,19 @@ export interface CreateRuleInput {
   source_pattern?: string;
   target_url: string;
   method?: string;
+  headers?: Record<string, string>;
+  signing_secret?: string;
+}
+
+/** Partial update for PATCH /rules/:id. All fields optional. */
+export interface UpdateRuleInput {
+  name?: string;
+  source_pattern?: string;
+  target_url?: string;
+  method?: string;
+  headers?: Record<string, string>;
+  active?: boolean;
+  signing_secret?: string;
 }
 
 export interface ListEventsResponse {

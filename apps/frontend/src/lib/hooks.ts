@@ -12,6 +12,7 @@ import type {
   EventQuery,
   ForwardRule,
   ListEventsResponse,
+  UpdateRuleInput,
   WebhookEvent,
 } from "../types/api";
 
@@ -108,5 +109,22 @@ export function useDeleteRule() {
   return useMutation({
     mutationFn: (id: string) => api.delete(`/rules/${id}`),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["rules"] }),
+  });
+}
+
+export function useUpdateRule() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, ...input }: UpdateRuleInput & { id: string }) =>
+      api.patch<ForwardRule>(`/rules/${id}`, input),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["rules"] }),
+  });
+}
+
+export function useDeleteEvent() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api.delete(`/events/${id}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["events"] }),
   });
 }
