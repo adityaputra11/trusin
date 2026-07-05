@@ -1,6 +1,13 @@
-import { memo, useCallback, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Inbox, Search, RotateCw, Trash2 } from "lucide-react";
+import {
+  Inbox,
+  Search,
+  RotateCw,
+  Trash2,
+  SlidersHorizontal,
+  X,
+} from "lucide-react";
 import {
   useEvents,
   useEventStream,
@@ -15,6 +22,7 @@ import {
   Card,
   EmptyState,
   FullSpinner,
+  Field,
   Input,
   Pagination,
   Select,
@@ -23,6 +31,7 @@ import {
   TH,
   THead,
   Button,
+  Modal,
 } from "../components/ui";
 import type { EventQuery } from "../types/api";
 
@@ -35,35 +44,27 @@ const STATUS_FILTERS: { value: string; label: string }[] = [
   { value: "failed", label: "Failed" },
 ];
 
+const STATUS_LABEL: Record<string, string> = Object.fromEntries(
+  STATUS_FILTERS.map((s) => [s.value, s.label]),
+);
+
 // Isolated + memoized so typing in the search input re-renders only this bar,
-// not the 50-row table body beneath it.
+// not the 50-row table body beneath it. Search is the one filter that stays
+// inline; everything else (status/source/date) lives behind the Filters
+// button so the bar stays compact.
 const FilterBar = memo(function FilterBar({
   search,
-  status,
-  source,
-  sources,
-  from,
-  to,
+  activeFilterCount,
   isFetching,
   onSearchChange,
-  onStatusChange,
-  onSourceChange,
-  onFromChange,
-  onToChange,
+  onOpenFilters,
   onRefresh,
 }: {
   search: string;
-  status: string;
-  source: string;
-  sources: string[];
-  from: string;
-  to: string;
+  activeFilterCount: number;
   isFetching: boolean;
   onSearchChange: (v: string) => void;
-  onStatusChange: (v: string) => void;
-  onSourceChange: (v: string) => void;
-  onFromChange: (v: string) => void;
-  onToChange: (v: string) => void;
+  onOpenFilters: () => void;
   onRefresh: () => void;
 }) {
   return (
@@ -77,43 +78,20 @@ const FilterBar = memo(function FilterBar({
           className="pl-9"
         />
       </div>
-      <Select
-        value={status}
-        onChange={(e) => onStatusChange(e.target.value)}
-        className="w-40"
+      <Button
+        variant={activeFilterCount > 0 ? "primary" : "outline"}
+        size="md"
+        onClick={onOpenFilters}
+        className="relative"
       >
-        {STATUS_FILTERS.map((s) => (
-          <option key={s.value} value={s.value}>
-            {s.label}
-          </option>
-        ))}
-      </Select>
-      <Select
-        value={source}
-        onChange={(e) => onSourceChange(e.target.value)}
-        className="w-40"
-      >
-        <option value="">All sources</option>
-        {sources.map((s) => (
-          <option key={s} value={s}>
-            {s}
-          </option>
-        ))}
-      </Select>
-      <Input
-        type="date"
-        value={from}
-        onChange={(e) => onFromChange(e.target.value)}
-        className="w-36"
-        title="From date"
-      />
-      <Input
-        type="date"
-        value={to}
-        onChange={(e) => onToChange(e.target.value)}
-        className="w-36"
-        title="To date"
-      />
+        <SlidersHorizontal className="h-4 w-4" />
+        Filters
+        {activeFilterCount > 0 && (
+          <span className="ml-1 inline-flex items-center justify-center min-w-[1.25rem] h-5 px-1 text-[10px] font-semibold rounded-full bg-success text-white">
+            {activeFilterCount}
+          </span>
+        )}
+      </Button>
       <Button variant="ghost" size="md" onClick={onRefresh} loading={isFetching}>
         <RotateCw className="h-4 w-4" />
         Refresh
@@ -121,6 +99,168 @@ const FilterBar = memo(function FilterBar({
     </div>
   );
 });
+
+// Compact clickable chips showing each active filter; clicking the X clears
+// just that one filter. Renders below FilterBar when there's at least one.
+const ActiveFilterChips = memo(function ActiveFilterChips({
+  status,
+  source,
+  from,
+  to,
+  onClearStatus,
+  onClearSource,
+  onClearFrom,
+  onClearTo,
+}: {
+  status: string;
+  source: string;
+  from: string;
+  to: string;
+  onClearStatus: () => void;
+  onClearSource: () => void;
+  onClearFrom: () => void;
+  onClearTo: () => void;
+}) {
+  const chips: { label: string; onClear: () => void }[] = [];
+  if (status !== "all")
+    chips.push({ label: STATUS_LABEL[status] ?? status, onClear: onClearStatus });
+  if (source) chips.push({ label: `Source: ${source}`, onClear: onClearSource });
+  if (from) chips.push({ label: `From: ${from}`, onClear: onClearFrom });
+  if (to) chips.push({ label: `To: ${to}`, onClear: onClearTo });
+  if (chips.length === 0) return null;
+  return (
+    <div className="flex flex-wrap items-center gap-1.5 px-3 py-2 border-b border-border bg-background/40">
+      {chips.map((c, i) => (
+        <button
+          key={i}
+          onClick={c.onClear}
+          className="inline-flex items-center gap-1 rounded-full bg-hover border border-border px-2 py-0.5 text-xs text-secondary hover:text-foreground hover:border-border-hover transition-base"
+        >
+          {c.label}
+          <X className="h-3 w-3" />
+        </button>
+      ))}
+    </div>
+  );
+});
+
+// Modal-based filter form. Uses a working-state pattern: edits inside the
+// modal don't commit until Apply is clicked, so the user can tweak multiple
+// filters without triggering a fetch on each change.
+function FilterModal({
+  open,
+  onClose,
+  initial,
+  sources,
+  onApply,
+  onClear,
+}: {
+  open: boolean;
+  onClose: () => void;
+  initial: { status: string; source: string; from: string; to: string };
+  sources: string[];
+  onApply: (v: { status: string; source: string; from: string; to: string }) => void;
+  onClear: () => void;
+}) {
+  const [status, setStatus] = useState(initial.status);
+  const [source, setSource] = useState(initial.source);
+  const [from, setFrom] = useState(initial.from);
+  const [to, setTo] = useState(initial.to);
+
+  // Re-sync working state every time the modal opens (so re-opening after
+  // a cancel resets to the last-applied values, not the cancelled draft).
+  useEffect(() => {
+    if (open) {
+      setStatus(initial.status);
+      setSource(initial.source);
+      setFrom(initial.from);
+      setTo(initial.to);
+    }
+  }, [open, initial.status, initial.source, initial.from, initial.to]);
+
+  return (
+    <Modal
+      open={open}
+      onClose={onClose}
+      title="Filter events"
+      description="Refine the list by status, source, or date range."
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClear}>
+            Clear all
+          </Button>
+          <Button
+            variant="outline"
+            onClick={onClose}
+          >
+            Cancel
+          </Button>
+          <Button
+            variant="primary"
+            onClick={() => {
+              onApply({ status, source, from, to });
+              onClose();
+            }}
+          >
+            Apply filters
+          </Button>
+        </>
+      }
+    >
+      <div className="space-y-4">
+        <Field label="Status" htmlFor="filter-status">
+          <Select
+            id="filter-status"
+            value={status}
+            onChange={(e) => setStatus(e.target.value)}
+            className="w-full"
+          >
+            {STATUS_FILTERS.map((s) => (
+              <option key={s.value} value={s.value}>
+                {s.label}
+              </option>
+            ))}
+          </Select>
+        </Field>
+        <Field label="Source" htmlFor="filter-source">
+          <Select
+            id="filter-source"
+            value={source}
+            onChange={(e) => setSource(e.target.value)}
+            className="w-full"
+          >
+            <option value="">All sources</option>
+            {sources.map((s) => (
+              <option key={s} value={s}>
+                {s}
+              </option>
+            ))}
+          </Select>
+        </Field>
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="From" htmlFor="filter-from">
+            <Input
+              id="filter-from"
+              type="date"
+              value={from}
+              onChange={(e) => setFrom(e.target.value)}
+              className="w-full"
+            />
+          </Field>
+          <Field label="To" htmlFor="filter-to">
+            <Input
+              id="filter-to"
+              type="date"
+              value={to}
+              onChange={(e) => setTo(e.target.value)}
+              className="w-full"
+            />
+          </Field>
+        </div>
+      </div>
+    </Modal>
+  );
+}
 
 export function Dashboard() {
   const navigate = useNavigate();
@@ -136,6 +276,7 @@ export function Dashboard() {
   const [to, setTo] = useState("");
   const [page, setPage] = useState(1);
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [filterModalOpen, setFilterModalOpen] = useState(false);
 
   // Debounce timer in a ref: setting it never triggers a re-render.
   const debounceRef = useRef<number | undefined>(undefined);
@@ -173,34 +314,37 @@ export function Dashboard() {
   }, []);
 
   const resetPage = useCallback(() => setPage(1), []);
-  const onStatusChange = useCallback(
-    (v: string) => {
-      setStatus(v);
+
+  // Filter modal handlers — single apply path, one place that resets the page.
+  const applyFilters = useCallback(
+    (v: { status: string; source: string; from: string; to: string }) => {
+      setStatus(v.status);
+      setSource(v.source);
+      setFrom(v.from);
+      setTo(v.to);
       resetPage();
     },
     [resetPage],
   );
-  const onSourceChange = useCallback(
-    (v: string) => {
-      setSource(v);
-      resetPage();
-    },
-    [resetPage],
-  );
-  const onFromChange = useCallback(
-    (v: string) => {
-      setFrom(v);
-      resetPage();
-    },
-    [resetPage],
-  );
-  const onToChange = useCallback(
-    (v: string) => {
-      setTo(v);
-      resetPage();
-    },
-    [resetPage],
-  );
+
+  const clearAllFilters = useCallback(() => {
+    setStatus("all");
+    setSource("");
+    setFrom("");
+    setTo("");
+    resetPage();
+  }, [resetPage]);
+
+  const clearStatus = useCallback(() => { setStatus("all"); resetPage(); }, [resetPage]);
+  const clearSource = useCallback(() => { setSource(""); resetPage(); }, [resetPage]);
+  const clearFrom = useCallback(() => { setFrom(""); resetPage(); }, [resetPage]);
+  const clearTo = useCallback(() => { setTo(""); resetPage(); }, [resetPage]);
+
+  const activeFilterCount =
+    (status !== "all" ? 1 : 0) +
+    (source ? 1 : 0) +
+    (from ? 1 : 0) +
+    (to ? 1 : 0);
 
   const onRefresh = useCallback(() => {
     refetch();
@@ -262,18 +406,31 @@ export function Dashboard() {
       <Card className="p-0 overflow-hidden">
         <FilterBar
           search={searchInput}
-          status={status}
-          source={source}
-          sources={sources ?? []}
-          from={from}
-          to={to}
+          activeFilterCount={activeFilterCount}
           isFetching={isFetching && !isLoading}
           onSearchChange={onSearchChange}
-          onStatusChange={onStatusChange}
-          onSourceChange={onSourceChange}
-          onFromChange={onFromChange}
-          onToChange={onToChange}
+          onOpenFilters={() => setFilterModalOpen(true)}
           onRefresh={onRefresh}
+        />
+
+        <ActiveFilterChips
+          status={status}
+          source={source}
+          from={from}
+          to={to}
+          onClearStatus={clearStatus}
+          onClearSource={clearSource}
+          onClearFrom={clearFrom}
+          onClearTo={clearTo}
+        />
+
+        <FilterModal
+          open={filterModalOpen}
+          onClose={() => setFilterModalOpen(false)}
+          initial={{ status, source, from, to }}
+          sources={sources ?? []}
+          onApply={applyFilters}
+          onClear={clearAllFilters}
         />
 
         {selected.size > 0 && canWrite && (
