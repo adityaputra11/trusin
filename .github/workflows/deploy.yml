@@ -14,6 +14,20 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Build the React frontend first — the `web` binary embeds apps/frontend/dist
+      # via rust-embed at compile time. Without this the cargo build fails.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: apps/frontend/package-lock.json
+
+      - name: Build frontend
+        working-directory: apps/frontend
+        run: |
+          npm ci
+          npm run build
+
       - uses: actions/cache@v4
         with:
           path: |
