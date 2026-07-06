@@ -5,6 +5,14 @@ use std::io::{self, BufRead, Write};
 const BACKEND_URL: &str = "http://127.0.0.1:3011";
 
 fn auth_header() -> String {
+    // Prefer a paired API token (Bearer) — generate one in the dashboard's
+    // Settings → Devices & Tokens page, then export TERUSIN_TOKEN.
+    if let Ok(t) = std::env::var("TERUSIN_TOKEN") {
+        if !t.trim().is_empty() {
+            return format!("Bearer {}", t.trim());
+        }
+    }
+    // Legacy fallback: shared username/password (Basic auth).
     let user = std::env::var("TERUSIN_USER").unwrap_or_else(|_| "admin".to_string());
     let pass = std::env::var("TERUSIN_PASS").unwrap_or_else(|_| "change-me-in-production".to_string());
     format!("Basic {}", base64::engine::general_purpose::STANDARD.encode(format!("{user}:{pass}")))

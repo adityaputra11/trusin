@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Activity,
   Copy,
@@ -7,10 +7,20 @@ import {
   Plug,
   Server,
   Wrench,
+  Smartphone,
+  Trash2,
+  Plus,
+  Clock,
 } from "lucide-react";
-import { Card, CardHeader, Badge } from "../components/ui";
-import { useHealth } from "../lib/hooks";
+import { Card, CardHeader, Badge, Button, Input } from "../components/ui";
+import {
+  useHealth,
+  useTokens,
+  useInitPair,
+  useRevokeToken,
+} from "../lib/hooks";
 import { useCurrentUser } from "../lib/user-context";
+import { formatRelative } from "../lib/format";
 
 // The MCP server is a stdio process — its tools are static and known.
 const MCP_TOOLS = [
@@ -45,9 +55,10 @@ const CLIENTS: { key: ClientKey; label: string; file: string }[] = [
 ];
 
 function buildSnippet(client: ClientKey, binaryPath: string): string {
+  // Token is the preferred auth mode — generate one in "Devices & API Tokens"
+  // above, then paste it here. User/pass is the legacy fallback.
   const env = {
-    TERUSIN_USER: "admin",
-    TERUSIN_PASS: "<your-password>",
+    TERUSIN_TOKEN: "<ts_... from Settings → Devices & Tokens>",
   };
   const server = { command: binaryPath, env };
   switch (client) {
@@ -97,6 +108,142 @@ function CodeBlock({ code }: { code: string }) {
         )}
       </button>
     </div>
+  );
+}
+
+/** Devices & API Tokens card. Pair the CLI/MCP via a one-time 6-digit code,
+ * and revoke devices later. */
+function DevicesAndTokens() {
+  const { data: tokens, isLoading } = useTokens();
+  const initPair = useInitPair();
+  const revoke = useRevokeToken();
+  const [name, setName] = useState("");
+  const [code, setCode] = useState<string | null>(null);
+  const [expiresIn, setExpiresIn] = useState(0);
+
+  // Countdown timer for the displayed code.
+  useEffect(() => {
+    if (!code || expiresIn <= 0) return;
+    const t = setTimeout(() => setExpiresIn((e) => Math.max(0, e - 1)), 1000);
+    return () => clearTimeout(t);
+  }, [code, expiresIn]);
+  // Clear the code when the countdown reaches zero.
+  useEffect(() => {
+    if (expiresIn === 0) setCode(null);
+  }, [expiresIn]);
+
+  const generate = async () => {
+    const deviceName = name.trim() || "My device";
+    try {
+      const res = await initPair.mutateAsync(deviceName);
+      setCode(res.code);
+      setExpiresIn(res.expires_in);
+    } catch {
+      /* toast/error handled inline by mutation state */
+    }
+  };
+
+  const codeDisplay = code
+    ? `${code.slice(0, 3)} ${code.slice(3)}`
+    : "";
+
+  return (
+    <Card>
+      <CardHeader
+        title="Devices & API Tokens"
+        subtitle="Pair the CLI / MCP without sharing a password"
+        action={<Badge variant="info">pairing</Badge>}
+      />
+      <div className="space-y-5">
+        <p className="text-sm text-secondary">
+          Generate a one-time pairing code, then run{" "}
+          <code className="text-foreground font-mono">terusin pair</code> on the
+          device you want to connect. The device gets an API token (stored in
+          its OS keychain) — no password ever leaves this browser.
+        </p>
+
+        {/* Pair UI */}
+        <div className="flex flex-col sm:flex-row gap-2">
+          <Input
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="Device name (e.g. MacBook CLI)"
+            className="flex-1"
+            maxLength={120}
+          />
+          <Button onClick={generate} loading={initPair.isPending}>
+            <Plus className="h-4 w-4" /> Generate code
+          </Button>
+        </div>
+
+        {initPair.isError && (
+          <p className="text-sm text-danger bg-[rgba(239,68,68,.1)] border border-[rgba(239,68,68,.25)] rounded-md p-3">
+            Could not generate a code. Make sure the backend is reachable.
+          </p>
+        )}
+
+        {code && expiresIn > 0 && (
+          <div className="bg-[rgba(59,130,246,.06)] border border-[rgba(59,130,246,.25)] rounded-md p-5 text-center">
+            <p className="text-xs font-medium text-info uppercase tracking-wide mb-2 flex items-center justify-center gap-1.5">
+              <Clock className="h-3.5 w-3.5" /> Expires in {Math.floor(expiresIn / 60)}:
+              {String(expiresIn % 60).padStart(2, "0")}
+            </p>
+            <p className="text-4xl font-bold text-foreground font-mono tracking-[0.3em] mb-3">
+              {codeDisplay}
+            </p>
+            <p className="text-xs text-muted">
+              On the device, run <code className="text-secondary font-mono">terusin pair</code>{" "}
+              and enter this code.
+            </p>
+          </div>
+        )}
+
+        {/* Active tokens list */}
+        <div>
+          <p className="text-xs font-medium text-secondary uppercase mb-2">
+            Paired devices
+          </p>
+          {isLoading ? (
+            <p className="text-sm text-muted">Loading…</p>
+          ) : !tokens || tokens.length === 0 ? (
+            <p className="text-sm text-muted py-4">
+              No devices paired yet. Generate a code above to start.
+            </p>
+          ) : (
+            <div className="space-y-1">
+              {tokens.map((t) => (
+                <div
+                  key={t.id}
+                  className="flex items-center justify-between gap-3 bg-surface border border-border rounded-md p-3"
+                >
+                  <div className="flex items-center gap-3 min-w-0">
+                    <Smartphone className="h-4 w-4 text-muted shrink-0" />
+                    <div className="min-w-0">
+                      <p className="text-sm text-foreground font-medium truncate">
+                        {t.name}
+                      </p>
+                      <p className="text-xs text-muted">
+                        {t.last_used_at
+                          ? `Used ${formatRelative(t.last_used_at)}`
+                          : "Never used"}{" "}
+                        · created {formatRelative(t.created_at)}
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => revoke.mutate(t.id)}
+                    className="p-2 rounded-md text-muted hover:text-danger hover:bg-[rgba(239,68,68,.1)] transition-base shrink-0"
+                    title="Revoke"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </Card>
   );
 }
 
@@ -153,6 +300,9 @@ export function Settings() {
           </div>
         </div>
       </Card>
+
+      {/* Device pairing & API tokens */}
+      <DevicesAndTokens />
 
       {/* MCP setup */}
       <Card>
@@ -284,14 +434,19 @@ export function Settings() {
         <div className="space-y-2">
           {[
             {
+              k: "TERUSIN_TOKEN",
+              v: "—",
+              desc: "API token (preferred). Generate one in Devices & API Tokens above. The MCP binary uses Bearer auth when set.",
+            },
+            {
               k: "TERUSIN_USER",
               v: "admin",
-              desc: "Basic auth username (must match backend AUTH_USERNAME)",
+              desc: "Basic auth username (legacy fallback). Must match backend AUTH_USERNAME.",
             },
             {
               k: "TERUSIN_PASS",
               v: "—",
-              desc: "Basic auth password (must match backend AUTH_PASSWORD)",
+              desc: "Basic auth password (legacy fallback). Must match backend AUTH_PASSWORD.",
             },
           ].map((row) => (
             <div
