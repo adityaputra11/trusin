@@ -101,7 +101,11 @@ struct ForwardRule {
     method: String,
     headers: serde_json::Value,
     active: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    /// Per-rule HMAC secret used to sign outbound deliveries. Never serialized
+    /// to API clients (would leak the secret to anyone with read access to
+    /// /rules). `sqlx::FromRow` ignores serde attrs and still populates this
+    /// from the DB column for internal use in `build_rule_request`.
+    #[serde(skip)]
     #[sqlx(default)]
     signing_secret: Option<String>,
 }
@@ -996,8 +1000,10 @@ struct BulkIds {
 /// Re-enqueue many events at once (LPUSH each id to the queue).
 async fn bulk_retry(
     State(state): State<Arc<AppState>>,
+    axum::Extension(cu): axum::Extension<auth::CurrentUser>,
     Json(input): Json<BulkIds>,
-) -> Json<Value> {
+) -> Result<Json<Value>, StatusCode> {
+    require_admin(&cu)?;
     let mut enqueued = 0;
     let mut conn = state.redis.clone();
     for id in &input.ids {
@@ -1019,14 +1025,16 @@ async fn bulk_retry(
             .ok();
         enqueued += 1;
     }
-    Json(json!({ "enqueued": enqueued, "requested": input.ids.len() }))
+    Ok(Json(json!({ "enqueued": enqueued, "requested": input.ids.len() })))
 }
 
 /// Delete many events at once and scrub them from Redis.
 async fn bulk_delete(
     State(state): State<Arc<AppState>>,
+    axum::Extension(cu): axum::Extension<auth::CurrentUser>,
     Json(input): Json<BulkIds>,
-) -> Json<Value> {
+) -> Result<Json<Value>, StatusCode> {
+    require_admin(&cu)?;
     let mut conn = state.redis.clone();
     let mut deleted = 0;
     for id in &input.ids {
@@ -1040,7 +1048,7 @@ async fn bulk_delete(
             deleted += 1;
         }
     }
-    Json(json!({ "deleted": deleted, "requested": input.ids.len() }))
+    Ok(Json(json!({ "deleted": deleted, "requested": input.ids.len() })))
 }
 
 #[derive(Deserialize, Default)]
@@ -1175,8 +1183,10 @@ struct CreateRule {
 
 async fn create_rule(
     State(state): State<Arc<AppState>>,
+    axum::Extension(cu): axum::Extension<auth::CurrentUser>,
     Json(input): Json<CreateRule>,
 ) -> Result<Json<ForwardRule>, StatusCode> {
+    require_admin(&cu)?;
     let id = Uuid::new_v4();
     let pattern = input.source_pattern.unwrap_or_else(|| "*".to_string());
     let method = input.method.unwrap_or_else(|| "POST".to_string());
@@ -1211,13 +1221,22 @@ async fn create_rule(
     Ok(Json(rule))
 }
 
-async fn delete_rule(State(state): State<Arc<AppState>>, Path(id): Path<Uuid>) -> StatusCode {
-    sqlx::query("DELETE FROM forward_rules WHERE id = $1")
+async fn delete_rule(
+    State(state): State<Arc<AppState>>,
+    axum::Extension(cu): axum::Extension<auth::CurrentUser>,
+    Path(id): Path<Uuid>,
+) -> Result<StatusCode, StatusCode> {
+    require_admin(&cu)?;
+    let res = sqlx::query("DELETE FROM forward_rules WHERE id = $1")
         .bind(id)
         .execute(&state.db)
         .await
-        .map(|_| StatusCode::OK)
-        .unwrap_or(StatusCode::NOT_FOUND)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    if res.rows_affected() > 0 {
+        Ok(StatusCode::OK)
+    } else {
+        Err(StatusCode::NOT_FOUND)
+    }
 }
 
 /// Partial update of a forward rule. Any of the fields may be omitted; only
@@ -1234,9 +1253,11 @@ struct UpdateRule {
 
 async fn update_rule(
     State(state): State<Arc<AppState>>,
+    axum::Extension(cu): axum::Extension<auth::CurrentUser>,
     Path(id): Path<Uuid>,
     Json(input): Json<UpdateRule>,
 ) -> Result<Json<ForwardRule>, StatusCode> {
+    require_admin(&cu)?;
     // Coalesce: read current row, apply overrides, write back. Simpler than
     // building a dynamic UPDATE with a variable column list.
     let current =
@@ -1287,10 +1308,14 @@ struct SetTarget {
 
 async fn set_default_target(
     State(state): State<Arc<AppState>>,
+    axum::Extension(cu): axum::Extension<auth::CurrentUser>,
     Json(input): Json<SetTarget>,
-) -> Json<serde_json::Value> {
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    // Mutates global forwarding state — admin only. Previously this lived on
+    // the *public* router, which let anyone redirect all webhooks.
+    require_admin(&cu)?;
     *state.default_target.lock().unwrap() = input.url.clone();
-    Json(serde_json::json!({"default_target": input.url}))
+    Ok(Json(serde_json::json!({"default_target": input.url})))
 }
 
 async fn get_default_target(
@@ -1522,7 +1547,7 @@ async fn main() {
     tokio::spawn(retry_worker(db, r_redis));
 
     let public = Router::new()
-        .route("/config/default-target", get(get_default_target).post(set_default_target))
+        .route("/config/default-target", get(get_default_target))
         .route("/config/endpoint", get(get_endpoint))
         .route("/config/oauth", get(get_oauth_status))
         // OAuth endpoints (callback must be reachable cross-origin via redirect).
@@ -1535,6 +1560,7 @@ async fn main() {
         .route("/api/auth/pair", axum::routing::post(auth::pair_complete));
 
     let protected = Router::new()
+        .route("/config/default-target", post(set_default_target))
         .route("/events", get(list_events))
         .route("/events/sources", get(list_sources))
         .route("/events/stream", get(event_stream))

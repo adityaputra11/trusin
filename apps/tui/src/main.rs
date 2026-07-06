@@ -9,6 +9,11 @@ use std::path::PathBuf;
 const BACKEND: &str = "http://127.0.0.1:3011";
 const WEB: &str = "http://localhost:3012";
 
+// OS keychain entry name under which the API token is stored (preferred over
+// the plaintext config file). Falls back gracefully on platforms without one.
+const KEYRING_SERVICE: &str = "terusin";
+const KEYRING_ACCOUNT: &str = "default";
+
 fn env_or_default(key: &str, fallback: &str) -> String {
     std::env::var(key).unwrap_or_else(|_| fallback.to_string())
 }
@@ -20,6 +25,10 @@ struct Config {
     backend: String,
     #[serde(default = "default_web")]
     web: String,
+    /// Cached API token (paired via `terusin pair`). The OS keychain is the
+    /// preferred store; this is a fallback for headless/CI environments.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    token: Option<String>,
 }
 
 fn default_web() -> String {
@@ -33,6 +42,8 @@ impl Default for Config {
             password: env_or_default("TERUSIN_PASSWORD", "change-me-in-production"),
             backend: env_or_default("TERUSIN_BACKEND", BACKEND),
             web: env_or_default("TERUSIN_WEB", WEB),
+            // TERUSIN_TOKEN env wins over keychain/config when set.
+            token: std::env::var("TERUSIN_TOKEN").ok().filter(|t| !t.is_empty()),
         }
     }
 }
@@ -60,14 +71,60 @@ fn save_config(c: &Config) {
     std::fs::write(config_path(), s).ok();
 }
 
+// ── Keychain helpers ──────────────────────────────────────────────────────
+//
+// The token is the highest-value secret the CLI holds (full account access),
+// so we keep it in the OS keychain when available. Every call is fallible —
+// on platforms without a keychain backend (headless Linux w/o secret-service)
+// we silently fall back to the config file / env var.
+
+fn keychain_get() -> Option<String> {
+    keyring::Entry::new(KEYRING_SERVICE, KEYRING_ACCOUNT)
+        .ok()
+        .and_then(|e| e.get_password().ok())
+        .filter(|t| !t.is_empty())
+}
+
+fn keychain_set(token: &str) -> Result<(), String> {
+    let entry = keyring::Entry::new(KEYRING_SERVICE, KEYRING_ACCOUNT)
+        .map_err(|e| e.to_string())?;
+    entry.set_password(token).map_err(|e| e.to_string())
+}
+
+fn keychain_delete() {
+    if let Ok(entry) = keyring::Entry::new(KEYRING_SERVICE, KEYRING_ACCOUNT) {
+        let _ = entry.delete_credential();
+    }
+}
+
+/// Resolve the active token following precedence:
+///   1. `TERUSIN_TOKEN` env var (already folded into Config::default)
+///   2. OS keychain
+///   3. config file's `token` field
+fn resolve_token(cfg: &Config) -> Option<String> {
+    if let Some(t) = cfg.token.as_ref().filter(|t| !t.is_empty()) {
+        return Some(t.clone());
+    }
+    keychain_get()
+}
+
+/// Build a reqwest client that authenticates every request. Prefers a Bearer
+/// token (from pair); falls back to HTTP Basic (legacy `terusin login`).
 fn auth_client(cfg: &Config) -> Client {
-    let b = base64::engine::general_purpose::STANDARD
-        .encode(format!("{}:{}", cfg.user, cfg.password));
     let mut headers = reqwest::header::HeaderMap::new();
-    headers.insert(
-        reqwest::header::AUTHORIZATION,
-        format!("Basic {b}").parse().unwrap(),
-    );
+    if let Some(token) = resolve_token(cfg) {
+        headers.insert(
+            reqwest::header::AUTHORIZATION,
+            format!("Bearer {token}").parse().unwrap(),
+        );
+    } else {
+        let b = base64::engine::general_purpose::STANDARD
+            .encode(format!("{}:{}", cfg.user, cfg.password));
+        headers.insert(
+            reqwest::header::AUTHORIZATION,
+            format!("Basic {b}").parse().unwrap(),
+        );
+    }
     Client::builder().default_headers(headers).build().unwrap()
 }
 
@@ -80,7 +137,16 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Login & save credentials
+    /// Pair this device with a 6-digit code from the dashboard (preferred)
+    Pair {
+        #[arg(short, long)]
+        backend: Option<String>,
+        #[arg(long)]
+        web: Option<String>,
+    },
+    /// Forget the paired token / clear stored credentials
+    Logout,
+    /// Login with username & password (legacy; prefer `pair`)
     Login {
         #[arg(short, long)]
         user: Option<String>,
@@ -136,6 +202,12 @@ struct FwdConfig {
     default_target: String,
 }
 
+#[derive(Deserialize)]
+struct PairResponse {
+    token: String,
+    name: String,
+}
+
 #[tokio::main]
 async fn main() {
     let cli = Cli::parse();
@@ -144,6 +216,83 @@ async fn main() {
     let auth = auth_client(&cfg);
 
     match cli.command {
+        Commands::Pair { backend, web } => {
+            let mut c = cfg;
+            if let Some(b) = backend { c.backend = b; }
+            if let Some(w) = web { c.web = w; }
+
+            println!(" Pair this device with {}", c.backend);
+            print!(" Enter pairing code (from Settings → Devices & Tokens): ");
+            io::stdout().flush().ok();
+            let mut code = String::new();
+            io::stdin().read_line(&mut code).ok();
+            let code = code.trim().to_string();
+            if code.is_empty() {
+                eprintln!(" No code entered.");
+                return;
+            }
+
+            let resp = Client::new()
+                .post(format!("{}/api/auth/pair", c.backend))
+                .json(&serde_json::json!({ "code": code }))
+                .send()
+                .await;
+
+            match resp {
+                Ok(r) if r.status().is_success() => {
+                    let pair: PairResponse = r.json().await.unwrap_or(PairResponse {
+                        token: String::new(),
+                        name: "device".to_string(),
+                    });
+                    if pair.token.is_empty() {
+                        eprintln!(" Backend returned an empty token.");
+                        return;
+                    }
+                    // Store token: keychain first, config file as fallback.
+                    // Try the keychain first, but VERIFY the round-trip — some
+                    // backends (notably macOS Data Protection Keychain from a
+                    // non-GUI session) accept writes silently without being
+                    // readable back. In that case we fall back to the config
+                    // file so the token is always usable after pairing.
+                    let stored = match keychain_set(&pair.token) {
+                        Ok(_) => {
+                            if keychain_get().as_deref() == Some(pair.token.as_str()) {
+                                c.token = None;
+                                save_config(&c);
+                                "keychain"
+                            } else {
+                                keychain_delete();
+                                c.token = Some(pair.token.clone());
+                                save_config(&c);
+                                "config (keychain round-trip failed)"
+                            }
+                        }
+                        Err(_) => {
+                            c.token = Some(pair.token.clone());
+                            save_config(&c);
+                            "config (keychain unavailable)"
+                        }
+                    };
+                    println!(" ✓ Paired as \"{}\". Token stored ({stored}).", pair.name);
+                    println!("   Run `terusin events` to verify.");
+                }
+                Ok(r) => {
+                    let status = r.status();
+                    let body = r.text().await.unwrap_or_default();
+                    eprintln!(" Pairing failed ({status}): {body}");
+                }
+                Err(e) => {
+                    eprintln!(" Can't reach {}: {e}", c.backend);
+                }
+            }
+        }
+        Commands::Logout => {
+            keychain_delete();
+            let mut c = cfg;
+            c.token = None;
+            save_config(&c);
+            println!(" ✓ Token cleared (keychain + config).");
+        }
         Commands::Login { user, password, backend, web } => {
             let mut c = cfg;
 
@@ -152,7 +301,7 @@ async fn main() {
             if let Some(w) = web { c.web = w; }
 
             if user.is_none() || password.is_none() {
-                println!(" Login to {}", c.backend);
+                println!(" Login to {} (legacy password flow; prefer `terusin pair`)", c.backend);
             }
             if let Some(u) = user { c.user = u; }
             if c.user.is_empty() {
@@ -231,8 +380,7 @@ async fn main() {
                 }
             };
 
-            client
-                .post(format!("{}/config/default-target", cfg.backend))
+            auth.post(format!("{}/config/default-target", cfg.backend))
                 .json(&serde_json::json!({"url": target}))
                 .send()
                 .await
@@ -240,8 +388,7 @@ async fn main() {
             println!(" Forwarding webhooks → {target}");
         }
         Commands::Stop => {
-            client
-                .post(format!("{}/config/default-target", cfg.backend))
+            auth.post(format!("{}/config/default-target", cfg.backend))
                 .json(&serde_json::json!({"url": ""}))
                 .send()
                 .await
@@ -311,8 +458,10 @@ async fn main() {
                 Ok(r) => {
                     let c: FwdConfig = r.json().await.unwrap_or(FwdConfig { default_target: String::new() });
                     let s = if c.default_target.is_empty() { "PAUSED" } else { "FORWARDING" };
+                    let auth_mode = if resolve_token(&cfg).is_some() { "token (paired)" } else { "password (Basic)" };
                     println!(" Status:  {s}");
                     println!(" Target:  {}", if c.default_target.is_empty() { "-" } else { &c.default_target });
+                    println!(" Auth:    {auth_mode}");
                     println!(" User:    {}", cfg.user);
                     println!(" Backend: {}", cfg.backend);
                     println!(" Web:     {}", cfg.web);
