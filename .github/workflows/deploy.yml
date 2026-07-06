@@ -5,6 +5,12 @@ on:
     branches: [master]
   workflow_dispatch:
 
+# Least privilege — this workflow only needs to read the repo (the checkout)
+# and never writes back to it. The default GITHUB_TOKEN can otherwise be
+# over-privileged.
+permissions:
+  contents: read
+
 env:
   CARGO_TERM_COLOR: always
 
@@ -103,6 +109,22 @@ jobs:
           key: ${{ secrets.SSH_KEY }}
           port: ${{ secrets.SSH_PORT || '22' }}
           script: |
+            set -euo pipefail
+
+            # Ensure an unprivileged `terusin` user exists for the services to
+            # run as (the unit files set User=terusin). Idempotent — no-op if
+            # the user is already there. This must run BEFORE the services are
+            # (re)started, otherwise systemd fails to start them.
+            if ! id -u terusin >/dev/null 2>&1; then
+              sudo useradd --system --no-create-home --shell /usr/sbin/nologin terusin
+            fi
+
+            # Lock down the env file (contains DATABASE_URL, secrets). Must be
+            # readable by the terusin user only.
+            sudo chown terusin:terusin /opt/terusin/.env
+            sudo chmod 600 /opt/terusin/.env
+
+            sudo chown -R terusin:terusin /opt/terusin/bin
             sudo chmod +x /opt/terusin/bin/backend /opt/terusin/bin/web
             sudo cp /opt/terusin/terusin-*.service /etc/systemd/system/
             sudo systemctl daemon-reload

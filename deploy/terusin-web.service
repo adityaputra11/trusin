@@ -4,12 +4,16 @@ After=network.target terusin-backend.service
 
 [Service]
 Type=simple
-User=root
+User=terusin
 WorkingDirectory=/opt/terusin
 EnvironmentFile=/opt/terusin/.env
 ExecStart=/opt/terusin/bin/web
 Restart=always
 RestartSec=5
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
 
 [Install]
 WantedBy=multi-user.target

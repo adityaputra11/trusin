@@ -1,12 +1,20 @@
 app = "terusin"
 
 [build]
-  dockerfile = "Dockerfile"
+dockerfile = "Dockerfile"
+
+# Secrets are NOT defined here. Committing credentials to fly.toml leaks them
+# into git history permanently. Set them via the CLI instead:
+#   fly secrets set DATABASE_URL="postgres://..." -a terusin
+#   fly secrets set REDIS_URL="redis://..." -a terusin
+#   fly secrets set AUTH_USERNAME="admin" AUTH_PASSWORD="..." -a terusin
+#   fly secrets set JWT_SECRET="..." -a terusin
+# Only non-sensitive config values belong in [[env]] below.
 
 [[services]]
-  name = "backend"
-  internal_port = 3011
-  protocol = "tcp"
+name = "backend"
+internal_port = 3011
+protocol = "tcp"
 
   [[services.ports]]
     handlers = ["http"]
@@ -17,25 +25,13 @@ app = "terusin"
     key = "PORT"
     value = "3011"
   [[env]]
-    key = "DATABASE_URL"
-    value = "postgres://postgres:terusin@terusin-db.internal:5432/terusin"
-  [[env]]
-    key = "REDIS_URL"
-    value = "redis://terusin-redis.internal:6379"
-  [[env]]
-    key = "AUTH_USERNAME"
-    value = "admin"
-  [[env]]
-    key = "AUTH_PASSWORD"
-    value = "change-me-in-production"
-  [[env]]
     key = "WORKER_COUNT"
     value = "4"
 
 [[services]]
-  name = "web"
-  internal_port = 3012
-  protocol = "tcp"
+name = "web"
+internal_port = 3012
+protocol = "tcp"
 
   [[services.ports]]
     handlers = ["http"]
@@ -48,9 +44,3 @@ app = "terusin"
   [[env]]
     key = "BACKEND_URL"
     value = "http://backend:3011"
-  [[env]]
-    key = "AUTH_USERNAME"
-    value = "admin"
-  [[env]]
-    key = "AUTH_PASSWORD"
-    value = "change-me-in-production"
