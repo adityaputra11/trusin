@@ -1,0 +1,52 @@
+name: Release
+
+# Builds a release binary for macOS Apple Silicon whenever a tag (v*) is pushed,
+# then attaches it to the corresponding GitHub Release. The install.sh script
+# consumes these artifacts, so users can `curl | bash` the latest version.
+#
+# Currently builds only aarch64-apple-darwin (Mac M-series), matching the
+# existing release asset. To add more targets, extend the matrix below.
+
+on:
+  push:
+    tags:
+      - "v*"
+
+# This workflow only reads the repo and publishes a release; it never writes
+# back to the codebase.
+permissions:
+  contents: write # needed by softprops/action-gh-release to upload assets
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  release:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-release-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Build release binary
+        run: cargo build --release --bin terusin
+
+      - name: Package binary
+        run: |
+          mkdir -p dist
+          # Include the binary + a copy of the README so the tarball is useful
+          # standalone (mirrors the layout install.sh expects).
+          cp target/release/terusin dist/
+          tar -C dist -czf terusin-aarch64-apple-darwin.tar.gz terusin
+
+      - name: Upload to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: terusin-aarch64-apple-darwin.tar.gz
+          generate_release_notes: true
