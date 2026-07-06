@@ -23,6 +23,7 @@ import {
   THead,
   TR,
   Textarea,
+  ConfirmDialog,
 } from "../components/ui";
 import type { ForwardRule } from "../types/api";
 
@@ -79,6 +80,7 @@ export function Providers() {
   const [editing, setEditing] = useState<ForwardRule | null>(null);
   const [form, setForm] = useState<FormState>(EMPTY);
   const [error, setError] = useState<string | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<ForwardRule | null>(null);
 
   // Providers = named source mappings, exclude the seeded catch-all "Default".
   const providers = (rules ?? []).filter((r) => r.name !== "Default");
@@ -155,7 +157,7 @@ export function Providers() {
       </div>
 
       {isLoading ? (
-        <FullSpinner />
+        <FullSpinner label="Loading providers…" />
       ) : providers.length === 0 ? (
         <EmptyState
           icon={<Settings2 className="h-10 w-10" strokeWidth={1.5} />}
@@ -210,13 +212,7 @@ export function Providers() {
                       <Pencil className="h-4 w-4" />
                     </button>
                     <button
-                      onClick={() => {
-                        if (
-                          confirm(`Delete provider "${rule.name}"?`)
-                        ) {
-                          deleteRule.mutate(rule.id);
-                        }
-                      }}
+                      onClick={() => setDeleteTarget(rule)}
                       className="p-2 rounded-md text-muted hover:text-danger hover:bg-[rgba(239,68,68,.1)] transition-base"
                       title="Delete"
                     >
@@ -342,6 +338,23 @@ export function Providers() {
           )}
         </form>
       </Modal>
+
+      <ConfirmDialog
+        open={deleteTarget !== null}
+        onClose={() => setDeleteTarget(null)}
+        title="Delete provider"
+        description={`Delete provider "${deleteTarget?.name ?? ""}"? This cannot be undone.`}
+        confirmLabel="Delete"
+        danger
+        loading={deleteRule.isPending}
+        onConfirm={() => {
+          if (deleteTarget) {
+            deleteRule.mutate(deleteTarget.id, {
+              onSuccess: () => setDeleteTarget(null),
+            });
+          }
+        }}
+      />
     </Card>
   );
 }

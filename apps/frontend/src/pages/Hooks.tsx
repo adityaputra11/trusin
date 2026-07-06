@@ -17,7 +17,9 @@ import {
   TH,
   THead,
   TR,
+  ConfirmDialog,
 } from "../components/ui";
+import type { ForwardRule } from "../types/api";
 
 interface FormState {
   name: string;
@@ -37,6 +39,7 @@ export function Hooks() {
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState<FormState>(EMPTY);
   const [error, setError] = useState<string | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<ForwardRule | null>(null);
 
   const hooks = rules ?? [];
 
@@ -71,7 +74,7 @@ export function Hooks() {
       </div>
 
       {isLoading ? (
-        <FullSpinner />
+        <FullSpinner label="Loading hooks…" />
       ) : hooks.length === 0 ? (
         <EmptyState
           icon={<Webhook className="h-10 w-10" strokeWidth={1.5} />}
@@ -136,11 +139,7 @@ export function Hooks() {
                 {canWrite && (
                 <TD className="text-right">
                   <button
-                    onClick={() => {
-                      if (confirm(`Delete hook "${rule.name}"?`)) {
-                        deleteRule.mutate(rule.id);
-                      }
-                    }}
+                    onClick={() => setDeleteTarget(rule)}
                     className="p-2 rounded-md text-muted hover:text-danger hover:bg-[rgba(239,68,68,.1)] transition-base"
                     title="Delete"
                   >
@@ -217,6 +216,23 @@ export function Hooks() {
           )}
         </form>
       </Modal>
+
+      <ConfirmDialog
+        open={deleteTarget !== null}
+        onClose={() => setDeleteTarget(null)}
+        title="Delete hook"
+        description={`Delete hook "${deleteTarget?.name ?? ""}"? This cannot be undone.`}
+        confirmLabel="Delete"
+        danger
+        loading={deleteRule.isPending}
+        onConfirm={() => {
+          if (deleteTarget) {
+            deleteRule.mutate(deleteTarget.id, {
+              onSuccess: () => setDeleteTarget(null),
+            });
+          }
+        }}
+      />
     </Card>
   );
 }

@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import {
   ArrowLeft,
@@ -18,6 +19,7 @@ import {
   CardHeader,
   FullSpinner,
   EmptyState,
+  ConfirmDialog,
 } from "../components/ui";
 import { formatDateTime, prettyJson } from "../lib/format";
 import type { EventStatus } from "../types/api";
@@ -55,6 +57,7 @@ export function EventDetail() {
   const deleteEvent = useDeleteEvent();
   const canWrite = useCanWrite();
   const { data: attempts } = useAttempts(id, ev?.status);
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
   if (isLoading) return <FullSpinner label="Loading event…" />;
 
@@ -93,25 +96,13 @@ export function EventDetail() {
             variant="danger"
             size="sm"
             loading={deleteEvent.isPending}
-            onClick={() => {
-              if (confirm("Delete this event permanently?")) {
-                deleteEvent.mutate(ev.id, {
-                  onSuccess: () => navigate("/"),
-                });
-              }
-            }}
+            onClick={() => setConfirmDelete(true)}
           >
             <Trash2 className="h-4 w-4" /> Delete
           </Button>
         </div>
         )}
       </div>
-
-      {retry.isSuccess && (
-        <div className="mb-4 text-sm text-success bg-[rgba(34,197,94,.1)] border border-[rgba(34,197,94,.25)] rounded-md p-3">
-          Retry triggered — event re-queued for delivery.
-        </div>
-      )}
 
       <Card className="mb-6">
         <CardHeader title={`Event ${ev.id}`} subtitle={formatDateTime(ev.created_at)} />
@@ -203,6 +194,21 @@ export function EventDetail() {
       </div>
 
       <DeliveryTimeline attempts={attempts ?? []} />
+
+      <ConfirmDialog
+        open={confirmDelete}
+        onClose={() => setConfirmDelete(false)}
+        title="Delete event"
+        description="Delete this event permanently? This cannot be undone."
+        confirmLabel="Delete"
+        danger
+        loading={deleteEvent.isPending}
+        onConfirm={() =>
+          deleteEvent.mutate(ev.id, {
+            onSuccess: () => navigate("/"),
+          })
+        }
+      />
     </div>
   );
 }

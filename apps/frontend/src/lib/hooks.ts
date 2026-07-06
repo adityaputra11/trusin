@@ -1,11 +1,12 @@
 // React Query hooks for the backend API.
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import {
   useMutation,
   useQuery,
   useQueryClient,
 } from "@tanstack/react-query";
+import { toast } from "sonner";
 import { api } from "./api";
 import type {
   CreateRuleInput,
@@ -119,6 +120,47 @@ export function useMe() {
   });
 }
 
+// ── API tokens / device pairing ───────────────────────────────────────────
+
+export interface ApiToken {
+  id: string;
+  name: string;
+  last_used_at: string | null;
+  created_at: string;
+}
+
+export function useTokens() {
+  return useQuery<ApiToken[]>({
+    queryKey: ["tokens"],
+    queryFn: () => api.get<ApiToken[]>(`/api/auth/tokens`),
+  });
+}
+
+export interface PairInitResponse {
+  code: string;
+  expires_in: number;
+}
+
+export function useInitPair() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (name: string) =>
+      api.post<PairInitResponse>(`/api/auth/pair/init`, { name }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["tokens"] }),
+  });
+}
+
+export function useRevokeToken() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api.delete(`/api/auth/tokens/${id}`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["tokens"] });
+      toast.success("Token revoked");
+    },
+  });
+}
+
 /** True if the logged-in user can write (create/edit/delete rules, retry,
  * send webhooks). `viewer` is read-only; everything else is admin. */
 export function canWrite(role: string | null | undefined): boolean {
@@ -139,6 +181,7 @@ export function useRetryEvent() {
     onSuccess: (_data, id) => {
       qc.invalidateQueries({ queryKey: ["events"] });
       qc.invalidateQueries({ queryKey: ["event", id] });
+      toast.success("Event re-queued");
     },
   });
 }
@@ -148,7 +191,10 @@ export function useCreateRule() {
   return useMutation({
     mutationFn: (input: CreateRuleInput) =>
       api.post<ForwardRule>(`/rules`, input),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["rules"] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["rules"] });
+      toast.success("Rule created");
+    },
   });
 }
 
@@ -156,7 +202,10 @@ export function useDeleteRule() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (id: string) => api.delete(`/rules/${id}`),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["rules"] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["rules"] });
+      toast.success("Rule deleted");
+    },
   });
 }
 
@@ -173,7 +222,10 @@ export function useDeleteEvent() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (id: string) => api.delete(`/events/${id}`),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["events"] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["events"] });
+      toast.success("Event deleted");
+    },
   });
 }
 
@@ -203,7 +255,10 @@ export function useBulkRetry() {
   return useMutation({
     mutationFn: (ids: string[]) =>
       api.post<{ enqueued: number }>(`/events/bulk/retry`, { ids }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["events"] }),
+    onSuccess: (data) => {
+      qc.invalidateQueries({ queryKey: ["events"] });
+      toast.success(`Re-queued ${data.enqueued} event(s)`);
+    },
   });
 }
 
@@ -212,31 +267,45 @@ export function useBulkDelete() {
   return useMutation({
     mutationFn: (ids: string[]) =>
       api.post<{ deleted: number }>(`/events/bulk/delete`, { ids }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["events"] }),
+    onSuccess: (data) => {
+      qc.invalidateQueries({ queryKey: ["events"] });
+      toast.success(`Deleted ${data.deleted} event(s)`);
+    },
   });
 }
+
+export type EventStreamStatus = "connected" | "reconnecting" | "idle";
 
 /**
  * Subscribe to the live SSE event stream and invalidate the events query when
  * a new event arrives, so the dashboard table refreshes without polling.
- * Returns nothing — it's a side-effect hook. Pass `enabled=false` to pause.
+ * Returns the connection status so the UI can surface "Live" vs
+ * "Reconnecting…". Pass `enabled=false` to pause.
  */
-export function useEventStream(enabled: boolean) {
+export function useEventStream(enabled: boolean): EventStreamStatus {
   const qc = useQueryClient();
+  const [status, setStatus] = useState<EventStreamStatus>("idle");
   useEffect(() => {
     if (!enabled) return;
     const es = new EventSource("/events/stream");
+    setStatus("reconnecting");
     const onEvent = () => {
       // Invalidate all events queries (any filter/page).
       qc.invalidateQueries({ queryKey: ["events"] });
     };
+    const onOpen = () => setStatus("connected");
+    es.addEventListener("open", onOpen);
     es.addEventListener("event", onEvent);
     es.onerror = () => {
-      // EventSource auto-reconnects; nothing to do here.
+      // EventSource auto-reconnects; flip the indicator until it recovers.
+      setStatus("reconnecting");
     };
     return () => {
+      es.removeEventListener("open", onOpen);
       es.removeEventListener("event", onEvent);
       es.close();
+      setStatus("idle");
     };
   }, [enabled, qc]);
+  return status;
 }

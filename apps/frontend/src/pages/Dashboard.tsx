@@ -7,6 +7,7 @@ import {
   Trash2,
   SlidersHorizontal,
   X,
+  AlertCircle,
 } from "lucide-react";
 import {
   useEvents,
@@ -15,6 +16,7 @@ import {
   useBulkRetry,
   useBulkDelete,
 } from "../lib/hooks";
+import type { EventStreamStatus } from "../lib/hooks";
 import { useCanWrite } from "../lib/user-context";
 import { EndpointBox } from "../components/EndpointBox";
 import { EventRow } from "../components/EventRow";
@@ -32,6 +34,7 @@ import {
   THead,
   Button,
   Modal,
+  ConfirmDialog,
 } from "../components/ui";
 import type { EventQuery } from "../types/api";
 
@@ -47,6 +50,30 @@ const STATUS_FILTERS: { value: string; label: string }[] = [
 const STATUS_LABEL: Record<string, string> = Object.fromEntries(
   STATUS_FILTERS.map((s) => [s.value, s.label]),
 );
+
+/** Small "Live" / "Reconnecting…" indicator reflecting the SSE stream. Sits
+ * next to the endpoint box so users know when real-time updates are paused. */
+function LiveBadge({ status }: { status: EventStreamStatus }) {
+  if (status === "idle") return null;
+  const connected = status === "connected";
+  return (
+    <span
+      className={`inline-flex items-center gap-1.5 text-xs font-medium px-2.5 h-7 rounded-md border self-end mb-6 ${
+        connected
+          ? "text-success bg-[rgba(34,197,94,.08)] border-[rgba(34,197,94,.25)]"
+          : "text-warning bg-[rgba(245,158,11,.08)] border-[rgba(245,158,11,.25)]"
+      }`}
+      title={connected ? "Connected — events stream live" : "Stream interrupted — reconnecting…"}
+    >
+      <span
+        className={`h-1.5 w-1.5 rounded-full ${
+          connected ? "bg-success animate-pulse" : "bg-warning"
+        }`}
+      />
+      {connected ? "Live" : "Reconnecting…"}
+    </span>
+  );
+}
 
 // Isolated + memoized so typing in the search input re-renders only this bar,
 // not the 50-row table body beneath it. Search is the one filter that stays
@@ -293,13 +320,13 @@ export function Dashboard() {
   };
 
   // Live updates via SSE; falls back gracefully if the stream is unavailable.
-  useEventStream(true);
+  const streamStatus = useEventStream(true);
   const { data: sources } = useSources();
   const bulkRetry = useBulkRetry();
   const bulkDelete = useBulkDelete();
 
   // SSE pushes invalidate the query; keep a slow refetchInterval as a backstop.
-  const { data, isLoading, isFetching, refetch } = useEvents(query, {
+  const { data, isLoading, isFetching, isError, refetch } = useEvents(query, {
     refetchInterval: 15000,
   });
 
@@ -386,6 +413,8 @@ export function Dashboard() {
 
   const clearSelection = useCallback(() => setSelected(new Set()), []);
 
+  const [confirmDelete, setConfirmDelete] = useState(false);
+
   const onBulkRetry = useCallback(() => {
     const ids = Array.from(selected);
     if (ids.length === 0) return;
@@ -393,15 +422,28 @@ export function Dashboard() {
   }, [selected, bulkRetry, clearSelection]);
 
   const onBulkDelete = useCallback(() => {
+    if (selected.size === 0) return;
+    setConfirmDelete(true);
+  }, [selected]);
+
+  const confirmBulkDelete = useCallback(() => {
     const ids = Array.from(selected);
-    if (ids.length === 0) return;
-    if (!confirm(`Delete ${ids.length} selected event(s)?`)) return;
-    bulkDelete.mutate(ids, { onSuccess: clearSelection });
+    bulkDelete.mutate(ids, {
+      onSuccess: () => {
+        clearSelection();
+        setConfirmDelete(false);
+      },
+    });
   }, [selected, bulkDelete, clearSelection]);
 
   return (
     <div>
-      <EndpointBox />
+      <div className="flex items-start justify-between gap-4 flex-wrap">
+        <div className="flex-1 min-w-0">
+          <EndpointBox />
+        </div>
+        <LiveBadge status={streamStatus} />
+      </div>
 
       <Card className="p-0 overflow-hidden">
         <FilterBar
@@ -452,7 +494,18 @@ export function Dashboard() {
           </div>
         )}
 
-        {isLoading ? (
+        {isError ? (
+          <EmptyState
+            icon={<AlertCircle className="h-10 w-10" strokeWidth={1.5} />}
+            title="Couldn't load events"
+            description="The request failed. Check the backend connection and try again."
+            action={
+              <Button variant="outline" size="sm" onClick={() => refetch()}>
+                <RotateCw className="h-4 w-4" /> Retry
+              </Button>
+            }
+          />
+        ) : isLoading ? (
           <FullSpinner label="Loading events…" />
         ) : events.length === 0 ? (
           <EmptyState
@@ -503,6 +556,17 @@ export function Dashboard() {
           </>
         )}
       </Card>
+
+      <ConfirmDialog
+        open={confirmDelete}
+        onClose={() => setConfirmDelete(false)}
+        title="Delete events"
+        description={`Delete ${selected.size} selected event(s)? This cannot be undone.`}
+        confirmLabel="Delete"
+        danger
+        loading={bulkDelete.isPending}
+        onConfirm={confirmBulkDelete}
+      />
     </div>
   );
 }
