@@ -241,62 +241,6 @@ pub async fn touch_token_last_used(
     }
 }
 
-// ── Pairing codes (Redis-backed, ephemeral) ───────────────────────────────
-//
-// Spotify-style: the dashboard mints a 6-digit code (5-min TTL) bound to the
-// current user; the CLI submits it and receives a token in exchange. The code
-// is consumed atomically via GETDEL so a race between two CLIs only pairs one.
-
-const PAIR_KEY_PREFIX: &str = "terusin:pair:";
-const PAIR_TTL_SECS: i64 = 300;
-const PAIR_CODE_MAX: u32 = 1_000_000;
-
-/// Init pairing: mint a unique 6-digit code, store `{user_id}|{name}` in Redis
-/// with a 5-min TTL. Returns the code (zero-padded) + expiry.
-pub async fn init_pair(
-    redis: &mut redis::aio::ConnectionManager,
-    user_id: &Uuid,
-    name: &str,
-) -> anyhow::Result<(String, i64)> {
-    use rand::Rng;
-    // Retry until we find a free code (collision is very rare).
-    for _ in 0..10 {
-        let n: u32 = rand::thread_rng().gen_range(0..PAIR_CODE_MAX);
-        let code = format!("{n:06}");
-        let key = format!("{PAIR_KEY_PREFIX}{code}");
-        let value = format!("{user_id}|{name}");
-        let inserted: Option<()> = redis::cmd("SET")
-            .arg(&key)
-            .arg(&value)
-            .arg("NX")
-            .arg("EX")
-            .arg(PAIR_TTL_SECS)
-            .query_async(redis)
-            .await?;
-        if inserted.is_some() {
-            return Ok((code, PAIR_TTL_SECS));
-        }
-    }
-    anyhow::bail!("could not allocate a pairing code, try again");
-}
-
-/// Consume a pairing code atomically. Returns (user_id, device_name) on hit.
-pub async fn consume_pair(
-    redis: &mut redis::aio::ConnectionManager,
-    code: &str,
-) -> Option<(Uuid, String)> {
-    let key = format!("{PAIR_KEY_PREFIX}{code}");
-    let value: Option<String> = redis::cmd("GETDEL")
-        .arg(&key)
-        .query_async(redis)
-        .await
-        .ok()?;
-    let v = value?;
-    let (uid, name) = v.split_once('|')?;
-    let uid = Uuid::parse_str(uid).ok()?;
-    Some((uid, name.to_string()))
-}
-
 // ── Google API types ──────────────────────────────────────────────────────
 
 #[derive(Debug, Deserialize)]
@@ -764,78 +708,32 @@ pub async fn logout(State(_state): State<Arc<AppState>>) -> Response {
     res
 }
 
-// ── Endpoint: POST /api/auth/pair/init  (protected) ───────────────────────
+// ── Endpoint: POST /api/auth/tokens  (protected) ──────────────────────────
 //
-// Dashboard calls this while signed in. We mint a 6-digit code, store it in
-// Redis bound to the caller's user id + the device name they typed, and show
-// the code in the UI with a 5-minute countdown.
+// A signed-in dashboard user mints their own API key directly. No 6-digit
+// pairing code / Redis round-trip — the key is bound to the caller via the
+// `Extension<CurrentUser>` injected by `auth_middleware`, so it inherits the
+// caller's role (admin = full, viewer = read-only). The cleartext key is
+// returned exactly once and never persisted; only its sha256 hash is stored.
 
 #[derive(Deserialize)]
-pub struct PairInitRequest {
+pub struct CreateTokenRequest {
     pub name: String,
 }
 
-pub async fn pair_init(
+pub async fn create_token(
     State(state): State<Arc<AppState>>,
     axum::Extension(cu): axum::Extension<CurrentUser>,
-    Json(body): Json<PairInitRequest>,
+    Json(body): Json<CreateTokenRequest>,
 ) -> Response {
     let name = body.name.trim();
     if name.is_empty() || name.len() > 120 {
         return (
             StatusCode::BAD_REQUEST,
-            "device name must be 1-120 chars",
+            "token name must be 1-120 chars",
         )
             .into_response();
     }
-    let mut conn = state.redis.clone();
-    match init_pair(&mut conn, &cu.id, name).await {
-        Ok((code, expires_in)) => Json(serde_json::json!({
-            "code": code,
-            "expires_in": expires_in,
-        }))
-        .into_response(),
-        Err(e) => {
-            tracing::warn!("pair_init: {e}");
-            StatusCode::INTERNAL_SERVER_ERROR.into_response()
-        }
-    }
-}
-
-// ── Endpoint: POST /api/auth/pair  (PUBLIC — code is the credential) ──────
-//
-// The CLI posts the 6-digit code here. We atomically consume it (GETDEL), look
-// up the bound user, mint + persist a token, and return it once. The code can
-// only be used by exactly one CLI.
-
-#[derive(Deserialize)]
-pub struct PairRequest {
-    pub code: String,
-}
-
-pub async fn pair_complete(
-    State(state): State<Arc<AppState>>,
-    Json(body): Json<PairRequest>,
-) -> Response {
-    let code = body.code.trim();
-    if !code.chars().all(|c| c.is_ascii_digit()) || code.len() != 6 {
-        return (StatusCode::BAD_REQUEST, "code must be 6 digits").into_response();
-    }
-    let mut conn = state.redis.clone();
-    let Some((user_id, name)) = consume_pair(&mut conn, code).await else {
-        return (StatusCode::NOT_FOUND, "invalid or expired code").into_response();
-    };
-
-    // Fetch the user's role so the token carries it.
-    let user: Option<User> = sqlx::query_as::<_, User>("SELECT * FROM users WHERE id = $1")
-        .bind(user_id)
-        .fetch_optional(&state.db)
-        .await
-        .ok()
-        .flatten();
-    let Some(user) = user else {
-        return (StatusCode::NOT_FOUND, "user not found").into_response();
-    };
 
     let token = generate_token();
     let hash = hash_token(&token);
@@ -845,13 +743,13 @@ pub async fn pair_complete(
            VALUES ($1, $2, $3, $4)"#,
     )
     .bind(id)
-    .bind(user_id)
-    .bind(&name)
+    .bind(cu.id)
+    .bind(name)
     .bind(&hash)
     .execute(&state.db)
     .await;
     if let Err(e) = inserted {
-        tracing::error!("pair token insert: {e}");
+        tracing::error!("create_token insert: {e}");
         return StatusCode::INTERNAL_SERVER_ERROR.into_response();
     }
 
@@ -859,7 +757,7 @@ pub async fn pair_complete(
         "token": token,           // shown once, never persisted
         "token_id": id,
         "name": name,
-        "role": user.role,
+        "role": cu.role,
     }))
     .into_response()
 }

@@ -7,16 +7,16 @@ import {
   Plug,
   Server,
   Wrench,
-  Smartphone,
   Trash2,
   Plus,
-  Clock,
+  KeyRound,
+  AlertTriangle,
 } from "lucide-react";
 import { Card, CardHeader, Badge, Button, Input } from "../components/ui";
 import {
   useHealth,
   useTokens,
-  useInitPair,
+  useCreateToken,
   useRevokeToken,
 } from "../lib/hooks";
 import { useCurrentUser } from "../lib/user-context";
@@ -111,103 +111,103 @@ function CodeBlock({ code }: { code: string }) {
   );
 }
 
-/** Devices & API Tokens card. Pair the CLI/MCP via a one-time 6-digit code,
- * and revoke devices later. */
+/** Devices & API Tokens card. Generate an API key (shown once) for the CLI /
+ *  MCP, and revoke keys later. Each key is scoped to the signed-in user's
+ *  role (admin = full, viewer = read-only). */
 function DevicesAndTokens() {
   const { data: tokens, isLoading } = useTokens();
-  const initPair = useInitPair();
+  const createToken = useCreateToken();
   const revoke = useRevokeToken();
   const [name, setName] = useState("");
-  const [code, setCode] = useState<string | null>(null);
-  const [expiresIn, setExpiresIn] = useState(0);
-
-  // Countdown timer for the displayed code.
-  useEffect(() => {
-    if (!code || expiresIn <= 0) return;
-    const t = setTimeout(() => setExpiresIn((e) => Math.max(0, e - 1)), 1000);
-    return () => clearTimeout(t);
-  }, [code, expiresIn]);
-  // Clear the code when the countdown reaches zero.
-  useEffect(() => {
-    if (expiresIn === 0) setCode(null);
-  }, [expiresIn]);
+  const [created, setCreated] = useState<string | null>(null);
 
   const generate = async () => {
-    const deviceName = name.trim() || "My device";
+    const tokenName = name.trim() || "My device";
     try {
-      const res = await initPair.mutateAsync(deviceName);
-      setCode(res.code);
-      setExpiresIn(res.expires_in);
+      const res = await createToken.mutateAsync(tokenName);
+      setCreated(res.token);
+      setName("");
     } catch {
       /* toast/error handled inline by mutation state */
     }
   };
 
-  const codeDisplay = code
-    ? `${code.slice(0, 3)} ${code.slice(3)}`
-    : "";
+  // Clear the displayed secret if the user navigates away or regenerates.
+  useEffect(() => {
+    if (!created) return;
+    // No auto-dismiss: the key is gone forever once the user closes this, so we
+    // keep it visible until they explicitly dismiss it.
+  }, [created]);
 
   return (
     <Card>
       <CardHeader
-        title="Devices & API Tokens"
-        subtitle="Pair the CLI / MCP without sharing a password"
-        action={<Badge variant="info">pairing</Badge>}
+        title="API Tokens"
+        subtitle="Generate a key for the CLI / MCP — no password shared"
+        action={<Badge variant="info">api keys</Badge>}
       />
       <div className="space-y-5">
         <p className="text-sm text-secondary">
-          Generate a one-time pairing code, then run{" "}
-          <code className="text-foreground font-mono">terusin pair</code> on the
-          device you want to connect. The device gets an API token (stored in
-          its OS keychain) — no password ever leaves this browser.
+          Generate an API key, then run{" "}
+          <code className="text-foreground font-mono">terusin set-token &lt;key&gt;</code>{" "}
+          on the device you want to connect — or export it as{" "}
+          <code className="text-foreground font-mono">TERUSIN_TOKEN</code>. The
+          key inherits your role (admin = full write, viewer = read-only).
         </p>
 
-        {/* Pair UI */}
+        {/* Generate UI */}
         <div className="flex flex-col sm:flex-row gap-2">
           <Input
             value={name}
             onChange={(e) => setName(e.target.value)}
-            placeholder="Device name (e.g. MacBook CLI)"
+            placeholder="Label (e.g. MacBook CLI)"
             className="flex-1"
             maxLength={120}
           />
-          <Button onClick={generate} loading={initPair.isPending}>
-            <Plus className="h-4 w-4" /> Generate code
+          <Button onClick={generate} loading={createToken.isPending}>
+            <Plus className="h-4 w-4" /> Generate API key
           </Button>
         </div>
 
-        {initPair.isError && (
+        {createToken.isError && (
           <p className="text-sm text-danger bg-[rgba(239,68,68,.1)] border border-[rgba(239,68,68,.25)] rounded-md p-3">
-            Could not generate a code. Make sure the backend is reachable.
+            Could not generate a key. Make sure the backend is reachable.
           </p>
         )}
 
-        {code && expiresIn > 0 && (
-          <div className="bg-[rgba(59,130,246,.06)] border border-[rgba(59,130,246,.25)] rounded-md p-5 text-center">
-            <p className="text-xs font-medium text-info uppercase tracking-wide mb-2 flex items-center justify-center gap-1.5">
-              <Clock className="h-3.5 w-3.5" /> Expires in {Math.floor(expiresIn / 60)}:
-              {String(expiresIn % 60).padStart(2, "0")}
+        {created && (
+          <div className="bg-[rgba(234,179,8,.06)] border border-[rgba(234,179,8,.3)] rounded-md p-4 space-y-3">
+            <p className="text-xs font-medium text-warning uppercase tracking-wide flex items-center gap-1.5">
+              <AlertTriangle className="h-3.5 w-3.5" /> Shown only once — copy it now
             </p>
-            <p className="text-4xl font-bold text-foreground font-mono tracking-[0.3em] mb-3">
-              {codeDisplay}
-            </p>
-            <p className="text-xs text-muted">
-              On the device, run <code className="text-secondary font-mono">terusin pair</code>{" "}
-              and enter this code.
-            </p>
+            <CodeBlock code={created} />
+            <div className="flex items-center justify-between gap-3">
+              <p className="text-xs text-muted">
+                Then on the device:{" "}
+                <code className="text-secondary font-mono">
+                  terusin set-token {created.slice(0, 6)}…
+                </code>
+              </p>
+              <button
+                onClick={() => setCreated(null)}
+                className="text-xs text-muted hover:text-foreground transition-base shrink-0"
+              >
+                I&apos;ve copied it
+              </button>
+            </div>
           </div>
         )}
 
         {/* Active tokens list */}
         <div>
           <p className="text-xs font-medium text-secondary uppercase mb-2">
-            Paired devices
+            Active keys
           </p>
           {isLoading ? (
             <p className="text-sm text-muted">Loading…</p>
           ) : !tokens || tokens.length === 0 ? (
             <p className="text-sm text-muted py-4">
-              No devices paired yet. Generate a code above to start.
+              No API keys yet. Generate one above to start.
             </p>
           ) : (
             <div className="space-y-1">
@@ -217,7 +217,7 @@ function DevicesAndTokens() {
                   className="flex items-center justify-between gap-3 bg-surface border border-border rounded-md p-3"
                 >
                   <div className="flex items-center gap-3 min-w-0">
-                    <Smartphone className="h-4 w-4 text-muted shrink-0" />
+                    <KeyRound className="h-4 w-4 text-muted shrink-0" />
                     <div className="min-w-0">
                       <p className="text-sm text-foreground font-medium truncate">
                         {t.name}
