@@ -101,7 +101,7 @@ jobs:
           source: deploy/*
           target: /opt/terusin
           strip_components: 1
-          rm: true
+          overwrite: true
 
       - uses: appleboy/ssh-action@v1.2.0
         with:
