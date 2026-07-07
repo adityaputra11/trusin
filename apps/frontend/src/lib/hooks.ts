@@ -136,16 +136,21 @@ export function useTokens() {
   });
 }
 
-export interface PairInitResponse {
-  code: string;
-  expires_in: number;
+export interface CreateTokenResponse {
+  /** The full `ts_…` API key — shown only here, never persisted server-side. */
+  token: string;
+  token_id: string;
+  name: string;
+  role: string;
 }
 
-export function useInitPair() {
+/** Mint a new API key bound to the signed-in user (role-scoped). The cleartext
+ *  key is returned exactly once; the caller must capture + display it. */
+export function useCreateToken() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (name: string) =>
-      api.post<PairInitResponse>(`/api/auth/pair/init`, { name }),
+      api.post<CreateTokenResponse>(`/api/auth/tokens`, { name }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["tokens"] }),
   });
 }

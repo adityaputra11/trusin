@@ -1555,9 +1555,7 @@ async fn main() {
         .route("/api/auth/callback/google", get(auth::google_callback))
         .route("/api/auth/me", get(auth::me))
         .route("/api/auth/login", axum::routing::post(auth::login))
-        .route("/api/auth/logout", axum::routing::post(auth::logout))
-        // Pairing: the code IS the credential, so pair-complete is public.
-        .route("/api/auth/pair", axum::routing::post(auth::pair_complete));
+        .route("/api/auth/logout", axum::routing::post(auth::logout));
 
     let protected = Router::new()
         .route("/config/default-target", post(set_default_target))
@@ -1573,9 +1571,11 @@ async fn main() {
         .route("/rules", get(list_rules).post(create_rule))
         .route("/rules/{id}", delete(delete_rule).patch(update_rule))
         .route("/stats", get(metrics))
-        // API token pairing + management (require the calling user to be authed).
-        .route("/api/auth/pair/init", axum::routing::post(auth::pair_init))
-        .route("/api/auth/tokens", get(auth::list_tokens))
+        // API token management — any authenticated user may mint/scoped keys.
+        .route(
+            "/api/auth/tokens",
+            get(auth::list_tokens).post(auth::create_token),
+        )
         .route("/api/auth/tokens/{id}", axum::routing::delete(auth::revoke_token))
         .layer(middleware::from_fn_with_state(state.clone(), auth_middleware));
 
