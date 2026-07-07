@@ -1,5 +1,4 @@
-//! Application-wide shared state: the `AppState` passed to every handler, the
-//! default-user seed, and Redis client construction.
+//! Shared `AppState`, default-user seed, Redis client construction.
 
 use std::sync::{Arc, Mutex};
 

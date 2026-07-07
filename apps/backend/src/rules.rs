@@ -1,4 +1,4 @@
-//! Forward-rule CRUD handlers. All mutating handlers are admin-gated.
+//! Forward-rule CRUD handlers (admin-gated mutations).
 
 use std::sync::Arc;
 

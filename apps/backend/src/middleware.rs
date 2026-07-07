@@ -1,8 +1,5 @@
-//! Auth middleware + shared auth/response helpers.
-//!
-//! `auth_middleware` resolves a request's principal from one of three
-//! credentials (cookie JWT, Bearer API token, HTTP Basic) and inserts an
-//! `Extension<auth::CurrentUser>` for downstream handlers.
+//! Auth middleware + shared auth/response helpers. Resolves a principal from
+//! one of three credentials (cookie JWT, Bearer API token, HTTP Basic).
 
 use std::sync::Arc;
 

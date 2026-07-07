@@ -1,8 +1,4 @@
 //! Database row structs shared across handler modules.
-//!
-//! These map 1:1 to tables and are used by several domains (webhook ingest,
-//! workers, events/rules handlers), so they live here rather than inside any
-//! single domain module.
 
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;

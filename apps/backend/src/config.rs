@@ -1,5 +1,4 @@
-//! Public/config handlers: default-target get/set, health, OAuth status, and
-//! the public endpoint info (configured PUBLIC_URL + live ngrok tunnel).
+//! Public/config handlers: default-target get/set, health, OAuth status, endpoint.
 
 use std::sync::Arc;
 

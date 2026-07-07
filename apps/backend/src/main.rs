@@ -1,10 +1,4 @@
-//! Terusin backend entry point.
-//!
-//! This file is wiring-only: module declarations, the cross-module re-exports
-//! that `auth.rs` depends on (`crate::AppState`, `crate::User`,
-//! `crate::check_rate_limit`, `crate::client_ip_from`), the CORS layer, and
-//! `main()` which sets up DB/Redis/state, spawns the delivery workers, and
-//! composes the router. All handler logic lives in the domain modules.
+//! Backend entry point: wiring only (modules, re-exports, CORS, main).
 
 mod auth;
 mod config;

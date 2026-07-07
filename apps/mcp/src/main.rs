@@ -1,12 +1,11 @@
 use base64::Engine;
 use serde_json::{json, Value};
-use std::io::{self, BufRead, Write};
+use std::io::{self, BufRead};
 
 const BACKEND_URL: &str = "http://127.0.0.1:3011";
 
 fn auth_header() -> String {
-    // Prefer a paired API token (Bearer) — generate one in the dashboard's
-    // Settings → Devices & Tokens page, then export TERUSIN_TOKEN.
+    // Bearer API token (generate from the dashboard's Settings → API Tokens).
     if let Ok(t) = std::env::var("TERUSIN_TOKEN") {
         if !t.trim().is_empty() {
             return format!("Bearer {}", t.trim());
@@ -32,7 +31,6 @@ fn tool_list() -> Vec<Value> {
 }
 
 fn handle_call(name: &str, args: &Value) -> Value {
-    let rt = tokio::runtime::Runtime::new().unwrap();
     let mut headers = reqwest::header::HeaderMap::new();
     headers.insert(reqwest::header::AUTHORIZATION, auth_header().parse().unwrap());
     let client = reqwest::blocking::Client::builder().default_headers(headers).build().unwrap();
