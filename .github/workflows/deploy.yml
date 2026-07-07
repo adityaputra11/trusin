@@ -92,6 +92,17 @@ jobs:
           TURNSTILE_SECRET_KEY=${{ secrets.TURNSTILE_SECRET_KEY }}
           ENVEOF
 
+      - uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_KEY }}
+          port: ${{ secrets.SSH_PORT || '22' }}
+          script: |
+            sudo rm -rf /opt/terusin/bin /opt/terusin/migrations /opt/terusin/.env
+            sudo mkdir -p /opt/terusin/bin /opt/terusin/migrations
+            sudo chown $USER:$USER /opt/terusin /opt/terusin/bin /opt/terusin/migrations
+
       - uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ secrets.SSH_HOST }}
@@ -101,7 +112,6 @@ jobs:
           source: deploy/*
           target: /opt/terusin
           strip_components: 1
-          overwrite: true
 
       - uses: appleboy/ssh-action@v1.2.0
         with:
