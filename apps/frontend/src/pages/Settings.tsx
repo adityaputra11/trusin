@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import {
   Activity,
   Copy,
@@ -12,7 +12,7 @@ import {
   KeyRound,
   AlertTriangle,
 } from "lucide-react";
-import { Card, CardHeader, Badge, Button, Input } from "../components/ui";
+import { Card, CardHeader, Badge, Button, Input, Modal } from "../components/ui";
 import {
   useHealth,
   useTokens,
@@ -111,15 +111,17 @@ function CodeBlock({ code }: { code: string }) {
   );
 }
 
-/** Devices & API Tokens card. Generate an API key (shown once) for the CLI /
- *  MCP, and revoke keys later. Each key is scoped to the signed-in user's
- *  role (admin = full, viewer = read-only). */
+/** Devices & API Tokens card. Generate an API key (shown once in a popup) for
+ *  the CLI / MCP, and revoke keys later. Each key is scoped to the signed-in
+ *  user's role (admin = full, viewer = read-only). */
 function DevicesAndTokens() {
   const { data: tokens, isLoading } = useTokens();
   const createToken = useCreateToken();
   const revoke = useRevokeToken();
+  const [showForm, setShowForm] = useState(false);
   const [name, setName] = useState("");
   const [created, setCreated] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
 
   const generate = async () => {
     const tokenName = name.trim() || "My device";
@@ -132,116 +134,138 @@ function DevicesAndTokens() {
     }
   };
 
-  // Clear the displayed secret if the user navigates away or regenerates.
-  useEffect(() => {
+  const closeForm = () => {
+    setShowForm(false);
+    setCreated(null);
+    setName("");
+    setCopied(false);
+  };
+
+  const copyAndClose = async () => {
     if (!created) return;
-    // No auto-dismiss: the key is gone forever once the user closes this, so we
-    // keep it visible until they explicitly dismiss it.
-  }, [created]);
+    try {
+      await navigator.clipboard.writeText(created);
+      setCopied(true);
+      setTimeout(() => closeForm(), 1200);
+    } catch {
+      closeForm();
+    }
+  };
 
   return (
     <Card>
       <CardHeader
         title="API Tokens"
         subtitle="Generate a key for the CLI / MCP — no password shared"
-        action={<Badge variant="info">api keys</Badge>}
+        action={
+          <Button size="sm" onClick={() => setShowForm(true)}>
+            <Plus className="h-4 w-4" /> New key
+          </Button>
+        }
       />
-      <div className="space-y-5">
-        <p className="text-sm text-secondary">
-          Generate an API key, then run{" "}
-          <code className="text-foreground font-mono">terusin set-token &lt;key&gt;</code>{" "}
-          on the device you want to connect — or export it as{" "}
-          <code className="text-foreground font-mono">TERUSIN_TOKEN</code>. The
-          key inherits your role (admin = full write, viewer = read-only).
-        </p>
 
-        {/* Generate UI */}
-        <div className="flex flex-col sm:flex-row gap-2">
+      {/* Generate modal */}
+      <Modal
+        open={showForm}
+        onClose={created ? () => {} : closeForm}
+        title={created ? "API Key Generated" : "Generate API Key"}
+        description={
+          created
+            ? "Copy it now — you won't be able to see it again"
+            : "Name this key so you can identify it later"
+        }
+        footer={
+          !created ? (
+            <>
+              <Button variant="ghost" onClick={closeForm}>Cancel</Button>
+              <Button onClick={generate} loading={createToken.isPending}>
+                Generate
+              </Button>
+            </>
+          ) : (
+            <Button onClick={copyAndClose} variant="primary" className="w-full">
+              {copied ? (
+                <><Check className="h-4 w-4 text-success" /> Copied!</>
+              ) : (
+                <><Copy className="h-4 w-4" /> Copy &amp; close</>
+              )}
+            </Button>
+          )
+        }
+      >
+        {!created ? (
           <Input
             value={name}
             onChange={(e) => setName(e.target.value)}
-            placeholder="Label (e.g. MacBook CLI)"
-            className="flex-1"
+            placeholder="e.g. MacBook CLI"
             maxLength={120}
+            autoFocus
+            onKeyDown={(e) => e.key === "Enter" && generate()}
           />
-          <Button onClick={generate} loading={createToken.isPending}>
-            <Plus className="h-4 w-4" /> Generate API key
-          </Button>
-        </div>
-
-        {createToken.isError && (
-          <p className="text-sm text-danger bg-[rgba(239,68,68,.1)] border border-[rgba(239,68,68,.25)] rounded-md p-3">
-            Could not generate a key. Make sure the backend is reachable.
-          </p>
-        )}
-
-        {created && (
-          <div className="bg-[rgba(234,179,8,.06)] border border-[rgba(234,179,8,.3)] rounded-md p-4 space-y-3">
-            <p className="text-xs font-medium text-warning uppercase tracking-wide flex items-center gap-1.5">
-              <AlertTriangle className="h-3.5 w-3.5" /> Shown only once — copy it now
-            </p>
-            <CodeBlock code={created} />
-            <div className="flex items-center justify-between gap-3">
-              <p className="text-xs text-muted">
-                Then on the device:{" "}
-                <code className="text-secondary font-mono">
-                  terusin set-token {created.slice(0, 6)}…
-                </code>
+        ) : (
+          <div className="space-y-4">
+            <div className="bg-[rgba(234,179,8,.08)] border border-[rgba(234,179,8,.3)] rounded-md p-4">
+              <p className="text-xs font-medium text-warning uppercase tracking-wide flex items-center gap-1.5 mb-3">
+                <AlertTriangle className="h-3.5 w-3.5" /> Shown only once
               </p>
-              <button
-                onClick={() => setCreated(null)}
-                className="text-xs text-muted hover:text-foreground transition-base shrink-0"
-              >
-                I&apos;ve copied it
-              </button>
+              <CodeBlock code={created} />
             </div>
+            <p className="text-xs text-muted text-center">
+              Then run: <code className="text-foreground font-mono">terusin set-token {created.slice(0, 6)}…</code>
+            </p>
           </div>
         )}
+      </Modal>
 
-        {/* Active tokens list */}
-        <div>
-          <p className="text-xs font-medium text-secondary uppercase mb-2">
-            Active keys
+      {createToken.isError && (
+        <p className="text-sm text-danger bg-[rgba(239,68,68,.1)] border border-[rgba(239,68,68,.25)] rounded-md p-3 mb-4">
+          Could not generate a key. Make sure the backend is reachable.
+        </p>
+      )}
+
+      {/* Active tokens list */}
+      <div>
+        <p className="text-xs font-medium text-secondary uppercase mb-2">
+          Active keys
+        </p>
+        {isLoading ? (
+          <p className="text-sm text-muted">Loading…</p>
+        ) : !tokens || tokens.length === 0 ? (
+          <p className="text-sm text-muted py-4">
+            No API keys yet. Tap "New key" above to generate one.
           </p>
-          {isLoading ? (
-            <p className="text-sm text-muted">Loading…</p>
-          ) : !tokens || tokens.length === 0 ? (
-            <p className="text-sm text-muted py-4">
-              No API keys yet. Generate one above to start.
-            </p>
-          ) : (
-            <div className="space-y-1">
-              {tokens.map((t) => (
-                <div
-                  key={t.id}
-                  className="flex items-center justify-between gap-3 bg-surface border border-border rounded-md p-3"
-                >
-                  <div className="flex items-center gap-3 min-w-0">
-                    <KeyRound className="h-4 w-4 text-muted shrink-0" />
-                    <div className="min-w-0">
-                      <p className="text-sm text-foreground font-medium truncate">
-                        {t.name}
-                      </p>
-                      <p className="text-xs text-muted">
-                        {t.last_used_at
-                          ? `Used ${formatRelative(t.last_used_at)}`
-                          : "Never used"}{" "}
-                        · created {formatRelative(t.created_at)}
-                      </p>
-                    </div>
+        ) : (
+          <div className="space-y-1">
+            {tokens.map((t) => (
+              <div
+                key={t.id}
+                className="flex items-center justify-between gap-3 bg-surface border border-border rounded-md p-3"
+              >
+                <div className="flex items-center gap-3 min-w-0">
+                  <KeyRound className="h-4 w-4 text-muted shrink-0" />
+                  <div className="min-w-0">
+                    <p className="text-sm text-foreground font-medium truncate">
+                      {t.name}
+                    </p>
+                    <p className="text-xs text-muted">
+                      {t.last_used_at
+                        ? `Used ${formatRelative(t.last_used_at)}`
+                        : "Never used"}{" "}
+                      · created {formatRelative(t.created_at)}
+                    </p>
                   </div>
-                  <button
-                    onClick={() => revoke.mutate(t.id)}
-                    className="p-2 rounded-md text-muted hover:text-danger hover:bg-[rgba(239,68,68,.1)] transition-base shrink-0"
-                    title="Revoke"
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </button>
                 </div>
-              ))}
-            </div>
-          )}
-        </div>
+                <button
+                  onClick={() => revoke.mutate(t.id)}
+                  className="p-2 rounded-md text-muted hover:text-danger hover:bg-[rgba(239,68,68,.1)] transition-base shrink-0"
+                  title="Revoke"
+                >
+                  <Trash2 className="h-4 w-4" />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </Card>
   );
