@@ -1,0 +1,71 @@
+//! Application-wide shared state: the `AppState` passed to every handler, the
+//! default-user seed, and Redis client construction.
+
+use std::sync::{Arc, Mutex};
+
+use redis::aio::ConnectionManager;
+use tracing::info;
+use uuid::Uuid;
+
+use crate::auth::{OAuthConfig, TurnstileConfig};
+use crate::model::User;
+use crate::ratelimit::KeyedLimiter;
+
+/// Shared state cloned into every handler via `Arc<AppState>`. All fields are
+/// `pub` because sibling modules (handlers, workers, `auth`) read them
+/// directly.
+pub struct AppState {
+    pub db: sqlx::PgPool,
+    pub redis: ConnectionManager,
+    pub max_retries: i32,
+    pub default_target: Mutex<String>,
+    /// Present when Google OAuth is configured (GOOGLE_CLIENT_ID/SECRET set).
+    pub oauth: Option<Arc<OAuthConfig>>,
+    /// Present when Cloudflare Turnstile is configured (TURNSTILE_SECRET_KEY set).
+    pub turnstile: Option<Arc<TurnstileConfig>>,
+    /// Per-IP rate limiter for the login endpoint (5/min). Shared so handlers
+    /// can call `check_key` directly without a separate middleware layer.
+    pub login_limiter: Arc<KeyedLimiter>,
+    /// Per-IP rate limiter for /api/auth/me (30/min — called on every page load).
+    pub me_limiter: Arc<KeyedLimiter>,
+}
+
+/// Seed the legacy admin/password user from `AUTH_USERNAME` / `AUTH_PASSWORD`
+/// if set and not already present. Idempotent.
+pub async fn seed_default_user(db: &sqlx::PgPool) {
+    let user = std::env::var("AUTH_USERNAME");
+    let pass = std::env::var("AUTH_PASSWORD");
+    if let (Ok(username), Ok(password)) = (user, pass) {
+        let exists = sqlx::query_as::<_, User>("SELECT * FROM users WHERE username = $1")
+            .bind(&username)
+            .fetch_optional(db)
+            .await
+            .ok()
+            .flatten()
+            .is_some();
+
+        if !exists {
+            let hash = tokio::task::spawn_blocking(move || bcrypt::hash(&password, 10))
+                .await
+                .expect("join error")
+                .expect("bcrypt hash");
+            sqlx::query(
+                "INSERT INTO users (id, username, password_hash, role) VALUES ($1, $2, $3, 'admin')",
+            )
+            .bind(Uuid::new_v4())
+            .bind(&username)
+            .bind(&hash)
+            .execute(db)
+            .await
+            .ok();
+            info!("seeded default user: {username}");
+        }
+    }
+}
+
+/// Build a Redis client from `REDIS_URL` (default `redis://127.0.0.1:6379`).
+pub fn redis_from_env() -> redis::Client {
+    let url =
+        std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1:6379".to_string());
+    redis::Client::open(url).expect("invalid redis url")
+}
