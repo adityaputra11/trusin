@@ -22,6 +22,7 @@ The `Deploy trusin production` workflow runs on every push to `master`. Add thes
 | `DATABASE_URL` | Managed Postgres connection string, allowlisted for the server IP. |
 | `AUTH_USERNAME`, `AUTH_PASSWORD`, `JWT_SECRET` | Legacy admin access and cookie-session signing. |
 | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | Google OAuth credentials. |
+| `OAUTH_GITHUB_CLIENT_ID`, `OAUTH_GITHUB_CLIENT_SECRET` | GitHub OAuth credentials; the workflow maps them to the backend's `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET`. |
 | `RESEND_API_KEY`, `EMAIL_FROM` | Invitation email delivery through Resend. |
 | `PLATFORM_ADMIN_TOKEN` | One-time hosted-platform bootstrap token. |
 | `REDIS_URL` | Optional override; defaults to the local Redis service. |
@@ -29,7 +30,7 @@ The `Deploy trusin production` workflow runs on every push to `master`. Add thes
 
 Optional repository variables `GOOGLE_SITE_VERIFICATION` and `BING_SITE_VERIFICATION` add the respective search-engine verification meta tags to the landing page. They are intentionally variables, not runtime secrets.
 
-Register `https://app.trusin.my.id/api/auth/callback/google` as the Google OAuth redirect URI. The workflow intentionally fails before deployment if any required production secret is missing.
+Register `https://app.trusin.my.id/api/auth/callback/google` as the Google OAuth redirect URI and `https://app.trusin.my.id/api/auth/callback/github` as the GitHub OAuth callback. For Turnstile, create a Managed widget that allows `app.trusin.my.id`; DNS does not need to be hosted by Cloudflare. The workflow intentionally fails before deployment if any required production secret is missing.
 
 ## Ubuntu runtime
 

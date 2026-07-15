@@ -142,7 +142,7 @@ async fn main() {
 
     let turnstile = auth::TurnstileConfig::from_env().map(Arc::new);
     if turnstile.is_some() {
-        info!("turnstile captcha enabled on /api/auth/login");
+        info!("turnstile captcha enabled for browser sign-in");
     } else {
         info!("turnstile captcha disabled (set TURNSTILE_SECRET_KEY to enable)");
     }
@@ -183,6 +183,7 @@ async fn main() {
         .route("/api/auth/callback/google", get(auth::google_callback))
         .route("/api/auth/github", get(auth::github_login))
         .route("/api/auth/callback/github", get(auth::github_callback))
+        .route("/api/auth/captcha", post(auth::create_captcha_grant))
         .route("/api/auth/me", get(auth::me))
         .route("/api/auth/login", post(auth::login))
         .route("/api/auth/logout", post(auth::logout));
