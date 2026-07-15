@@ -49,13 +49,12 @@ fn hex_encode(bytes: &[u8]) -> String {
 }
 
 /// Persist a single delivery attempt for the per-event timeline. Best-effort:
-/// logging must never break delivery. `attempt_number` is 1-based and reflects
-/// the event's retry_count *before* this attempt (so the first try is #1).
+/// logging must never break delivery.
 #[allow(clippy::too_many_arguments)]
 async fn record_attempt(
     db: &sqlx::PgPool,
     event_id: Uuid,
-    attempt_number: i32,
+    _attempt_number: i32,
     status: &str,
     http_status: Option<i32>,
     response_headers: Option<&serde_json::Value>,
@@ -64,12 +63,18 @@ async fn record_attempt(
     duration_ms: Option<i32>,
 ) {
     let _ = sqlx::query(
-        r#"INSERT INTO delivery_attempts
+        r#"WITH locked AS (
+               SELECT pg_advisory_xact_lock(hashtext($1::text))
+           ), next_attempt AS (
+               SELECT COALESCE(MAX(attempt_number), 0) + 1 AS attempt_number
+               FROM delivery_attempts WHERE event_id = $1
+           )
+           INSERT INTO delivery_attempts
            (organization_id, event_id, attempt_number, status, http_status, response_headers, response_body, error, duration_ms)
-           VALUES ((SELECT organization_id FROM webhook_events WHERE id = $1), $1, $2, $3, $4, $5, $6, $7, $8)"#,
+           SELECT (SELECT organization_id FROM webhook_events WHERE id = $1), $1, next_attempt.attempt_number, $2, $3, $4, $5, $6, $7
+           FROM locked, next_attempt"#,
     )
     .bind(event_id)
-    .bind(attempt_number)
     .bind(status)
     .bind(http_status)
     .bind(response_headers)
