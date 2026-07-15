@@ -27,6 +27,8 @@ The `Deploy trusin production` workflow runs on every push to `master`. Add thes
 | `REDIS_URL` | Optional override; defaults to the local Redis service. |
 | `TURNSTILE_SITE_KEY`, `TURNSTILE_SECRET_KEY`, `DEFAULT_SIGNING_SECRET` | Optional captcha and outbound-signing configuration. |
 
+Optional repository variables `GOOGLE_SITE_VERIFICATION` and `BING_SITE_VERIFICATION` add the respective search-engine verification meta tags to the landing page. They are intentionally variables, not runtime secrets.
+
 Register `https://app.trusin.my.id/api/auth/callback/google` as the Google OAuth redirect URI. The workflow intentionally fails before deployment if any required production secret is missing.
 
 ## Ubuntu runtime

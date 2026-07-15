@@ -219,9 +219,19 @@ pub async fn enqueue_event(
     payload: serde_json::Value,
     target_url: String,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    crate::organizations::consume_event_quota(state, organization_id).await?;
+    let request_id = Uuid::new_v4();
     let id = Uuid::new_v4();
     let now = Utc::now().naive_utc();
+    let mut transaction = state
+        .db
+        .begin()
+        .await
+        .map_err(|error| {
+            tracing::error!(%request_id, %error, "begin webhook enqueue transaction");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+
+    crate::organizations::consume_event_quota(&mut transaction, organization_id).await?;
 
     sqlx::query(
         r#"INSERT INTO webhook_events (id, organization_id, source, headers, body, status, target_url, retry_count, max_retries, created_at)
@@ -235,20 +245,27 @@ pub async fn enqueue_event(
     .bind(&target_url)
     .bind(state.max_retries)
     .bind(now)
-    .execute(&state.db)
+    .execute(&mut *transaction)
     .await
     .map_err(|e| {
-        tracing::error!("db insert: {e}");
+        tracing::error!(%request_id, "db insert: {e}");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+
+    transaction.commit().await.map_err(|error| {
+        tracing::error!(%request_id, %error, "commit webhook enqueue transaction");
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
 
     let mut conn = state.redis.clone();
-    redis::cmd("LPUSH")
+    if let Err(error) = redis::cmd("LPUSH")
         .arg(QUEUE_KEY)
         .arg(id.to_string())
         .query_async::<()>(&mut conn)
         .await
-        .ok();
+    {
+        tracing::error!(%request_id, event_id = %id, %error, "event persisted but Redis enqueue failed");
+    }
 
     Ok(Json(serde_json::json!({"id": id, "status": "queued"})))
 }

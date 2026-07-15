@@ -1,4 +1,4 @@
-# CLI dan MCP
+# CLI and MCP
 
 ## CLI
 
@@ -11,23 +11,23 @@ cargo build --release --bin terusin
 ./target/release/terusin interactive
 ```
 
-`forward` mengarahkan default target ke service lokal dan dapat menjalankan ngrok saat backend remote. Token disimpan di OS keychain bila tersedia.
+`forward` points the default target at a local service and can start ngrok when the backend is remote. Tokens are stored in the OS keychain when available.
 
 ## Interactive TUI
 
-`terusin interactive` membuka terminal dashboard full-screen untuk operator:
+`terusin interactive` opens a full-screen terminal dashboard for operators:
 
-- **Overview**: health ringkas, queue depth, success rate, backend, dan auth mode.
-- **Events**: event terbaru, search lokal dengan `/`, detail dengan `Enter`, retry dengan `x`.
-- **Rules**: daftar routing rule aktif/nonaktif.
-- **Config**: backend, dashboard URL, dan default target.
-- **Tokens**: panduan API token dan precedence auth.
+- **Overview**: concise health, queue depth, success rate, backend, and auth mode.
+- **Events**: recent events, local search with `/`, details with `Enter`, retry with `x`.
+- **Rules**: active and inactive routing rules.
+- **Config**: backend, dashboard URL, and default target.
+- **Tokens**: API token guidance and auth precedence.
 
-Shortcut utama: `1-5` pindah tab, `r` refresh, `/` search, `c` clear search, `o` buka dashboard, `q` keluar.
+Primary shortcuts: `1-5` changes tabs, `r` refreshes, `/` searches, `c` clears search, `o` opens the dashboard, and `q` quits.
 
 ## MCP server
 
-Build binary lalu konfigurasikan AI client dengan environment variable, bukan menaruh token di argument command.
+Build the binary and configure the AI client with environment variables instead of placing tokens in command arguments.
 
 ```json
 {

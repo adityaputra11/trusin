@@ -126,7 +126,10 @@ async fn main() {
         .await
         .expect("can't connect to redis");
 
-    sqlx::migrate!("./migrations").run(&db).await.ok();
+    sqlx::migrate!("./migrations")
+        .run(&db)
+        .await
+        .expect("database migrations failed");
     bootstrap_default_organization(&db, &default_target).await;
     seed_default_user(&db).await;
 

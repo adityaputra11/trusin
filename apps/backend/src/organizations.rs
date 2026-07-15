@@ -183,6 +183,13 @@ fn period_start() -> chrono::NaiveDate {
     now.with_day(1).expect("first day exists")
 }
 
+pub fn next_event_quota_reset() -> chrono::DateTime<chrono::Utc> {
+    next_period_start()
+        .and_hms_opt(0, 0, 0)
+        .expect("midnight is valid")
+        .and_utc()
+}
+
 fn next_period_start() -> chrono::NaiveDate {
     let start = period_start();
     if start.month() == 12 {
@@ -395,7 +402,10 @@ pub async fn organization_allows_invites(
     Ok(plan_code != "free" && matches!(status.as_str(), "active" | "trialing"))
 }
 
-pub async fn consume_event_quota(state: &AppState, organization_id: Uuid) -> Result<(), StatusCode> {
+pub async fn consume_event_quota(
+    transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    organization_id: Uuid,
+) -> Result<(), StatusCode> {
     if !hosted_mode() {
         return Ok(());
     }
@@ -411,7 +421,7 @@ pub async fn consume_event_quota(state: &AppState, organization_id: Uuid) -> Res
     .bind(organization_id)
     .bind(period)
     .bind(FREE_EVENT_LIMIT)
-    .fetch_optional(&state.db)
+    .fetch_optional(&mut **transaction)
     .await
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     used.map(|_| ()).ok_or(StatusCode::TOO_MANY_REQUESTS)

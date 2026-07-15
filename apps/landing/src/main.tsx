@@ -113,6 +113,7 @@ function App() {
           <Logo />
           <div className="nav-links">
             <a href="#product">Product</a>
+            <a href="#faq">FAQ</a>
             <a href="#hosting">Managed hosting</a>
             <a href={config.docsUrl}>Docs</a>
             <GitHubStars />
@@ -181,6 +182,20 @@ function App() {
           <div className="container hosting-inner"><div><p className="kicker">MANAGED TRUSIN</p><h2>Keep the control.<br /><em>Skip the operations.</em></h2><p>Let us run an isolated trusin instance for your team. Your webhook data, database, and delivery pipeline stay separate—without the maintenance overhead.</p></div><div className="hosting-points"><Point title="Isolated by design" text="A dedicated instance and database for your team. No shared event stream." /><Point title="Production ready" text="Managed upgrades, backups, monitoring, and help when delivery matters." /><Point title="Still yours" text="Move to self-hosted any time. trusin remains open source under Apache 2.0." /></div></div>
         </section>
 
+        <section id="faq" className="section faq container" aria-labelledby="faq-heading">
+          <div className="section-heading">
+            <div><p className="kicker">WEBHOOK DELIVERY, EXPLAINED</p><h2 id="faq-heading">Answers for the systems<br />you depend on.</h2></div>
+            <p>Clear definitions for engineers evaluating a delivery layer, a queue, or a self-hosted webhook relay.</p>
+          </div>
+          <div className="faq-grid">
+            <Faq question="What is webhook delivery?" answer="Webhook delivery is the process of receiving an event from a provider and sending its payload to a target endpoint. trusin stores the event, queues delivery, and records the result." />
+            <Faq question="How does trusin retry failed webhooks?" answer="trusin retries retryable delivery failures with exponential backoff and records every attempt. Targets should be idempotent because delivery is at least once." />
+            <Faq question="Can I self-host trusin?" answer="Yes. trusin is open source and runs with Postgres and Redis on infrastructure you control. Follow the deployment guide to operate it yourself." />
+            <Faq question="Is a webhook relay the same as a queue?" answer="No. A relay receives, routes, and delivers HTTP events. A queue is one component that decouples delivery from the provider request; trusin combines both with routing and observability." />
+          </div>
+          <a className="text-link" href={`${config.docsUrl}/docs/learn/webhook-delivery`}>Read the delivery guide <span>→</span></a>
+        </section>
+
         <section className="cta"><div className="container"><p className="kicker">SHIP WITH CONFIDENCE</p><h2>Stop hoping your webhooks arrive.</h2><p>Own the delivery layer your product depends on—self-host it, or let us run it for you.</p><div className="hero-actions"><a className="button button-primary" href={managedCta.href}>{managedCta.label} <Arrow /></a><a className="button button-secondary" href={config.githubUrl}>View on GitHub <span>→</span></a></div></div></section>
       </main>
 
@@ -193,5 +208,6 @@ function Stat({ value, label }: { value: string; label: string }) { return <div>
 function Feature({ number, glyph, title, text }: { number: string; glyph: string; title: string; text: string }) { return <article className="feature"><span>{number}</span><i>{glyph}</i><h3>{title}</h3><p>{text}</p></article>; }
 function Node({ label, sub, icon, primary = false }: { label: string; sub: string; icon: string; primary?: boolean }) { return <div className={`pipeline-node ${primary ? "primary" : ""}`}><i>{icon}</i><strong>{label}</strong><small>{sub}</small></div>; }
 function Point({ title, text }: { title: string; text: string }) { return <article><i>✓</i><div><h3>{title}</h3><p>{text}</p></div></article>; }
+function Faq({ question, answer }: { question: string; answer: string }) { return <article><h3>{question}</h3><p>{answer}</p></article>; }
 
 createRoot(document.getElementById("root")!).render(<StrictMode><App /></StrictMode>);
