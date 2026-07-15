@@ -128,8 +128,9 @@ pub async fn handle_root(
     headers: HeaderMap,
     Json(payload): Json<serde_json::Value>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let organization_id = crate::organizations::resolve_ingest_organization(&state, &headers).await?;
-    handle_webhook_inner(state, organization_id, "".to_string(), headers, payload).await
+    let (organization_id, source_path) =
+        crate::organizations::resolve_ingest_organization(&state, &headers, "").await?;
+    handle_webhook_inner(state, organization_id, source_path, headers, payload).await
 }
 
 pub async fn handle_webhook(
@@ -138,7 +139,8 @@ pub async fn handle_webhook(
     headers: HeaderMap,
     Json(payload): Json<serde_json::Value>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let organization_id = crate::organizations::resolve_ingest_organization(&state, &headers).await?;
+    let (organization_id, source_path) =
+        crate::organizations::resolve_ingest_organization(&state, &headers, &source_path).await?;
     handle_webhook_inner(state, organization_id, source_path, headers, payload).await
 }
 
