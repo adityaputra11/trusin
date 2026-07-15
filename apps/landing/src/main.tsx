@@ -137,7 +137,7 @@ function App() {
                 <a className="button button-primary" href={managedCta.href}>{managedCta.label} <Arrow /></a>
                 <a className="button button-secondary" href={`${config.docsUrl}/docs/intro`}>Self-host trusin <span aria-hidden="true">→</span></a>
               </div>
-              <div className="hero-proof"><span><i /> Open source</span><span>Apache 2.0</span><span>Built in Rust</span></div>
+              <div className="hero-proof"><span><i /> Open source</span><span>Apache 2.0</span><span className="rust-badge"><b aria-hidden="true">⚙</b> Powered by Rust</span></div>
             </div>
             <ConsolePreview />
           </div>
