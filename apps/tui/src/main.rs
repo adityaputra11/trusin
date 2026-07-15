@@ -2,8 +2,8 @@ mod auth;
 mod interactive;
 
 use crate::auth::{
-    auth_client, config_path, ensure_token, keychain_delete, load_config, resolve_token,
-    save_config, store_token, Config,
+    auth_client, config_path, ensure_token, keychain_delete, load_config, managed_config_dirs,
+    resolve_token, save_config, store_token, Config,
 };
 use clap::{Parser, Subcommand};
 use reqwest::Client;
@@ -33,6 +33,12 @@ enum Commands {
     },
     /// Forget the API key / clear stored credentials
     Logout,
+    /// Remove trusin, its bundled MCP server, and local credentials
+    Uninstall {
+        /// Skip the confirmation prompt
+        #[arg(short, long)]
+        yes: bool,
+    },
     /// Forward webhooks to a local port
     Forward {
         #[arg(short, long, default_value = "8080")]
@@ -125,9 +131,73 @@ fn run_mcp(cfg: &Config, override_path: Option<PathBuf>) {
     }
 }
 
+fn uninstall_paths() -> Vec<PathBuf> {
+    let mut paths = managed_config_dirs().to_vec();
+    if let Ok(executable) = std::env::current_exe() {
+        if executable.file_name().and_then(|name| name.to_str()) == Some("trusin") {
+            paths.push(executable.clone());
+            if let Some(directory) = executable.parent() {
+                paths.push(directory.join("trusin-mcp"));
+                paths.push(directory.join("terusin"));
+            }
+        }
+    }
+    paths
+}
+
+fn run_uninstall(confirmed: bool) {
+    let paths = uninstall_paths();
+    println!("This removes trusin's local files and saved credentials:");
+    for path in &paths {
+        println!("  {}", path.display());
+    }
+    println!("  OS keychain entries: trusin, terusin");
+
+    if !confirmed {
+        print!("Continue? [y/N] ");
+        io::stdout().flush().ok();
+        let mut answer = String::new();
+        io::stdin().read_line(&mut answer).ok();
+        if !matches!(answer.trim().to_ascii_lowercase().as_str(), "y" | "yes") {
+            println!("Uninstall cancelled.");
+            return;
+        }
+    }
+
+    let mut failures = Vec::new();
+    keychain_delete();
+    for path in paths {
+        if !path.exists() {
+            continue;
+        }
+        let result = if path.is_dir() {
+            std::fs::remove_dir_all(&path)
+        } else {
+            std::fs::remove_file(&path)
+        };
+        if let Err(error) = result {
+            failures.push(format!("{}: {error}", path.display()));
+        }
+    }
+
+    if failures.is_empty() {
+        println!("trusin has been removed. Your account and API tokens remain available in the dashboard.");
+    } else {
+        eprintln!("trusin was only partially removed:");
+        for failure in failures {
+            eprintln!("  {failure}");
+        }
+        eprintln!("Close any running trusin processes and try `trusin uninstall --yes` again.");
+    }
+}
+
 #[tokio::main]
 async fn main() {
     let cli = Cli::parse();
+    if let Some(Commands::Uninstall { yes }) = &cli.command {
+        run_uninstall(*yes);
+        return;
+    }
     let mut cfg = load_config();
     let Some(command) = cli.command else {
         println!("\n  trusin CLI\n");
@@ -171,6 +241,7 @@ async fn main() {
             save_config(&c);
             println!(" ✓ Token cleared (keychain + config).");
         }
+        Commands::Uninstall { .. } => unreachable!("handled before loading configuration"),
         Commands::Forward { port, url } => {
             if !ensure_token(&mut cfg) {
                 return;

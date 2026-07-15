@@ -51,18 +51,26 @@ impl Default for Config {
 }
 
 pub fn config_path() -> PathBuf {
-    let mut p = dirs::config_dir().unwrap_or_else(|| PathBuf::from("."));
-    p.push("trusin");
+    let p = config_dir("trusin");
     std::fs::create_dir_all(&p).ok();
-    p.push("config.toml");
-    p
+    p.join("config.toml")
 }
 
 fn legacy_config_path() -> PathBuf {
-    let mut p = dirs::config_dir().unwrap_or_else(|| PathBuf::from("."));
-    p.push("terusin");
-    p.push("config.toml");
-    p
+    config_dir("terusin").join("config.toml")
+}
+
+fn config_dir(name: &str) -> PathBuf {
+    dirs::config_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join(name)
+}
+
+/// Directories owned by current and pre-rename versions of the CLI.
+/// This deliberately does not create them, so `trusin uninstall` has no
+/// side effects when the CLI has never been configured.
+pub fn managed_config_dirs() -> [PathBuf; 2] {
+    [config_dir("trusin"), config_dir("terusin")]
 }
 
 pub fn load_config() -> Config {

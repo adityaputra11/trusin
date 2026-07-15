@@ -22,6 +22,17 @@ curl -fsSL https://download.trusin.my.id/install.sh | TERUSIN_VERSION=v0.1.0 sh
 curl -fsSL https://download.trusin.my.id/install.sh | TERUSIN_INSTALL="$HOME/.local/bin" sh
 ```
 
+## Uninstall
+
+Remove the CLI, its bundled MCP server, and local credentials with a confirmation prompt:
+
+```sh
+trusin uninstall
+```
+
+For scripts, pass `--yes`. This does not delete your workspace or revoke API tokens; manage
+those from Settings in the dashboard.
+
 After installation, create an API token in **Settings → Developer → API Tokens**
 and run the CLI:
 
