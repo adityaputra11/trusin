@@ -12,6 +12,7 @@ use std::path::PathBuf;
 
 const BACKEND: &str = "https://api.trusin.my.id";
 const WEB: &str = "https://app.trusin.my.id";
+const LEGACY_HOSTED_URL: &str = "https://terusin-dev.my.id";
 
 // OS keychain entry name under which the API token is stored (preferred over
 // the plaintext config file). Falls back gracefully on platforms without one.
@@ -74,14 +75,40 @@ pub fn load_config() -> Config {
     } else {
         Config::default()
     };
-    // TERUSIN_TOKEN env var wins over the config file's `token` field when set,
-    // matching the documented precedence (env → keychain → config).
+    if migrate_legacy_hosted_config(&mut c) {
+        save_config(&c);
+    }
+
+    if let Ok(backend) = std::env::var("TERUSIN_BACKEND") {
+        if !backend.trim().is_empty() {
+            c.backend = backend;
+        }
+    }
+    if let Ok(web) = std::env::var("TERUSIN_WEB") {
+        if !web.trim().is_empty() {
+            c.web = web;
+        }
+    }
+    // TERUSIN_TOKEN env var wins over the config file's `token` field when set.
     if let Ok(t) = std::env::var("TERUSIN_TOKEN") {
         if !t.is_empty() {
             c.token = Some(t);
         }
     }
     c
+}
+
+fn migrate_legacy_hosted_config(c: &mut Config) -> bool {
+    let mut migrated = false;
+    if c.backend == LEGACY_HOSTED_URL {
+        c.backend = BACKEND.to_string();
+        migrated = true;
+    }
+    if c.web == LEGACY_HOSTED_URL {
+        c.web = WEB.to_string();
+        migrated = true;
+    }
+    migrated
 }
 
 pub fn save_config(c: &Config) {
@@ -200,4 +227,23 @@ pub fn ensure_token(cfg: &mut Config) -> bool {
     let where_ = store_token(cfg, &token);
     println!(" ✓ API key saved ({where_}).");
     true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn migrates_the_retired_hosted_endpoint() {
+        let mut config = Config {
+            backend: LEGACY_HOSTED_URL.to_string(),
+            web: LEGACY_HOSTED_URL.to_string(),
+            token: Some("ts_existing_token".to_string()),
+        };
+
+        assert!(migrate_legacy_hosted_config(&mut config));
+        assert_eq!(config.backend, BACKEND);
+        assert_eq!(config.web, WEB);
+        assert_eq!(config.token.as_deref(), Some("ts_existing_token"));
+    }
 }
