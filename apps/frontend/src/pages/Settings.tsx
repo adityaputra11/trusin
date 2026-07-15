@@ -253,6 +253,9 @@ function DevicesAndTokens() {
                         : "Never used"}{" "}
                       · created {formatRelative(t.created_at)}
                     </p>
+                    <p className="text-[10px] text-muted mt-1 font-mono truncate">
+                      scopes: {t.scopes.join(", ")}
+                    </p>
                   </div>
                 </div>
                 <button
@@ -337,10 +340,10 @@ function McpTab() {
 
   return (
     <Card>
-      <CardHeader title="MCP Server Setup" subtitle="Connect an AI client to your Terusin relay" action={<Badge variant="purple">stdio</Badge>} />
+      <CardHeader title="MCP Server Setup" subtitle="Connect an AI client to your trusin relay" action={<Badge variant="purple">stdio</Badge>} />
       <div className="space-y-5">
         <p className="text-sm text-secondary">
-          The Terusin MCP server exposes your events & relay actions to AI clients. It runs as a local stdio process spawned by the client.
+          The trusin MCP server exposes your events & relay actions to AI clients. It runs as a local stdio process spawned by the client.
         </p>
 
         <div>

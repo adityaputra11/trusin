@@ -9,6 +9,7 @@ import {
   Settings,
   ShieldCheck,
   Users,
+  Building2,
   type LucideIcon,
 } from "lucide-react";
 import { useCanWrite } from "../../lib/user-context";
@@ -28,6 +29,7 @@ const NAV_ITEMS: NavItem[] = [
   { to: "/metrics", label: "Metrics", icon: BarChart3 },
   { to: "/activity", label: "Activity", icon: ShieldCheck },
   { to: "/users", label: "Users", icon: Users, adminOnly: true },
+  { to: "/organization", label: "Organization", icon: Building2, adminOnly: true },
   { to: "/send", label: "Send", icon: Send, adminOnly: true },
   { to: "/settings", label: "Settings", icon: Settings },
 ];
@@ -43,10 +45,11 @@ export const Sidebar = memo(function Sidebar() {
       <div className="absolute inset-y-0 right-0 w-px bg-gradient-to-b from-transparent via-[rgba(74,222,128,.18)] to-transparent pointer-events-none" />
       <div className="h-[72px] flex items-center px-5 border-b border-border">
         <img
-          src="/terusin-logo.svg"
-          alt="Terusin"
-          className="h-10 w-[142px] object-contain object-left"
+          src="/icon-trusin.png"
+          alt="trusin"
+          className="h-10 w-10 object-contain"
         />
+        <span className="ml-3 text-lg font-semibold tracking-tight text-foreground">trusin</span>
         <span className="ml-auto text-[9px] font-semibold tracking-[.14em] text-success border border-[rgba(74,222,128,.2)] bg-[rgba(74,222,128,.06)] px-2 py-1 rounded-full">CORE</span>
       </div>
 
@@ -77,7 +80,7 @@ export const Sidebar = memo(function Sidebar() {
       <div className="p-4 border-t border-border">
         <div className="rounded-md border border-border bg-card p-3 flex items-center gap-3">
           <span className="relative flex h-2 w-2"><span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-success opacity-50"/><span className="relative inline-flex rounded-full h-2 w-2 bg-success"/></span>
-          <div><p className="text-[11px] text-foreground font-medium">System operational</p><p className="text-[10px] text-muted mt-0.5">Terusin Core · v0.1.0</p></div>
+          <div><p className="text-[11px] text-foreground font-medium">System operational</p><p className="text-[10px] text-muted mt-0.5">trusin core · v0.1.0</p></div>
         </div>
       </div>
     </aside>

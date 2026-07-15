@@ -1,9 +1,1 @@
-<svg width="176" height="44" viewBox="0 0 176 44" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Terusin">
-  <defs><linearGradient id="g" x1="6" y1="5" x2="36" y2="38" gradientUnits="userSpaceOnUse"><stop stop-color="#76F2A3"/><stop offset="1" stop-color="#35C86C"/></linearGradient></defs>
-  <rect x="1" y="1" width="42" height="42" rx="10" fill="#0D120F" stroke="#28342C"/>
-  <path d="M11 13H29.5C32.5 13 35 15.5 35 18.5S32.5 24 29.5 24H24" stroke="url(#g)" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"/>
-  <path d="M22 14V32M29.5 19.5L34 24L29.5 28.5" stroke="url(#g)" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"/>
-  <circle cx="11" cy="13" r="2.3" fill="#76F2A3"/>
-  <text x="55" y="29" fill="#F1F5F2" font-family="Inter,Arial,sans-serif" font-size="21" font-weight="650" letter-spacing="-0.7">terusin</text>
-  <circle cx="139" cy="27" r="2.2" fill="#4ADE80"/>
-</svg>
+<svg width="64" height="64" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="trusin"><image href="icon-trusin.png" width="64" height="64" preserveAspectRatio="xMidYMid slice"/></svg>

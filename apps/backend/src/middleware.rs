@@ -48,6 +48,27 @@ pub fn require_admin(cu: &auth::CurrentUser) -> Result<(), StatusCode> {
     }
 }
 
+/// API keys carry explicit scopes. Browser/password sessions have no key
+/// scopes and continue to use the role-based admin gate above.
+pub fn require_scope(cu: &auth::CurrentUser, scope: &str) -> Result<(), StatusCode> {
+    if cu.scopes.is_empty() || cu.scopes.iter().any(|value| value == scope) {
+        Ok(())
+    } else {
+        Err(StatusCode::FORBIDDEN)
+    }
+}
+
+/// Platform control-plane access is a server-side user privilege, never an
+/// inherited API-key scope. This prevents a leaked tenant token from gaining
+/// fleet-wide visibility.
+pub fn require_platform_operator(cu: &auth::CurrentUser) -> Result<(), StatusCode> {
+    if cu.is_platform_operator {
+        Ok(())
+    } else {
+        Err(StatusCode::FORBIDDEN)
+    }
+}
+
 /// Pull the value of the `terusin_session` cookie out of a Cookie header.
 fn extract_session_cookie(cookie_header: &str) -> Option<String> {
     for kv in cookie_header.split(';') {
@@ -80,7 +101,10 @@ pub async fn auth_middleware(
                     if let Some(u) = user {
                         req.extensions_mut().insert(auth::CurrentUser {
                             id: u.id,
+                            organization_id: u.organization_id,
                             role: u.role.clone(),
+                            scopes: vec![],
+                            is_platform_operator: u.is_platform_operator,
                         });
                         return Ok(next.run(req).await);
                     }
@@ -133,7 +157,10 @@ pub async fn auth_middleware(
                 {
                     req.extensions_mut().insert(auth::CurrentUser {
                         id: u.id,
+                        organization_id: u.organization_id,
                         role: u.role.clone(),
+                        scopes: vec![],
+                        is_platform_operator: u.is_platform_operator,
                     });
                     Ok(next.run(req).await)
                 }
@@ -141,5 +168,32 @@ pub async fn auth_middleware(
             }
         }
         None => Err(unauth()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::require_platform_operator;
+    use crate::auth::CurrentUser;
+    use axum::http::StatusCode;
+    use uuid::Uuid;
+
+    fn current_user(is_platform_operator: bool) -> CurrentUser {
+        CurrentUser {
+            id: Uuid::new_v4(),
+            organization_id: Uuid::new_v4(),
+            role: "admin".to_string(),
+            scopes: vec![],
+            is_platform_operator,
+        }
+    }
+
+    #[test]
+    fn platform_operator_guard_rejects_tenant_admins() {
+        assert_eq!(
+            require_platform_operator(&current_user(false)),
+            Err(StatusCode::FORBIDDEN)
+        );
+        assert!(require_platform_operator(&current_user(true)).is_ok());
     }
 }

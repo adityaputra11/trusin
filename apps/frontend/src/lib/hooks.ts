@@ -17,6 +17,12 @@ import type {
   ListAuditResponse,
   ListEventsResponse,
   Metrics,
+  OrganizationDomain,
+  OrganizationInvite,
+  OrganizationSubscription,
+  PlatformOrganizationDetail,
+  PlatformOrganizationList,
+  PlatformOverview,
   UpdateRuleInput,
   WorkspaceUser,
   WebhookEvent,
@@ -111,6 +117,8 @@ export interface SessionUser {
   avatar_url: string | null;
   role: string;
   oauth_provider: string | null;
+  organization_id: string;
+  is_platform_operator: boolean;
 }
 
 export function useMe() {
@@ -129,6 +137,7 @@ export interface ApiToken {
   name: string;
   last_used_at: string | null;
   created_at: string;
+  scopes: string[];
 }
 
 export function useTokens() {
@@ -144,6 +153,7 @@ export interface CreateTokenResponse {
   token_id: string;
   name: string;
   role: string;
+  scopes: string[];
 }
 
 /** Mint a new API key bound to the signed-in user (role-scoped). The cleartext
@@ -164,6 +174,127 @@ export function useRevokeToken() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["tokens"] });
       toast.success("Token revoked");
+    },
+  });
+}
+
+export function useOrganization() {
+  return useQuery<OrganizationSubscription>({
+    queryKey: ["organization"],
+    queryFn: () => api.get<OrganizationSubscription>("/api/organization"),
+    refetchInterval: 30_000,
+  });
+}
+
+export function useDomains() {
+  return useQuery<OrganizationDomain[]>({
+    queryKey: ["domains"],
+    queryFn: () => api.get<OrganizationDomain[]>("/api/domains"),
+  });
+}
+
+export function useCreateDomain() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (hostname: string) =>
+      api.post<OrganizationDomain>("/api/domains", { hostname }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["domains"] });
+      qc.invalidateQueries({ queryKey: ["organization"] });
+      toast.success("Domain added. Configure DNS, then verify it.");
+    },
+  });
+}
+
+export function useVerifyDomain() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api.post<OrganizationDomain>(`/api/domains/${id}/verify`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["domains"] });
+      qc.invalidateQueries({ queryKey: ["organization"] });
+    },
+  });
+}
+
+export function useDeleteDomain() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api.delete(`/api/domains/${id}`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["domains"] });
+      qc.invalidateQueries({ queryKey: ["organization"] });
+      toast.success("Domain removed");
+    },
+  });
+}
+
+export function usePlatformOverview() {
+  return useQuery<PlatformOverview>({
+    queryKey: ["platform", "overview"],
+    queryFn: () => api.get<PlatformOverview>("/api/platform/overview"),
+    refetchInterval: 30_000,
+  });
+}
+
+export function usePlatformOrganizations(search = "", status = "") {
+  const params = new URLSearchParams({ per_page: "50" });
+  if (search.trim()) params.set("search", search.trim());
+  if (status) params.set("status", status);
+  return useQuery<PlatformOrganizationList>({
+    queryKey: ["platform", "organizations", search, status],
+    queryFn: () => api.get<PlatformOrganizationList>(`/api/platform/organizations?${params}`),
+  });
+}
+
+export function usePlatformOrganization(id: string | null) {
+  return useQuery<PlatformOrganizationDetail>({
+    queryKey: ["platform", "organization", id],
+    queryFn: () => api.get<PlatformOrganizationDetail>(`/api/platform/organizations/${id}`),
+    enabled: !!id,
+  });
+}
+
+export interface ProvisionOrganizationInput {
+  name: string;
+  slug: string;
+  username: string;
+  password: string;
+  email?: string;
+  subscriber_name?: string;
+  billing_contact_name?: string;
+  billing_contact_email?: string;
+}
+
+export function useProvisionOrganization() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: ProvisionOrganizationInput) =>
+      api.post("/api/platform/organizations", input),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["platform"] });
+      toast.success("Tenant provisioned");
+    },
+  });
+}
+
+export interface UpdatePlatformSubscriptionInput {
+  subscriber_name: string;
+  billing_contact_name: string;
+  billing_contact_email: string;
+  plan_code: string;
+  subscription_status: string;
+}
+
+export function useUpdatePlatformSubscription() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, ...input }: UpdatePlatformSubscriptionInput & { id: string }) =>
+      api.patch(`/api/platform/organizations/${id}/subscription`, input),
+    onSuccess: (_data, variables) => {
+      qc.invalidateQueries({ queryKey: ["platform"] });
+      qc.invalidateQueries({ queryKey: ["platform", "organization", variables.id] });
+      toast.success("Subscription details updated");
     },
   });
 }
@@ -307,6 +438,47 @@ export function useUpdateUserRole() {
       qc.invalidateQueries({ queryKey: ["audit"] });
       qc.invalidateQueries({ queryKey: ["me"] });
       toast.success("User role updated");
+    },
+  });
+}
+
+export function useInvites() {
+  return useQuery<OrganizationInvite[]>({
+    queryKey: ["invites"],
+    queryFn: () => api.get<OrganizationInvite[]>("/api/invites"),
+  });
+}
+
+export function useCreateInvite() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { email: string; role: "admin" | "viewer" }) =>
+      api.post<OrganizationInvite>("/api/invites", input),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["invites"] });
+      toast.success("Invitation sent");
+    },
+  });
+}
+
+export function useResendInvite() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api.post<OrganizationInvite>(`/api/invites/${id}/resend`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["invites"] });
+      toast.success("Invitation resent");
+    },
+  });
+}
+
+export function useRevokeInvite() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api.delete(`/api/invites/${id}`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["invites"] });
+      toast.success("Invitation revoked");
     },
   });
 }

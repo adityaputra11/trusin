@@ -78,7 +78,10 @@ jobs:
           DATABASE_URL=${{ secrets.DATABASE_URL }}
           REDIS_URL=${{ secrets.REDIS_URL }}
           PORT=3001
-          PUBLIC_URL=https://terusin-dev.my.id
+          PUBLIC_URL=https://app.terusin-dev.my.id
+          FRONTEND_URL=https://app.terusin-dev.my.id
+          OAUTH_REDIRECT_URI=https://app.terusin-dev.my.id/api/auth/callback/google
+          WEB_URL=https://app.terusin-dev.my.id
           BACKEND_URL=http://localhost:3001
           BACKEND_PORT=3001
           WEB_PORT=3002
@@ -141,4 +144,3 @@ jobs:
             sudo systemctl daemon-reload
             sudo systemctl enable terusin-backend terusin-web
             sudo systemctl restart terusin-backend terusin-web
-

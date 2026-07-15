@@ -16,12 +16,120 @@ use crate::state::AppState;
 /// Redis queue holding event ids awaiting delivery.
 const QUEUE_KEY: &str = "terusin:queue";
 
+pub fn public_target_override_enabled() -> bool {
+    std::env::var("ALLOW_PUBLIC_TARGET_OVERRIDE")
+        .map(|value| {
+            matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes"
+            )
+        })
+        .unwrap_or(false)
+}
+
+fn private_targets_enabled() -> bool {
+    std::env::var("ALLOW_PRIVATE_TARGETS")
+        .map(|value| {
+            matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes"
+            )
+        })
+        .unwrap_or(false)
+}
+
+fn is_private_or_reserved(ip: std::net::IpAddr) -> bool {
+    match ip {
+        std::net::IpAddr::V4(ip) => {
+            ip.is_loopback()
+                || ip.is_private()
+                || ip.is_link_local()
+                || ip.is_multicast()
+                || ip.is_unspecified()
+                || ip.octets()[0] == 169 && ip.octets()[1] == 254
+                || ip.octets()[0] == 100 && (64..=127).contains(&ip.octets()[1])
+        }
+        std::net::IpAddr::V6(ip) => {
+            ip.is_loopback()
+                || ip.is_unspecified()
+                || ip.is_multicast()
+                || (ip.segments()[0] & 0xfe00) == 0xfc00
+                || (ip.segments()[0] & 0xffc0) == 0xfe80
+        }
+    }
+}
+
+/// Validate a delivery target before a dashboard send or an explicitly
+/// enabled legacy public override. Private and loopback targets require an
+/// explicit local-development opt-in.
+fn validate_target_url_shape(value: &str) -> Result<reqwest::Url, &'static str> {
+    let url = reqwest::Url::parse(value).map_err(|_| "target_url must be a valid URL")?;
+    if !matches!(url.scheme(), "http" | "https") {
+        return Err("target_url must use http or https");
+    }
+    if !url.username().is_empty() || url.password().is_some() {
+        return Err("target_url must not include credentials");
+    }
+
+    url.host_str().ok_or("target_url must include a hostname")?;
+    Ok(url)
+}
+
+pub async fn validate_target_url(value: &str) -> Result<(), &'static str> {
+    let url = validate_target_url_shape(value)?;
+    let host = url.host_str().expect("validated target URL host");
+    if private_targets_enabled() {
+        return Ok(());
+    }
+
+    let port = url
+        .port_or_known_default()
+        .ok_or("target_url must include a supported port")?;
+    let addresses = tokio::net::lookup_host((host, port))
+        .await
+        .map_err(|_| "target_url hostname could not be resolved")?;
+    if addresses
+        .into_iter()
+        .any(|address| is_private_or_reserved(address.ip()))
+    {
+        return Err("private, loopback, link-local, or reserved targets are disabled");
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{is_private_or_reserved, validate_target_url_shape};
+
+    #[test]
+    fn target_shape_requires_http_or_https_without_credentials() {
+        assert!(validate_target_url_shape("https://example.com/hook").is_ok());
+        assert_eq!(
+            validate_target_url_shape("ftp://example.com/hook").unwrap_err(),
+            "target_url must use http or https"
+        );
+        assert_eq!(
+            validate_target_url_shape("https://user:pass@example.com/hook").unwrap_err(),
+            "target_url must not include credentials"
+        );
+    }
+
+    #[test]
+    fn private_and_loopback_addresses_are_rejected_by_policy() {
+        assert!(is_private_or_reserved("127.0.0.1".parse().unwrap()));
+        assert!(is_private_or_reserved("10.0.0.1".parse().unwrap()));
+        assert!(is_private_or_reserved("169.254.169.254".parse().unwrap()));
+        assert!(!is_private_or_reserved("8.8.8.8".parse().unwrap()));
+    }
+}
+
 pub async fn handle_root(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     Json(payload): Json<serde_json::Value>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    handle_webhook_inner(state, "".to_string(), headers, payload).await
+    let organization_id = crate::organizations::resolve_ingest_organization(&state, &headers).await?;
+    handle_webhook_inner(state, organization_id, "".to_string(), headers, payload).await
 }
 
 pub async fn handle_webhook(
@@ -30,7 +138,8 @@ pub async fn handle_webhook(
     headers: HeaderMap,
     Json(payload): Json<serde_json::Value>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    handle_webhook_inner(state, source_path, headers, payload).await
+    let organization_id = crate::organizations::resolve_ingest_organization(&state, &headers).await?;
+    handle_webhook_inner(state, organization_id, source_path, headers, payload).await
 }
 
 /// Extract the webhook source from the first non-empty URL segment.
@@ -44,6 +153,7 @@ pub fn extract_source(path: &str) -> String {
 
 async fn handle_webhook_inner(
     state: Arc<AppState>,
+    organization_id: Uuid,
     source_path: String,
     headers: HeaderMap,
     payload: serde_json::Value,
@@ -57,8 +167,9 @@ async fn handle_webhook_inner(
     };
 
     let rule_target: Option<String> = sqlx::query_as::<_, ForwardRule>(
-        "SELECT * FROM forward_rules WHERE source_pattern = $1 AND active = true LIMIT 1",
+        "SELECT * FROM forward_rules WHERE organization_id = $1 AND source_pattern = $2 AND rule_kind = 'provider' AND active = true LIMIT 1",
     )
+    .bind(organization_id)
     .bind(&source)
     .fetch_optional(&state.db)
     .await
@@ -67,24 +178,59 @@ async fn handle_webhook_inner(
     .map(|r| r.target_url)
     .filter(|u| !u.is_empty());
 
-    let target_url = headers
+    let target_override = headers
         .get("X-Target-Url")
         .and_then(|v| v.to_str().ok())
         .filter(|s| !s.is_empty())
-        .map(|s| s.to_string())
-        .or_else(|| rule_target)
-        .unwrap_or_else(|| state.default_target.lock().unwrap().clone());
+        .map(str::to_string);
 
+    if target_override.is_some() && !public_target_override_enabled() {
+        return Err(StatusCode::FORBIDDEN);
+    }
+
+    let target_url = if let Some(target) = target_override {
+        validate_target_url(&target).await.map_err(|error| {
+            tracing::warn!(%error, "rejected public target override");
+            StatusCode::BAD_REQUEST
+        })?;
+        target
+    } else {
+        rule_target
+            .or(crate::organizations::default_target_for(&state.db, organization_id).await.ok())
+            .unwrap_or_default()
+    };
+
+    enqueue_event(
+        &state,
+        organization_id,
+        source,
+        headers_to_json(&headers),
+        payload,
+        target_url,
+    )
+    .await
+}
+
+pub async fn enqueue_event(
+    state: &Arc<AppState>,
+    organization_id: Uuid,
+    source: String,
+    headers: serde_json::Value,
+    payload: serde_json::Value,
+    target_url: String,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    crate::organizations::consume_event_quota(state, organization_id).await?;
     let id = Uuid::new_v4();
     let now = Utc::now().naive_utc();
 
     sqlx::query(
-        r#"INSERT INTO webhook_events (id, source, headers, body, status, target_url, retry_count, max_retries, created_at)
-        VALUES ($1, $2, $3, $4, 'queued', $5, 0, $6, $7)"#,
+        r#"INSERT INTO webhook_events (id, organization_id, source, headers, body, status, target_url, retry_count, max_retries, created_at)
+        VALUES ($1, $2, $3, $4, $5, 'queued', $6, 0, $7, $8)"#,
     )
     .bind(id)
+    .bind(organization_id)
     .bind(&source)
-    .bind(headers_to_json(&headers))
+    .bind(headers)
     .bind(&payload)
     .bind(&target_url)
     .bind(state.max_retries)

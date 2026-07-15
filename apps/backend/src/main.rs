@@ -4,10 +4,14 @@ mod audit;
 mod auth;
 mod config;
 mod events;
+mod invites;
 mod middleware;
 mod model;
+mod organizations;
+mod platform;
 mod ratelimit;
 mod rules;
+mod send;
 mod state;
 mod stats;
 mod users;
@@ -38,6 +42,16 @@ use crate::events::{
 };
 use crate::ratelimit::build_rate_limiter;
 use crate::rules::{create_rule, delete_rule, list_rules, update_rule};
+use crate::send::send_webhook;
+use crate::organizations::{
+    bootstrap_default_organization, create_domain, current_organization, delete_domain,
+    list_domains, provision_organization, retention_worker, verify_domain,
+};
+use crate::invites::{create_invite, list_invites, resend_invite, revoke_invite};
+use crate::platform::{
+    bootstrap_platform_operator, list_platform_organizations, platform_organization_detail,
+    platform_overview, update_platform_subscription,
+};
 use crate::state::{redis_from_env, seed_default_user};
 use crate::stats::metrics;
 use crate::users::{list_users, update_user_role};
@@ -81,7 +95,6 @@ fn build_cors_layer() -> tower_http::cors::CorsLayer {
                 axum::http::header::CONTENT_TYPE,
                 axum::http::header::COOKIE,
                 axum::http::HeaderName::from_static("x-webhook-source"),
-                axum::http::HeaderName::from_static("x-target-url"),
             ])
             .allow_credentials(true)
     }
@@ -114,6 +127,7 @@ async fn main() {
         .expect("can't connect to redis");
 
     sqlx::migrate!("./migrations").run(&db).await.ok();
+    bootstrap_default_organization(&db, &default_target).await;
     seed_default_user(&db).await;
 
     let oauth = auth::OAuthConfig::from_env().map(Arc::new);
@@ -138,7 +152,6 @@ async fn main() {
         db: db.clone(),
         redis: main_redis,
         max_retries,
-        default_target: std::sync::Mutex::new(default_target),
         oauth,
         turnstile,
         login_limiter: login_limiter.clone(),
@@ -156,9 +169,9 @@ async fn main() {
 
     let r_redis = ConnectionManager::new(redis_from_env()).await.unwrap();
     tokio::spawn(retry_worker(db, r_redis));
+    tokio::spawn(retention_worker(state.db.clone()));
 
     let public = Router::new()
-        .route("/config/default-target", get(get_default_target))
         .route("/config/endpoint", get(get_endpoint))
         .route("/config/oauth", get(get_oauth_status))
         // OAuth endpoints (callback must be reachable cross-origin via redirect).
@@ -168,8 +181,16 @@ async fn main() {
         .route("/api/auth/login", post(auth::login))
         .route("/api/auth/logout", post(auth::logout));
 
+    let bootstrap = Router::new().route(
+        "/api/platform/bootstrap/operator",
+        post(bootstrap_platform_operator),
+    );
+
     let protected = Router::new()
-        .route("/config/default-target", post(set_default_target))
+        .route(
+            "/config/default-target",
+            get(get_default_target).post(set_default_target),
+        )
         .route("/events", get(list_events))
         .route("/events/sources", get(list_sources))
         .route("/events/stream", get(event_stream))
@@ -182,9 +203,35 @@ async fn main() {
         .route("/rules", get(list_rules).post(create_rule))
         .route("/rules/{id}", delete(delete_rule).patch(update_rule))
         .route("/stats", get(metrics))
+        .route("/api/send", post(send_webhook))
+        .route("/api/organization", get(current_organization))
+        .route("/api/platform/overview", get(platform_overview))
+        .route(
+            "/api/platform/organizations",
+            get(list_platform_organizations).post(provision_organization),
+        )
+        .route(
+            "/api/platform/organizations/{id}",
+            get(platform_organization_detail),
+        )
+        .route(
+            "/api/platform/organizations/{id}/subscription",
+            patch(update_platform_subscription),
+        )
+        .route("/api/domains", get(list_domains).post(create_domain))
+        .route("/api/domains/{id}/verify", post(verify_domain))
+        .route("/api/domains/{id}", delete(delete_domain))
+        .route(
+            "/api/api-keys",
+            get(auth::list_tokens).post(auth::create_token),
+        )
+        .route("/api/api-keys/{id}", delete(auth::revoke_token))
         .route("/api/audit", get(audit::list_audit))
         .route("/api/users", get(list_users))
         .route("/api/users/{id}/role", patch(update_user_role))
+        .route("/api/invites", get(list_invites).post(create_invite))
+        .route("/api/invites/{id}/resend", post(resend_invite))
+        .route("/api/invites/{id}", delete(revoke_invite))
         // API token management — any authenticated user may mint/scoped keys.
         .route(
             "/api/auth/tokens",
@@ -204,6 +251,7 @@ async fn main() {
     let app = Router::new()
         .route("/health", get(health))
         .merge(public)
+        .merge(bootstrap)
         .merge(protected)
         .route("/", post(handle_root))
         .route("/{*source}", post(handle_webhook))

@@ -1,6 +1,6 @@
 //! Shared `AppState`, default-user seed, Redis client construction.
 
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use redis::aio::ConnectionManager;
 use tracing::info;
@@ -17,7 +17,6 @@ pub struct AppState {
     pub db: sqlx::PgPool,
     pub redis: ConnectionManager,
     pub max_retries: i32,
-    pub default_target: Mutex<String>,
     /// Present when Google OAuth is configured (GOOGLE_CLIENT_ID/SECRET set).
     pub oauth: Option<Arc<OAuthConfig>>,
     /// Present when Cloudflare Turnstile is configured (TURNSTILE_SECRET_KEY set).
@@ -44,14 +43,26 @@ pub async fn seed_default_user(db: &sqlx::PgPool) {
             .is_some();
 
         if !exists {
+            let organization_id: Option<Uuid> = sqlx::query_scalar(
+                "SELECT id FROM organizations WHERE slug = 'default'",
+            )
+            .fetch_optional(db)
+            .await
+            .ok()
+            .flatten();
+            let Some(organization_id) = organization_id else {
+                tracing::warn!("default organization missing; skipping default user seed");
+                return;
+            };
             let hash = tokio::task::spawn_blocking(move || bcrypt::hash(&password, 10))
                 .await
                 .expect("join error")
                 .expect("bcrypt hash");
             sqlx::query(
-                "INSERT INTO users (id, username, password_hash, role) VALUES ($1, $2, $3, 'admin')",
+                "INSERT INTO users (id, organization_id, username, password_hash, role) VALUES ($1, $2, $3, $4, 'admin')",
             )
             .bind(Uuid::new_v4())
+            .bind(organization_id)
             .bind(&username)
             .bind(&hash)
             .execute(db)

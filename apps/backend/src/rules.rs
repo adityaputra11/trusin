@@ -9,15 +9,19 @@ use serde::Deserialize;
 use uuid::Uuid;
 
 use crate::auth;
-use crate::middleware::require_admin;
+use crate::middleware::{require_admin, require_scope};
 use crate::model::ForwardRule;
 use crate::state::AppState;
 
 pub async fn list_rules(
     State(state): State<Arc<AppState>>,
+    axum::Extension(cu): axum::Extension<auth::CurrentUser>,
 ) -> Result<Json<Vec<ForwardRule>>, StatusCode> {
-    let rules =
-        sqlx::query_as::<_, ForwardRule>("SELECT * FROM forward_rules ORDER BY created_at ASC")
+    require_scope(&cu, "rules:read")?;
+    let rules = sqlx::query_as::<_, ForwardRule>(
+        "SELECT * FROM forward_rules WHERE organization_id = $1 ORDER BY created_at ASC",
+    )
+            .bind(cu.organization_id)
             .fetch_all(&state.db)
             .await
             .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
@@ -33,7 +37,14 @@ pub struct CreateRule {
     /// Custom headers to send on outbound delivery. Defaults to `{}`.
     #[serde(default)]
     pub headers: Option<serde_json::Value>,
+    #[serde(default = "default_rule_kind")]
+    pub rule_kind: String,
+    pub provider_id: Option<Uuid>,
+    pub trigger_on: Option<String>,
+    pub signing_secret: Option<String>,
 }
+
+fn default_rule_kind() -> String { "provider".to_string() }
 
 pub async fn create_rule(
     State(state): State<Arc<AppState>>,
@@ -41,8 +52,34 @@ pub async fn create_rule(
     Json(input): Json<CreateRule>,
 ) -> Result<Json<ForwardRule>, StatusCode> {
     require_admin(&cu)?;
+    require_scope(&cu, "rules:write")?;
+    let rule_kind = input.rule_kind.trim();
+    if !matches!(rule_kind, "provider" | "hook") {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    if rule_kind == "provider" {
+        crate::organizations::ensure_resource_quota(&state, cu.organization_id, "providers").await?;
+    }
     let id = Uuid::new_v4();
-    let pattern = input.source_pattern.unwrap_or_else(|| "*".to_string());
+    let trigger_on = input.trigger_on.unwrap_or_else(|| "success".to_string());
+    if !matches!(trigger_on.as_str(), "success" | "failure") {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    let provider_id = input.provider_id;
+    let pattern = if rule_kind == "hook" {
+        let provider_id = provider_id.ok_or(StatusCode::BAD_REQUEST)?;
+        sqlx::query_scalar::<_, String>(
+            "SELECT source_pattern FROM forward_rules WHERE id = $1 AND organization_id = $2 AND rule_kind = 'provider'",
+        )
+        .bind(provider_id)
+        .bind(cu.organization_id)
+        .fetch_optional(&state.db)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?
+    } else {
+        input.source_pattern.unwrap_or_else(|| "*".to_string())
+    };
     let method = input.method.unwrap_or_else(|| "POST".to_string());
     let headers = input
         .headers
@@ -50,15 +87,20 @@ pub async fn create_rule(
         .unwrap_or_else(|| serde_json::json!({}));
 
     sqlx::query(
-        r#"INSERT INTO forward_rules (id, name, source_pattern, target_url, method, headers, active)
-        VALUES ($1, $2, $3, $4, $5, $6, true)"#,
+        r#"INSERT INTO forward_rules (id, organization_id, name, source_pattern, target_url, method, headers, active, rule_kind, provider_id, trigger_on, signing_secret)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, true, $8, $9, $10, $11)"#,
     )
     .bind(id)
+    .bind(cu.organization_id)
     .bind(&input.name)
     .bind(&pattern)
     .bind(&input.target_url)
     .bind(&method)
     .bind(&headers)
+    .bind(rule_kind)
+    .bind(provider_id)
+    .bind(&trigger_on)
+    .bind(input.signing_secret.filter(|secret| !secret.trim().is_empty()))
     .execute(&state.db)
     .await
     .map_err(|e| {
@@ -66,8 +108,9 @@ pub async fn create_rule(
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
 
-    let rule = sqlx::query_as::<_, ForwardRule>("SELECT * FROM forward_rules WHERE id = $1")
+    let rule = sqlx::query_as::<_, ForwardRule>("SELECT * FROM forward_rules WHERE id = $1 AND organization_id = $2")
         .bind(id)
+        .bind(cu.organization_id)
         .fetch_one(&state.db)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
@@ -78,7 +121,7 @@ pub async fn create_rule(
         "rule.created",
         "rule",
         Some(id.to_string()),
-        serde_json::json!({ "name": rule.name, "source_pattern": rule.source_pattern }),
+        serde_json::json!({ "name": rule.name, "source_pattern": rule.source_pattern, "rule_kind": rule.rule_kind }),
     )
     .await;
 
@@ -91,8 +134,10 @@ pub async fn delete_rule(
     Path(id): Path<Uuid>,
 ) -> Result<StatusCode, StatusCode> {
     require_admin(&cu)?;
-    let res = sqlx::query("DELETE FROM forward_rules WHERE id = $1")
+    require_scope(&cu, "rules:write")?;
+    let res = sqlx::query("DELETE FROM forward_rules WHERE id = $1 AND organization_id = $2")
         .bind(id)
+        .bind(cu.organization_id)
         .execute(&state.db)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
@@ -122,6 +167,9 @@ pub struct UpdateRule {
     pub method: Option<String>,
     pub headers: Option<serde_json::Value>,
     pub active: Option<bool>,
+    pub trigger_on: Option<String>,
+    pub provider_id: Option<Uuid>,
+    pub signing_secret: Option<String>,
 }
 
 pub async fn update_rule(
@@ -131,17 +179,37 @@ pub async fn update_rule(
     Json(input): Json<UpdateRule>,
 ) -> Result<Json<ForwardRule>, StatusCode> {
     require_admin(&cu)?;
+    require_scope(&cu, "rules:write")?;
     // Coalesce: read current row, apply overrides, write back. Simpler than
     // building a dynamic UPDATE with a variable column list.
-    let current = sqlx::query_as::<_, ForwardRule>("SELECT * FROM forward_rules WHERE id = $1")
+    let current = sqlx::query_as::<_, ForwardRule>("SELECT * FROM forward_rules WHERE id = $1 AND organization_id = $2")
         .bind(id)
+        .bind(cu.organization_id)
         .fetch_optional(&state.db)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
 
     let name = input.name.unwrap_or(current.name);
-    let source_pattern = input.source_pattern.unwrap_or(current.source_pattern);
+    let (source_pattern, provider_id) = if current.rule_kind == "hook" {
+        let provider_id = input.provider_id.or(current.provider_id).ok_or(StatusCode::BAD_REQUEST)?;
+        let source_pattern = if input.provider_id.is_some() {
+            sqlx::query_scalar::<_, String>(
+                "SELECT source_pattern FROM forward_rules WHERE id = $1 AND organization_id = $2 AND rule_kind = 'provider'",
+            )
+            .bind(provider_id)
+            .bind(cu.organization_id)
+            .fetch_optional(&state.db)
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+            .ok_or(StatusCode::NOT_FOUND)?
+        } else {
+            current.source_pattern
+        };
+        (source_pattern, Some(provider_id))
+    } else {
+        (input.source_pattern.unwrap_or(current.source_pattern), current.provider_id)
+    };
     let target_url = input.target_url.unwrap_or(current.target_url);
     let method = input.method.unwrap_or(current.method);
     let headers = input
@@ -149,11 +217,16 @@ pub async fn update_rule(
         .filter(|h| h.is_object())
         .unwrap_or(current.headers);
     let active = input.active.unwrap_or(current.active);
+    let trigger_on = input.trigger_on.unwrap_or(current.trigger_on);
+    if !matches!(trigger_on.as_str(), "success" | "failure") {
+        return Err(StatusCode::BAD_REQUEST);
+    }
 
     let rule = sqlx::query_as::<_, ForwardRule>(
         r#"UPDATE forward_rules
-           SET name = $2, source_pattern = $3, target_url = $4, method = $5, headers = $6, active = $7
-           WHERE id = $1
+           SET name = $2, source_pattern = $3, target_url = $4, method = $5, headers = $6, active = $7, trigger_on = $8, provider_id = $9,
+               signing_secret = COALESCE($10, signing_secret)
+           WHERE id = $1 AND organization_id = $11
            RETURNING *"#,
     )
     .bind(id)
@@ -163,6 +236,10 @@ pub async fn update_rule(
     .bind(&method)
     .bind(&headers)
     .bind(active)
+    .bind(&trigger_on)
+    .bind(provider_id)
+    .bind(input.signing_secret.filter(|secret| !secret.trim().is_empty()))
+    .bind(cu.organization_id)
     .fetch_one(&state.db)
     .await
     .map_err(|e| {

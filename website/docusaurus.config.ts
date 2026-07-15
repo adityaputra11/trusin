@@ -3,10 +3,10 @@ import type {Options, ThemeConfig} from '@docusaurus/preset-classic';
 import {themes as prismThemes} from 'prism-react-renderer';
 
 const config: Config = {
-  title: 'Terusin',
-  tagline: 'Self-hosted webhook relay yang cepat dan andal',
-  favicon: 'img/terusin-mark.svg',
-  url: 'https://terusin-dev.my.id',
+  title: 'trusin Documentation',
+  tagline: 'Documentation for reliable, self-hosted webhook delivery',
+  favicon: 'img/favicon.png',
+  url: 'https://docs.terusin-dev.my.id',
   baseUrl: '/',
   organizationName: 'adityaputra11',
   projectName: 'terusin',
@@ -22,21 +22,23 @@ const config: Config = {
   ],
   themeConfig: {
     navbar: {
-      title: '',
-      logo: {alt: 'Terusin', src: 'img/terusin-logo.svg'},
+      title: 'trusin',
+      logo: {alt: 'trusin', src: 'img/favicon.png'},
       items: [
-        {type: 'docSidebar', sidebarId: 'tutorialSidebar', position: 'left', label: 'Dokumentasi'},
+        {type: 'docSidebar', sidebarId: 'tutorialSidebar', position: 'left', label: 'Documentation'},
+        {href: 'https://terusin-dev.my.id', label: 'trusin', position: 'right'},
+        {href: 'https://app.terusin-dev.my.id', label: 'Open app', position: 'right'},
         {href: 'https://github.com/adityaputra11/terusin', label: 'GitHub', position: 'right'},
       ],
     },
     footer: {
       style: 'dark',
       links: [{title: 'Docs', items: [
-        {label: 'Mulai', to: '/docs/intro'},
+        {label: 'Get started', to: '/docs/intro'},
         {label: 'API', to: '/docs/reference/api'},
         {label: 'Troubleshooting', to: '/docs/operations/troubleshooting'},
       ]}],
-      copyright: `Copyright © ${new Date().getFullYear()} Terusin. Apache-2.0.`,
+      copyright: `Copyright © ${new Date().getFullYear()} trusin. Apache-2.0.`,
     },
     prism: {theme: prismThemes.github, darkTheme: prismThemes.dracula},
     colorMode: {defaultMode: 'dark', respectPrefersColorScheme: true},

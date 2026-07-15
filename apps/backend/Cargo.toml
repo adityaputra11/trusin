@@ -27,3 +27,4 @@ governor.workspace = true
 tokio-stream.workspace = true
 bytes.workspace = true
 rand.workspace = true
+hickory-resolver = "0.24"

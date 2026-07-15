@@ -6,6 +6,7 @@ use uuid::Uuid;
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct WebhookEvent {
     pub id: Uuid,
+    pub organization_id: Uuid,
     pub source: String,
     pub headers: serde_json::Value,
     pub body: serde_json::Value,
@@ -22,12 +23,16 @@ pub struct WebhookEvent {
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct ForwardRule {
     pub id: Uuid,
+    pub organization_id: Uuid,
     pub name: String,
     pub source_pattern: String,
     pub target_url: String,
     pub method: String,
     pub headers: serde_json::Value,
     pub active: bool,
+    pub rule_kind: String,
+    pub provider_id: Option<Uuid>,
+    pub trigger_on: String,
     /// Per-rule HMAC secret used to sign outbound deliveries. Never serialized
     /// to API clients (would leak the secret to anyone with read access to
     /// /rules). `sqlx::FromRow` ignores serde attrs and still populates this
@@ -41,6 +46,7 @@ pub struct ForwardRule {
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct DeliveryAttempt {
     pub id: Uuid,
+    pub organization_id: Uuid,
     pub event_id: Uuid,
     pub attempt_number: i32,
     pub status: String,
@@ -55,9 +61,11 @@ pub struct DeliveryAttempt {
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct User {
     pub id: Uuid,
+    pub organization_id: Uuid,
     pub username: Option<String>,
     pub password_hash: Option<String>,
     pub role: String,
+    pub is_platform_operator: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub email: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]

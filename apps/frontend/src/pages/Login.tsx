@@ -11,6 +11,7 @@ export function Login() {
   const navigate = useNavigate();
   const [params] = useSearchParams();
   const oauthError = params.get("error");
+  const inviteToken = params.get("invite");
   // Whether the backend has Google OAuth configured. The button + divider
   // are only rendered when enabled, so users never see a broken 503 path.
   const { data: oauthStatus } = useOAuthStatus();
@@ -100,19 +101,27 @@ export function Login() {
     // Hand off to the backend, which redirects to Google's consent screen.
     // The backend sets the session cookie after the callback, then bounces
     // us back to "/".
-    window.location.assign("/api/auth/google");
+    const query = inviteToken ? `?invite=${encodeURIComponent(inviteToken)}` : "";
+    window.location.assign(`/api/auth/google${query}`);
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-background p-6">
-      <div className="w-full max-w-sm">
-        <div className="flex flex-col items-center mb-8">
-          <img
-            src="/terusin-logo.svg"
-            alt="Terusin"
-            className="h-14 w-auto object-contain mb-5"
-          />
-          <p className="text-sm text-muted mt-1">Sign in to your webhook relay</p>
+    <div className="min-h-screen bg-[radial-gradient(circle_at_50%_12%,rgba(74,222,128,.12),transparent_28%),radial-gradient(circle_at_0%_100%,rgba(74,222,128,.05),transparent_32%)] px-5 py-10 sm:flex sm:items-center sm:justify-center">
+      <div className="mx-auto w-full max-w-[420px]">
+        <div className="mb-7">
+          <div className="mb-7 flex items-center gap-3">
+            <img
+              src="/icon-trusin.png"
+              alt=""
+              className="h-11 w-11 rounded-xl object-cover shadow-[0_0_28px_rgba(74,222,128,.22)]"
+            />
+            <span className="text-xl font-semibold tracking-tight text-foreground">trusin</span>
+          </div>
+          <p className="mb-2 text-xs font-semibold uppercase tracking-[.16em] text-success">Webhook operations</p>
+          <h1 className="text-3xl font-semibold tracking-tight text-foreground">Welcome back</h1>
+          <p className="mt-2 max-w-sm text-sm leading-6 text-secondary">
+            Sign in to monitor, route, and recover every webhook delivery.
+          </p>
         </div>
 
         {/* Google sign-in — hidden entirely when OAuth is not configured on
@@ -121,16 +130,15 @@ export function Login() {
           <>
             <button
               onClick={google}
-              className="w-full flex items-center justify-center gap-3 bg-card hover:bg-card-secondary border border-border hover:border-border-hover rounded-md px-4 py-3 text-sm font-medium text-foreground transition-base mb-4"
+              className="mb-1 flex w-full items-center justify-center gap-3 rounded-lg border border-border bg-card px-4 py-3 text-sm font-medium text-foreground transition-base hover:border-border-hover hover:bg-card-secondary"
             >
               <GoogleIcon />
               Continue with Google
             </button>
 
-            {/* Divider */}
-            <div className="flex items-center gap-3 my-4">
+            <div className="my-5 flex items-center gap-3">
               <div className="flex-1 h-px bg-border" />
-              <span className="text-xs text-muted uppercase tracking-wider">or</span>
+              <span className="text-[10px] font-medium uppercase tracking-[.16em] text-muted">or use password</span>
               <div className="flex-1 h-px bg-border" />
             </div>
           </>
@@ -138,7 +146,7 @@ export function Login() {
 
         <form
           onSubmit={submit}
-          className="bg-card border border-border rounded-lg p-6 space-y-4 shadow-[0_2px_8px_rgba(0,0,0,.25)]"
+          className="space-y-4 rounded-2xl border border-border bg-[rgba(15,20,17,.92)] p-5 shadow-[0_24px_80px_rgba(0,0,0,.38)] backdrop-blur sm:p-7"
         >
           <Field label="Username" htmlFor="username">
             <Input
@@ -191,11 +199,7 @@ export function Login() {
             )}
           </Button>
         </form>
-
-        <p className="text-center text-xs text-muted mt-6">
-          Default: <code className="text-secondary">admin</code> /{" "}
-          <code className="text-secondary">change-me-in-production</code>
-        </p>
+        <p className="mt-5 text-center text-xs text-muted">Secure access for your workspace.</p>
       </div>
     </div>
   );

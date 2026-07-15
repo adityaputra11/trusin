@@ -8,6 +8,7 @@ import {
   useUpdateRule,
 } from "../lib/hooks";
 import {
+  Badge,
   Button,
   Card,
   EmptyState,
@@ -83,7 +84,7 @@ export function Providers() {
   const [deleteTarget, setDeleteTarget] = useState<ForwardRule | null>(null);
 
   // Providers = named source mappings, exclude the seeded catch-all "Default".
-  const providers = (rules ?? []).filter((r) => r.name !== "Default");
+  const providers = (rules ?? []).filter((r) => r.rule_kind === "provider");
 
   const openCreate = () => {
     setEditing(null);
@@ -132,6 +133,7 @@ export function Providers() {
           method: form.method,
           headers,
           signing_secret: form.signing_secret.trim() || undefined,
+          rule_kind: "provider",
         });
       }
       setOpen(false);
@@ -176,6 +178,7 @@ export function Providers() {
             <TH>Source</TH>
             <TH>Method</TH>
             <TH>Target URL</TH>
+            <TH>Status</TH>
             {canWrite && <TH className="text-right">Actions</TH>}
           </THead>
           <TBody>
@@ -200,6 +203,19 @@ export function Providers() {
                   <code className="text-xs text-muted font-mono truncate max-w-[280px] inline-block align-bottom">
                     {rule.target_url || "—"}
                   </code>
+                </TD>
+                <TD>
+                  <button
+                    type="button"
+                    disabled={!canWrite || updateRule.isPending}
+                    onClick={() => canWrite && updateRule.mutate({ id: rule.id, active: !rule.active })}
+                    className="disabled:cursor-default"
+                    title={canWrite ? `${rule.active ? "Pause" : "Enable"} provider delivery` : undefined}
+                  >
+                    <Badge variant={rule.active ? "success" : "neutral"}>
+                      {rule.active ? "enabled" : "paused"}
+                    </Badge>
+                  </button>
                 </TD>
                 {canWrite && (
                 <TD className="text-right">
@@ -343,7 +359,7 @@ export function Providers() {
         open={deleteTarget !== null}
         onClose={() => setDeleteTarget(null)}
         title="Delete provider"
-        description={`Delete provider "${deleteTarget?.name ?? ""}"? This cannot be undone.`}
+        description={`Delete provider "${deleteTarget?.name ?? ""}"? Its attached hooks will also be deleted. This cannot be undone.`}
         confirmLabel="Delete"
         danger
         loading={deleteRule.isPending}

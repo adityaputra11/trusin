@@ -14,6 +14,8 @@ import { Metrics } from "./pages/Metrics";
 import { Settings } from "./pages/Settings";
 import { Activity } from "./pages/Activity";
 import { Users } from "./pages/Users";
+import { Organization } from "./pages/Organization";
+import { Platform } from "./pages/Platform";
 import { isLoggedIn } from "./lib/auth";
 import { useMe } from "./lib/hooks";
 import { FullSpinner } from "./components/ui";
@@ -35,6 +37,13 @@ function Protected({ children }: { children: React.ReactNode }) {
   return <Navigate to="/login" replace />;
 }
 
+function PlatformProtected() {
+  const me = useMe();
+  if (me.isLoading) return <FullSpinner label="Checking operator access…" />;
+  if (!me.data?.is_platform_operator) return <Navigate to="/" replace />;
+  return <Platform />;
+}
+
 const router = createBrowserRouter([
   { path: "/login", element: <Login /> },
   {
@@ -51,6 +60,8 @@ const router = createBrowserRouter([
       { path: "/metrics", element: <Metrics /> },
       { path: "/activity", element: <Activity /> },
       { path: "/users", element: <Users /> },
+      { path: "/organization", element: <Organization /> },
+      { path: "/platform", element: <PlatformProtected /> },
       { path: "/send", element: <SendWebhook /> },
       { path: "/settings", element: <Settings /> },
     ],

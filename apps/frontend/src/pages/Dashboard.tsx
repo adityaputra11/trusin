@@ -51,14 +51,13 @@ const STATUS_LABEL: Record<string, string> = Object.fromEntries(
   STATUS_FILTERS.map((s) => [s.value, s.label]),
 );
 
-/** Small "Live" / "Reconnecting…" indicator reflecting the SSE stream. Sits
- * next to the endpoint box so users know when real-time updates are paused. */
+/** Small "Live" / "Reconnecting…" indicator for the event delivery stream. */
 function LiveBadge({ status }: { status: EventStreamStatus }) {
   if (status === "idle") return null;
   const connected = status === "connected";
   return (
     <span
-      className={`inline-flex items-center gap-1.5 text-xs font-medium px-2.5 h-7 rounded-md border self-end mb-6 ${
+      className={`inline-flex items-center gap-1.5 text-xs font-medium px-2.5 h-7 rounded-md border ${
         connected
           ? "text-success bg-[rgba(34,197,94,.08)] border-[rgba(34,197,94,.25)]"
           : "text-warning bg-[rgba(245,158,11,.08)] border-[rgba(245,158,11,.25)]"
@@ -438,16 +437,14 @@ export function Dashboard() {
 
   return (
     <div className="space-y-1">
-      <div className="flex items-start justify-between gap-4 flex-wrap">
-        <div className="flex-1 min-w-0">
-          <EndpointBox />
-        </div>
-        <LiveBadge status={streamStatus} />
-      </div>
+      <EndpointBox />
 
       <div className="flex items-end justify-between mb-3 mt-1">
         <div><p className="text-[10px] uppercase tracking-[.13em] text-success font-semibold">Event operations</p><h2 className="text-base font-semibold mt-1 text-foreground">Recent deliveries</h2></div>
-        <p className="hidden sm:block text-[11px] text-muted">Auto-refreshing every 15 seconds</p>
+        <div className="flex items-center gap-3">
+          <LiveBadge status={streamStatus} />
+          <p className="hidden sm:block text-[11px] text-muted">Auto-refreshing every 15 seconds</p>
+        </div>
       </div>
       <Card className="p-0 overflow-hidden">
         <FilterBar

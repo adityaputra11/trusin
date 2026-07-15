@@ -9,7 +9,6 @@ use axum::{
     routing::any,
     Router,
 };
-use base64::Engine;
 use rust_embed::RustEmbed;
 use std::sync::Arc;
 use tower_http::cors::{Any, CorsLayer};
@@ -23,7 +22,6 @@ struct Asset;
 
 struct AppState {
     backend_url: String,
-    backend_auth: String,
 }
 
 #[tokio::main]
@@ -40,17 +38,10 @@ async fn main() {
         .parse::<u16>()
         .unwrap_or(3002);
 
-    let (user, pass) = (
-        std::env::var("AUTH_USERNAME").unwrap_or_else(|_| "admin".to_string()),
-        std::env::var("AUTH_PASSWORD").unwrap_or_else(|_| "change-me-in-production".to_string()),
-    );
-    let backend_auth = base64::engine::general_purpose::STANDARD.encode(format!("{user}:{pass}"));
-
     let client = reqwest::Client::builder().build().expect("reqwest client");
 
     let state = Arc::new(AppState {
         backend_url: backend_url.clone(),
-        backend_auth,
     });
 
     // Permissive CORS so the Vite dev server (:5173) can hit the API directly
@@ -146,9 +137,9 @@ fn serve_asset(path: &str) -> Response {
     }
 }
 
-/// Forward a request to the backend with Basic auth injected server-side.
-/// This means the browser SPA never has to know the backend credentials in
-/// the prod/embedded setup — same model as the old SSR app's backend_client().
+/// Forward a request to the backend while preserving the browser's authentication
+/// and the original Host header. The backend uses these values for tenant-aware
+/// access control and custom webhook domain routing.
 async fn proxy_to_backend(ps: &ProxyState, req: Request) -> Response {
     let (parts, body) = req.into_parts();
     let body_bytes = match axum::body::to_bytes(body, usize::MAX).await {
@@ -163,17 +154,13 @@ async fn proxy_to_backend(ps: &ProxyState, req: Request) -> Response {
         .unwrap_or_else(|| parts.uri.path());
     let url = format!("{}{}", ps.state.backend_url, path_and_query);
 
-    let mut req_builder = ps
-        .client
-        .request(parts.method.clone(), &url)
-        .header(
-            header::AUTHORIZATION,
-            format!("Basic {}", ps.state.backend_auth),
-        )
-        .body(body_bytes);
+    let mut req_builder = ps.client.request(parts.method.clone(), &url).body(body_bytes);
 
     // Forward select headers from the original request.
     for key in [
+        header::AUTHORIZATION,
+        header::COOKIE,
+        header::HOST,
         header::CONTENT_TYPE,
         HeaderName::from_static("x-webhook-source"),
         HeaderName::from_static("x-target-url"),

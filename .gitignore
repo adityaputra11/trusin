@@ -5,6 +5,8 @@ target/
 # Frontend (Vite / React)
 apps/frontend/node_modules/
 apps/frontend/dist/
+apps/landing/node_modules/
+apps/landing/dist/
 
 # TypeScript build artifacts
 *.tsbuildinfo

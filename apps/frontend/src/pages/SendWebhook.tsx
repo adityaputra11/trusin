@@ -2,7 +2,8 @@ import { useState, type FormEvent } from "react";
 import { Navigate } from "react-router-dom";
 import { Send, CheckCircle2, AlertCircle } from "lucide-react";
 import { api } from "../lib/api";
-import { Button, Card, CardHeader, Field, Input, Textarea } from "../components/ui";
+import { useRules } from "../lib/hooks";
+import { Button, Card, CardHeader, Field, Input, Select, Textarea } from "../components/ui";
 import { useCanWrite } from "../lib/user-context";
 
 interface SendResult {
@@ -10,6 +11,8 @@ interface SendResult {
   message: string;
   id?: string;
 }
+
+const CUSTOM_PROVIDER = "__custom__";
 
 const SAMPLE = JSON.stringify(
   {
@@ -20,49 +23,70 @@ const SAMPLE = JSON.stringify(
   2,
 );
 
+function validateTarget(value: string): string | null {
+  if (!value.trim()) return null;
+  try {
+    const url = new URL(value.trim());
+    if (url.protocol !== "http:" && url.protocol !== "https:") {
+      return "Target must use http or https.";
+    }
+    if (url.username || url.password) {
+      return "Target must not include credentials in the URL.";
+    }
+    return null;
+  } catch {
+    return "Target must be a valid URL.";
+  }
+}
+
 export function SendWebhook() {
   const canWrite = useCanWrite();
+  const { data: rules, isLoading: providersLoading, isError: providersError } = useRules();
+  const [providerId, setProviderId] = useState(CUSTOM_PROVIDER);
   const [source, setSource] = useState("");
-  const [body, setBody] = useState(SAMPLE);
   const [target, setTarget] = useState("");
+  const [body, setBody] = useState(SAMPLE);
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<SendResult | null>(null);
 
-  // Viewers have no business sending webhooks — bounce to dashboard.
-  // (Placed after all hooks so the rules-of-hooks hold.)
+  const providers = (rules ?? []).filter(
+    (rule) => rule.rule_kind === "provider" && rule.active && rule.target_url.trim(),
+  );
+  const selectedProvider = providers.find((rule) => rule.id === providerId);
+  const providerSource = selectedProvider
+    ? selectedProvider.source_pattern === "*"
+      ? selectedProvider.name
+      : selectedProvider.source_pattern
+    : "";
+  const isCustom = !selectedProvider;
+
   if (!canWrite) return <Navigate to="/" replace />;
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
     setResult(null);
-    setLoading(true);
 
-    let parsed: unknown = body;
+    let parsed: unknown;
     try {
       parsed = body.trim() ? JSON.parse(body) : {};
     } catch {
-      setResult({
-        ok: false,
-        message: "Body is not valid JSON.",
-      });
-      setLoading(false);
+      setResult({ ok: false, message: "Body is not valid JSON." });
       return;
     }
 
-    // POST /{source} to the backend via the same-origin proxy. In dev the
-    // Vite server forwards arbitrary POST paths to the backend; in prod the
-    // `web` binary reverse-proxies non-GET requests through. We deliberately
-    // do NOT use endpointInfo.endpoint as the host — that's the public ingest
-    // URL (e.g. ngrok), not the local backend reachable from the browser.
-    const path = source ? `/${source}` : "/";
-    const headers: Record<string, string> = {
-      "X-Webhook-Source": source || "unknown",
-    };
-    if (target.trim()) headers["X-Target-Url"] = target.trim();
+    const customTargetError = isCustom ? validateTarget(target) : null;
+    if (customTargetError) {
+      setResult({ ok: false, message: customTargetError });
+      return;
+    }
 
+    setLoading(true);
     try {
-      const res = await api.post<{ id?: string; status?: string }>(path, parsed, {
-        noAuth: true,
+      const res = await api.post<{ id?: string; status?: string }>("/api/send", {
+        provider_id: selectedProvider?.id,
+        source: isCustom ? source.trim() || undefined : undefined,
+        target_url: isCustom ? target.trim() || undefined : undefined,
+        body: parsed,
       });
       setResult({
         ok: true,
@@ -72,8 +96,7 @@ export function SendWebhook() {
     } catch (err) {
       setResult({
         ok: false,
-        message:
-          err instanceof Error ? err.message : "Failed to send webhook.",
+        message: err instanceof Error ? err.message : "Failed to send webhook.",
       });
     } finally {
       setLoading(false);
@@ -85,35 +108,71 @@ export function SendWebhook() {
       <Card>
         <CardHeader
           title="Send a custom webhook"
-          subtitle="Submit a JSON payload to the relay as if it came from a provider."
+          subtitle="Send a JSON payload through an existing provider or a validated custom target."
         />
         <form onSubmit={submit} className="space-y-4">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <Field
-              label="Source"
-              htmlFor="source"
-              hint="Becomes the URL path: /{source}"
+          <Field
+            label="Provider"
+            htmlFor="provider"
+            hint={
+              providersError
+                ? "Providers could not be loaded. Custom mode is still available."
+                : "Choose a configured provider, or use Custom for manual routing."
+            }
+          >
+            <Select
+              id="provider"
+              value={selectedProvider?.id ?? CUSTOM_PROVIDER}
+              onChange={(e) => setProviderId(e.target.value)}
+              disabled={providersLoading}
             >
-              <Input
-                id="source"
-                value={source}
-                onChange={(e) => setSource(e.target.value)}
-                placeholder="midtrans"
-              />
-            </Field>
-            <Field
-              label="Override target (optional)"
-              htmlFor="target"
-              hint="Sent as X-Target-Url header"
-            >
-              <Input
-                id="target"
-                value={target}
-                onChange={(e) => setTarget(e.target.value)}
-                placeholder="https://example.com/incoming"
-              />
-            </Field>
-          </div>
+              <option value={CUSTOM_PROVIDER}>
+                {providersLoading ? "Loading providers…" : "Custom / manual"}
+              </option>
+              {providers.map((provider) => (
+                <option key={provider.id} value={provider.id}>
+                  {provider.name} · {provider.source_pattern}
+                </option>
+              ))}
+            </Select>
+          </Field>
+
+          {selectedProvider ? (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <Field label="Source" htmlFor="provider-source" hint="Resolved from the selected provider.">
+                <Input id="provider-source" value={providerSource} readOnly aria-readonly="true" />
+              </Field>
+              <Field label="Target" htmlFor="provider-target" hint="Resolved from the provider rule.">
+                <Input id="provider-target" value={selectedProvider.target_url} readOnly aria-readonly="true" />
+              </Field>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <Field label="Source" htmlFor="source" hint="Optional source label. Empty uses the default source.">
+                <Input
+                  id="source"
+                  value={source}
+                  onChange={(e) => setSource(e.target.value)}
+                  placeholder="midtrans"
+                  maxLength={255}
+                />
+              </Field>
+              <Field
+                label="Target (optional)"
+                htmlFor="target"
+                hint="Leave empty to use the configured default target."
+              >
+                <Input
+                  id="target"
+                  type="url"
+                  value={target}
+                  onChange={(e) => setTarget(e.target.value)}
+                  placeholder="https://example.com/incoming"
+                />
+              </Field>
+            </div>
+          )}
+
           <Field label="Body (JSON)" htmlFor="body">
             <Textarea
               id="body"

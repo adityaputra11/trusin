@@ -97,7 +97,7 @@ Filosofi: **"Set once, forward everywhere."** Pengguna cukup mengarahkan webhook
 | F1.1 | Menerima POST request di `/{source}` | P0 |
 | F1.2 | Menerima POST request di `/` (root, tanpa source) | P0 |
 | F1.3 | Source dari first path segment atau header `X-Webhook-Source` | P0 |
-| F1.4 | Target URL dari header `X-Target-Url` atau rule matching atau default target | P0 |
+| F1.4 | Target URL dari rule matching atau default target; public `X-Target-Url` override disabled by default | P0 |
 | F1.5 | Simpan event ke Postgres + push ke Redis queue | P0 |
 | F1.6 | Rate limiting per-IP | P1 |
 
@@ -136,7 +136,7 @@ Filosofi: **"Set once, forward everywhere."** Pengguna cukup mengarahkan webhook
 | F4.7 | Hooks page (forwarding rules with active toggle) | P0 |
 | F4.8 | Metrics page (stat cards, throughput chart, pie chart, top sources/targets) | P0 |
 | F4.9 | Settings page (system status, device pairing, MCP setup, env reference) | P0 |
-| F4.10 | Send webhook composer (custom body, source, target override) | P1 |
+| F4.10 | Authenticated admin send composer (provider selection atau custom body/source/target) | P1 |
 | F4.11 | Dark theme data-first design | P0 |
 | F4.12 | Responsive layout (sidebar + topbar) | P1 |
 
