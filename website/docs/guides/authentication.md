@@ -10,6 +10,10 @@ The backend accepts three authentication methods in this order:
 2. A `ts_`-prefixed Bearer API token for the CLI and MCP server.
 3. HTTP Basic authentication for legacy compatibility.
 
+The `trusin` CLI is token-only: it does not provide password login. Running
+`trusin` for the first time asks for an API token and stores it locally; browser
+sign-in remains available through Google, GitHub, or the configured password flow.
+
 Read endpoints are available to both `admin` and `viewer` roles. Rule changes, event retry/acknowledge/delete actions, bulk actions, and default-target changes require an admin.
 
 ## Browser sign-in and workspace creation
@@ -42,11 +46,16 @@ When `TURNSTILE_SECRET_KEY` is set, Turnstile is required before Google, GitHub,
 
 ## API tokens
 
-Create a token from **Settings → API Tokens**. The plaintext token is displayed only once; the server stores a SHA-256 hash. Tokens are organization-scoped and carry explicit scopes: `events:read`, `webhooks:send`, `rules:read`, `rules:write`, or `organization:manage`.
+Create a token from **Settings → Developer → API Tokens**. The plaintext token is displayed only once; the server stores a SHA-256 hash. Tokens are organization-scoped and carry explicit scopes: `events:read`, `webhooks:send`, `rules:read`, `rules:write`, or `organization:manage`.
 
 ```bash
+trusin
+# paste ts_your_token when prompted
+
+# Or configure a device without the interactive prompt:
 trusin set-token ts_your_token
-# or
+
+# Or provide a temporary token for automation:
 export TERUSIN_TOKEN=ts_your_token
 ```
 

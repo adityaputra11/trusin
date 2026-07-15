@@ -14,7 +14,6 @@ serde_json.workspace = true
 reqwest.workspace = true
 clap = { version = "4", features = ["derive", "env"] }
 open = "5"
-base64 = "0.22"
 dirs = "5"
 toml = "0.8"
 keyring = "3"

@@ -23,12 +23,16 @@ curl -fsSL https://download.trusin.my.id/install.sh | TERUSIN_INSTALL="$HOME/.lo
 ```
 
 After installation, create an API token in **Settings → Developer → API Tokens**
-and connect the device:
+and run the CLI:
 
 ```bash
-trusin set-token ts_your_token
-trusin status
+trusin
 ```
+
+On its first run, `trusin` asks for the `ts_...` token, stores it in the OS
+keychain when available, and opens the interactive TUI. The CLI does not use
+your dashboard password. To add or replace a token non-interactively, run
+`trusin set-token ts_your_token`.
 
 If the command is not found after a custom installation, add that directory to
 your shell `PATH`. The installer supports macOS and Linux only; Windows users can
@@ -38,7 +42,7 @@ build the CLI from source.
 
 ```bash
 cargo build --release --bin trusin
-./target/release/trusin set-token ts_your_token
+./target/release/trusin
 ./target/release/trusin status
 ./target/release/trusin events -l 10
 ./target/release/trusin forward --port 3000
@@ -49,7 +53,9 @@ cargo build --release --bin trusin
 
 ## Interactive TUI
 
-`trusin interactive` opens a full-screen terminal dashboard for operators:
+Running `trusin` opens a full-screen terminal dashboard for operators after
+token onboarding. `trusin interactive` remains available when you want to open
+the dashboard explicitly:
 
 - **Overview**: concise health, queue depth, success rate, backend, and auth mode.
 - **Events**: recent events, local search with `/`, details with `Enter`, retry with `x`.

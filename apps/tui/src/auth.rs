@@ -5,17 +5,13 @@
 //   2. OS keychain (macOS Keychain / Linux secret-service)
 //   3. `token` field in config.toml (headless/CI fallback)
 //
-// HTTP Basic (user/password from config.toml) is a legacy fallback used when
-// no token is configured at all.
-
-use base64::Engine;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::io::{self, Write};
 use std::path::PathBuf;
 
-const BACKEND: &str = "http://127.0.0.1:3011";
-const WEB: &str = "http://localhost:3012";
+const BACKEND: &str = "https://api.trusin.my.id";
+const WEB: &str = "https://app.trusin.my.id";
 
 // OS keychain entry name under which the API token is stored (preferred over
 // the plaintext config file). Falls back gracefully on platforms without one.
@@ -29,8 +25,6 @@ fn env_or_default(key: &str, fallback: &str) -> String {
 
 #[derive(Serialize, Deserialize)]
 pub struct Config {
-    pub user: String,
-    pub password: String,
     pub backend: String,
     #[serde(default = "default_web")]
     pub web: String,
@@ -47,8 +41,6 @@ fn default_web() -> String {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            user: env_or_default("TERUSIN_USER", "admin"),
-            password: env_or_default("TERUSIN_PASSWORD", "change-me-in-production"),
             backend: env_or_default("TERUSIN_BACKEND", BACKEND),
             web: env_or_default("TERUSIN_WEB", WEB),
             token: std::env::var("TERUSIN_TOKEN")
@@ -168,23 +160,14 @@ pub fn store_token(cfg: &mut Config, token: &str) -> &'static str {
     }
 }
 
-/// Build a reqwest client that authenticates every request. Prefers a Bearer
-/// API token (from `set-token`); falls back to HTTP Basic (legacy `trusin login`).
+/// Build a reqwest client that authenticates every request with a Bearer API token.
 pub fn auth_client(cfg: &Config) -> Client {
     let mut headers = reqwest::header::HeaderMap::new();
-    if let Some(token) = resolve_token(cfg) {
-        headers.insert(
-            reqwest::header::AUTHORIZATION,
-            format!("Bearer {token}").parse().unwrap(),
-        );
-    } else {
-        let b = base64::engine::general_purpose::STANDARD
-            .encode(format!("{}:{}", cfg.user, cfg.password));
-        headers.insert(
-            reqwest::header::AUTHORIZATION,
-            format!("Basic {b}").parse().unwrap(),
-        );
-    }
+    let token = resolve_token(cfg).expect("authenticated CLI commands require a token");
+    headers.insert(
+        reqwest::header::AUTHORIZATION,
+        format!("Bearer {token}").parse().unwrap(),
+    );
     Client::builder().default_headers(headers).build().unwrap()
 }
 
