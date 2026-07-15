@@ -203,7 +203,11 @@ pub fn auth_client(cfg: &Config) -> Client {
         reqwest::header::AUTHORIZATION,
         format!("Bearer {token}").parse().unwrap(),
     );
-    Client::builder().default_headers(headers).build().unwrap()
+    Client::builder()
+        .default_headers(headers)
+        .timeout(std::time::Duration::from_secs(5))
+        .build()
+        .unwrap()
 }
 
 /// First-run onboarding: ensure the config has a usable token. If none is

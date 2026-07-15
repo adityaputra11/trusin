@@ -1,7 +1,7 @@
 use std::io;
 use std::time::{Duration, Instant};
 
-use crossterm::event::{self, Event as CEvent, KeyCode, KeyEventKind};
+use crossterm::event::{self, Event as CEvent, KeyCode, KeyEventKind, KeyModifiers};
 use crossterm::execute;
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
@@ -235,7 +235,7 @@ pub async fn run(cfg: Config) -> anyhow::Result<()> {
             let CEvent::Key(key) = event::read()? else {
                 continue;
             };
-            if key.kind != KeyEventKind::Press {
+            if key.kind == KeyEventKind::Release {
                 continue;
             }
             if app.editing_search {
@@ -255,7 +255,8 @@ pub async fn run(cfg: Config) -> anyhow::Result<()> {
                 continue;
             }
             match key.code {
-                KeyCode::Char('q') => break Ok(()),
+                KeyCode::Char('q') | KeyCode::Esc => break Ok(()),
+                KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => break Ok(()),
                 KeyCode::Char('r') => app.refresh().await,
                 KeyCode::Char('x') => app.retry_selected().await,
                 KeyCode::Char('o') => {
@@ -275,6 +276,18 @@ pub async fn run(cfg: Config) -> anyhow::Result<()> {
                 }
                 KeyCode::Down => app.selected = app.selected.saturating_add(1),
                 KeyCode::Up => app.selected = app.selected.saturating_sub(1),
+                KeyCode::Right | KeyCode::Tab => {
+                    app.tab = Tab::from_index((app.tab.index() + 1) % Tab::all().len());
+                    app.detail = false;
+                    app.selected = 0;
+                }
+                KeyCode::Left | KeyCode::BackTab => {
+                    app.tab = Tab::from_index(
+                        (app.tab.index() + Tab::all().len() - 1) % Tab::all().len(),
+                    );
+                    app.detail = false;
+                    app.selected = 0;
+                }
                 KeyCode::Char(n @ '1'..='5') => {
                     let index = n.to_digit(10).unwrap_or(1) as usize - 1;
                     app.tab = Tab::from_index(index);
@@ -332,7 +345,7 @@ fn draw(frame: &mut ratatui::Frame, app: &App) {
     }
 
     let help = format!(
-        "1-5 tabs | r refresh | / search | c clear | enter detail | b back | x retry | o open web | q quit    {}",
+        "tab / arrows navigate | / then type to search | r refresh | enter detail | x retry | o dashboard | q quit    {}",
         app.message
     );
     frame.render_widget(
