@@ -86,6 +86,11 @@ struct Event {
 }
 
 #[derive(Deserialize)]
+struct EventList {
+    events: Vec<Event>,
+}
+
+#[derive(Deserialize)]
 struct FwdConfig {
     default_target: String,
 }
@@ -209,8 +214,6 @@ async fn main() {
         }
         return;
     };
-    let client = Client::new();
-
     match command {
         Commands::SetToken { token } => {
             let mut c = cfg;
@@ -283,24 +286,40 @@ async fn main() {
                 }
             };
 
-            auth.post(format!("{}/config/default-target", cfg.backend))
+            let response = auth
+                .post(format!("{}/config/default-target", cfg.backend))
                 .json(&serde_json::json!({"url": target}))
                 .send()
-                .await
-                .ok();
-            println!(" Forwarding webhooks → {target}");
+                .await;
+            match response {
+                Ok(response) if response.status().is_success() => {
+                    println!(" Forwarding webhooks → {target}");
+                }
+                Ok(response) => eprintln!(
+                    " Could not enable forwarding (HTTP {}). Check that your API key has admin access.",
+                    response.status()
+                ),
+                Err(error) => eprintln!(" Could not enable forwarding: {error}"),
+            }
         }
         Commands::Stop => {
             if !ensure_token(&mut cfg) {
                 return;
             }
             let auth = auth_client(&cfg);
-            auth.post(format!("{}/config/default-target", cfg.backend))
+            let response = auth
+                .post(format!("{}/config/default-target", cfg.backend))
                 .json(&serde_json::json!({"url": ""}))
                 .send()
-                .await
-                .ok();
-            println!(" Forwarding stopped");
+                .await;
+            match response {
+                Ok(response) if response.status().is_success() => println!(" Forwarding stopped"),
+                Ok(response) => eprintln!(
+                    " Could not stop forwarding (HTTP {}). Check that your API key has admin access.",
+                    response.status()
+                ),
+                Err(error) => eprintln!(" Could not stop forwarding: {error}"),
+            }
         }
         Commands::Events { limit } => {
             if !ensure_token(&mut cfg) {
@@ -310,7 +329,11 @@ async fn main() {
             let resp = auth.get(format!("{}/events", cfg.backend)).send().await;
             match resp {
                 Ok(r) if r.status().is_success() => {
-                    let events: Vec<Event> = r.json().await.unwrap_or_default();
+                    let events = r
+                        .json::<EventList>()
+                        .await
+                        .map(|page| page.events)
+                        .unwrap_or_default();
                     println!(
                         " {:>8}  {:<10}  {:<10}  {}",
                         "ID", "Status", "Source", "Target"
@@ -326,7 +349,7 @@ async fn main() {
                         );
                     }
                 }
-                Ok(r) => eprintln!("Error: HTTP {}", r.status()),
+                Ok(r) => eprintln!("Could not load events (HTTP {}).", r.status()),
                 Err(e) => eprintln!("Error: {e}"),
             }
         }
@@ -341,7 +364,8 @@ async fn main() {
                 .await;
             match resp {
                 Ok(r) if r.status().is_success() => println!(" Retried {id}"),
-                _ => eprintln!(" Failed to retry {id}"),
+                Ok(r) => eprintln!(" Could not retry {id} (HTTP {}).", r.status()),
+                Err(error) => eprintln!(" Could not retry {id}: {error}"),
             }
         }
         Commands::Listen { port, interval } => {
@@ -404,7 +428,10 @@ async fn main() {
         }
         Commands::Mcp { binary } => run_mcp(&cfg, binary),
         Commands::Status => {
-            let fwd = client
+            if !ensure_token(&mut cfg) {
+                return;
+            }
+            let fwd = auth_client(&cfg)
                 .get(format!("{}/config/default-target", cfg.backend))
                 .send()
                 .await;
