@@ -39,6 +39,9 @@ export interface ForwardRule {
   method: string;
   headers: Record<string, string> | null;
   active: boolean;
+  rule_kind: "provider" | "hook" | string;
+  provider_id: string | null;
+  trigger_on: "success" | "failure" | string;
   signing_secret?: string | null;
   created_at?: string;
 }
@@ -50,6 +53,9 @@ export interface CreateRuleInput {
   method?: string;
   headers?: Record<string, string>;
   signing_secret?: string;
+  rule_kind?: "provider" | "hook";
+  provider_id?: string;
+  trigger_on?: "success" | "failure";
 }
 
 /** Partial update for PATCH /rules/:id. All fields optional. */
@@ -60,6 +66,7 @@ export interface UpdateRuleInput {
   method?: string;
   headers?: Record<string, string>;
   active?: boolean;
+  trigger_on?: "success" | "failure";
   signing_secret?: string;
 }
 
@@ -138,4 +145,101 @@ export interface WorkspaceUser {
   oauth_provider: string | null;
   role: "admin" | "viewer" | string;
   created_at: string;
+}
+
+export interface OrganizationInvite {
+  id: string;
+  email: string;
+  role: "admin" | "viewer" | string;
+  expires_at: string;
+  accepted_at: string | null;
+  revoked_at: string | null;
+  created_at: string;
+}
+
+export interface OrganizationDomain {
+  id: string;
+  hostname: string;
+  verification_token: string;
+  status: "pending" | "verified" | "active" | "failed";
+  verified_at: string | null;
+  created_at: string;
+}
+
+export interface OrganizationSubscription {
+  organization: {
+    id: string;
+    name: string;
+    slug: string;
+    plan_code: string;
+    subscription_status: string;
+    billing_period_start: string;
+    billing_period_end: string;
+  };
+  hosted: boolean;
+  ingest_canonical_host: string;
+  usage: {
+    period_start: string;
+    period_end: string;
+    events_accepted: number;
+    domains: number;
+    providers: number;
+    api_keys: number;
+    users: number;
+  };
+  limits: {
+    events: number | null;
+    domains: number | null;
+    providers: number | null;
+    api_keys: number | null;
+    users: number | null;
+    retention_days: number | null;
+  };
+}
+
+export interface PlatformOverview {
+  period_start: string;
+  organizations: number;
+  active_organizations: number;
+  accepted_events: number;
+  queued_events: number;
+  retrying_events: number;
+  failed_events_24h: number;
+  active_domains: number;
+}
+
+export interface PlatformOrganization {
+  id: string;
+  name: string;
+  slug: string;
+  subscriber_name: string;
+  billing_contact_name: string;
+  billing_contact_email: string;
+  plan_code: string;
+  subscription_status: string;
+  billing_period_start: string;
+  billing_period_end: string;
+  created_at: string;
+  events_accepted: number;
+  active_domains: number;
+  active_api_keys: number;
+  queued_events: number;
+  retrying_events: number;
+  last_activity_at: string | null;
+}
+
+export interface PlatformOrganizationDetail {
+  organization: PlatformOrganization;
+  health_24h: { total: number; delivered: number; failed: number; in_flight: number };
+  users: Array<{ id: string; username: string | null; email: string | null; role: string; created_at: string }>;
+  domains: Array<{ id: string; hostname: string; status: string; verified_at: string | null }>;
+  api_keys: Array<{ id: string; name: string; scopes: string[]; last_used_at: string | null; created_at: string }>;
+}
+
+export interface PlatformOrganizationList {
+  organizations: PlatformOrganization[];
+  total: number;
+  page: number;
+  per_page: number;
+  pages: number;
 }

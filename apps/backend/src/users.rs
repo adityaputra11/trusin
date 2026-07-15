@@ -10,7 +10,7 @@ use serde_json::json;
 use uuid::Uuid;
 
 use crate::auth;
-use crate::middleware::require_admin;
+use crate::middleware::{require_admin, require_scope};
 use crate::state::AppState;
 
 #[derive(Debug, Serialize, sqlx::FromRow)]
@@ -35,12 +35,15 @@ pub async fn list_users(
     axum::Extension(cu): axum::Extension<auth::CurrentUser>,
 ) -> Result<Json<Vec<WorkspaceUser>>, StatusCode> {
     require_admin(&cu)?;
+    require_scope(&cu, "organization:manage")?;
     let users = sqlx::query_as::<_, WorkspaceUser>(
         r#"SELECT id, username, email, display_name, avatar_url,
                   oauth_provider, role, created_at
            FROM users
+           WHERE organization_id = $1
            ORDER BY created_at ASC"#,
     )
+    .bind(cu.organization_id)
     .fetch_all(&state.db)
     .await
     .map_err(|e| {
@@ -57,12 +60,14 @@ pub async fn update_user_role(
     Json(input): Json<UpdateRole>,
 ) -> Result<Json<WorkspaceUser>, StatusCode> {
     require_admin(&cu)?;
+    require_scope(&cu, "organization:manage")?;
     let role = input.role.trim();
     if role != "admin" && role != "viewer" {
         return Err(StatusCode::BAD_REQUEST);
     }
 
-    let admin_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM users WHERE role = 'admin'")
+    let admin_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM users WHERE organization_id = $1 AND role = 'admin'")
+        .bind(cu.organization_id)
         .fetch_one(&state.db)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
@@ -72,12 +77,13 @@ pub async fn update_user_role(
 
     let user = sqlx::query_as::<_, WorkspaceUser>(
         r#"UPDATE users SET role = $2
-           WHERE id = $1
+           WHERE id = $1 AND organization_id = $3
            RETURNING id, username, email, display_name, avatar_url,
                      oauth_provider, role, created_at"#,
     )
     .bind(id)
     .bind(role)
+    .bind(cu.organization_id)
     .fetch_optional(&state.db)
     .await
     .map_err(|e| {

@@ -8,7 +8,7 @@ use axum::Json;
 use serde::Deserialize;
 
 use crate::auth;
-use crate::middleware::require_admin;
+use crate::middleware::{require_admin, require_scope};
 use crate::state::AppState;
 
 #[derive(Deserialize)]
@@ -24,7 +24,13 @@ pub async fn set_default_target(
     Json(input): Json<SetTarget>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     require_admin(&cu)?;
-    *state.default_target.lock().unwrap() = input.url.clone();
+    require_scope(&cu, "organization:manage")?;
+    sqlx::query("UPDATE organizations SET default_target_url = $1 WHERE id = $2")
+        .bind(&input.url)
+        .bind(cu.organization_id)
+        .execute(&state.db)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     crate::audit::record(
         &state,
         Some(&cu),
@@ -37,9 +43,12 @@ pub async fn set_default_target(
     Ok(Json(serde_json::json!({"default_target": input.url})))
 }
 
-pub async fn get_default_target(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
-    let t = state.default_target.lock().unwrap().clone();
-    Json(serde_json::json!({"default_target": t}))
+pub async fn get_default_target(
+    State(state): State<Arc<AppState>>,
+    axum::Extension(cu): axum::Extension<auth::CurrentUser>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let target = crate::organizations::default_target_for(&state.db, cu.organization_id).await?;
+    Ok(Json(serde_json::json!({"default_target": target})))
 }
 
 pub async fn health() -> Json<serde_json::Value> {

@@ -9,8 +9,9 @@ use chrono::Utc;
 use serde::Deserialize;
 use serde_json::{json, Value};
 
+use crate::auth;
+use crate::middleware::require_scope;
 use crate::state::AppState;
-use crate::workers::{QUEUE_KEY, RETRY_KEY};
 
 #[derive(Deserialize, Default)]
 pub struct MetricsQuery {
@@ -20,8 +21,10 @@ pub struct MetricsQuery {
 
 pub async fn metrics(
     State(state): State<Arc<AppState>>,
+    axum::Extension(cu): axum::Extension<auth::CurrentUser>,
     Query(q): Query<MetricsQuery>,
 ) -> Result<Json<Value>, StatusCode> {
+    require_scope(&cu, "events:read")?;
     let hours = match q.range.as_deref() {
         Some("7d") => 24 * 7,
         Some("30d") => 24 * 30,
@@ -31,8 +34,9 @@ pub async fn metrics(
 
     // Status totals within the window.
     let totals: Vec<(String, i64)> = sqlx::query_as(
-        "SELECT status, COUNT(*) FROM webhook_events WHERE created_at >= $1 GROUP BY status",
+        "SELECT status, COUNT(*) FROM webhook_events WHERE organization_id = $1 AND created_at >= $2 GROUP BY status",
     )
+    .bind(cu.organization_id)
     .bind(since)
     .fetch_all(&state.db)
     .await
@@ -58,9 +62,10 @@ pub async fn metrics(
     let trunc = if hours <= 24 { "hour" } else { "day" };
     let series_sql = format!(
         "SELECT date_trunc('{trunc}', created_at) AS bucket, COUNT(*) AS n \
-         FROM webhook_events WHERE created_at >= $1 GROUP BY bucket ORDER BY bucket ASC"
+         FROM webhook_events WHERE organization_id = $1 AND created_at >= $2 GROUP BY bucket ORDER BY bucket ASC"
     );
     let series: Vec<(chrono::NaiveDateTime, i64)> = sqlx::query_as(&series_sql)
+        .bind(cu.organization_id)
         .bind(since)
         .fetch_all(&state.db)
         .await
@@ -72,34 +77,40 @@ pub async fn metrics(
 
     // Top 5 sources and targets by count in the window.
     let top_sources: Vec<(String, i64)> = sqlx::query_as(
-        "SELECT source, COUNT(*) n FROM webhook_events WHERE created_at >= $1 \
+        "SELECT source, COUNT(*) n FROM webhook_events WHERE organization_id = $1 AND created_at >= $2 \
          GROUP BY source ORDER BY n DESC LIMIT 5",
     )
+    .bind(cu.organization_id)
     .bind(since)
     .fetch_all(&state.db)
     .await
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let top_targets: Vec<(String, i64)> = sqlx::query_as(
-        "SELECT target_url, COUNT(*) n FROM webhook_events WHERE created_at >= $1 \
+        "SELECT target_url, COUNT(*) n FROM webhook_events WHERE organization_id = $1 AND created_at >= $2 \
          GROUP BY target_url ORDER BY n DESC LIMIT 5",
     )
+    .bind(cu.organization_id)
     .bind(since)
     .fetch_all(&state.db)
     .await
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    // Queue depth (best-effort; ignore Redis errors).
-    let mut conn = state.redis.clone();
-    let queue_depth: i64 = redis::cmd("LLEN")
-        .arg(QUEUE_KEY)
-        .query_async(&mut conn)
-        .await
-        .unwrap_or(0);
-    let retry_depth: i64 = redis::cmd("ZCARD")
-        .arg(RETRY_KEY)
-        .query_async(&mut conn)
-        .await
-        .unwrap_or(0);
+    // Redis queues are shared by all tenants, so expose tenant-scoped depth
+    // derived from persisted event state instead of global Redis cardinality.
+    let queue_depth: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM webhook_events WHERE organization_id = $1 AND status = 'queued'",
+    )
+    .bind(cu.organization_id)
+    .fetch_one(&state.db)
+    .await
+    .unwrap_or(0);
+    let retry_depth: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM webhook_events WHERE organization_id = $1 AND status = 'retrying'",
+    )
+    .bind(cu.organization_id)
+    .fetch_one(&state.db)
+    .await
+    .unwrap_or(0);
 
     Ok(Json(json!({
         "range_hours": hours,

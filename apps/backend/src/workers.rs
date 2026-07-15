@@ -18,6 +18,16 @@ pub const QUEUE_KEY: &str = "terusin:queue";
 /// Redis sorted set of retrying event ids, scored by their due timestamp.
 pub const RETRY_KEY: &str = "terusin:retry";
 
+fn is_retryable_status(status: i32) -> bool {
+    status == 408 || status == 429 || status >= 500
+}
+
+/// `retry_count` counts scheduled retries, not the initial delivery. The first
+/// retry is delayed by 10 seconds, then 20, 40, and so on.
+fn retry_delay_secs(retry_count: i32) -> u64 {
+    10 * 2u64.saturating_pow(retry_count.saturating_sub(1) as u32)
+}
+
 /// Compute `sha256=<hex>` HMAC-SHA256 signature of the request body bytes.
 /// Receivers verify by recomputing over the raw body using the shared secret.
 fn sign_body(secret: &str, body: &[u8]) -> String {
@@ -55,8 +65,8 @@ async fn record_attempt(
 ) {
     let _ = sqlx::query(
         r#"INSERT INTO delivery_attempts
-           (event_id, attempt_number, status, http_status, response_headers, response_body, error, duration_ms)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)"#,
+           (organization_id, event_id, attempt_number, status, http_status, response_headers, response_body, error, duration_ms)
+           VALUES ((SELECT organization_id FROM webhook_events WHERE id = $1), $1, $2, $3, $4, $5, $6, $7, $8)"#,
     )
     .bind(event_id)
     .bind(attempt_number)
@@ -109,6 +119,7 @@ pub async fn worker(db: sqlx::PgPool, mut redis: ConnectionManager, max_retries:
                 .execute(&db)
                 .await
                 .ok();
+            forward_to_rules(&db, &event, &client, "failure", None).await;
             continue;
         }
 
@@ -172,7 +183,31 @@ pub async fn worker(db: sqlx::PgPool, mut redis: ConnectionManager, max_retries:
                     .bind(status).bind(&resp_h).bind(&resp_b).bind(id)
                     .execute(&db).await.ok();
                     info!("delivered {id} -> {} ({})", event.target_url, status);
-                    forward_to_rules(&db, &event, &client).await;
+                    forward_to_rules(&db, &event, &client, "success", Some(status)).await;
+                } else if is_retryable_status(status) && event.retry_count < max_retries {
+                    let retry_count = event.retry_count + 1;
+                    record_attempt(
+                        &db,
+                        id,
+                        attempt_number,
+                        "retrying",
+                        Some(status),
+                        Some(&resp_h),
+                        resp_b_ref,
+                        None,
+                        duration_ms,
+                    )
+                    .await;
+                    sqlx::query(
+                        "UPDATE webhook_events SET status = 'retrying', retry_count = $1, response_status = $2, response_headers = $3, response_body = $4 WHERE id = $5 AND status != 'delivered'",
+                    )
+                    .bind(retry_count).bind(status).bind(&resp_h).bind(&resp_b).bind(id)
+                    .execute(&db).await.ok();
+                    let delay = retry_delay_secs(retry_count);
+                    let retry_at = Utc::now().timestamp() + delay as i64;
+                    redis::cmd("ZADD").arg(RETRY_KEY).arg(retry_at).arg(id.to_string())
+                        .query_async::<()>(&mut redis).await.ok();
+                    info!("queued {id} for retry #{retry_count} in {delay}s");
                 } else {
                     record_attempt(
                         &db,
@@ -192,6 +227,7 @@ pub async fn worker(db: sqlx::PgPool, mut redis: ConnectionManager, max_retries:
                     .bind(status).bind(&resp_h).bind(&resp_b).bind(id)
                     .execute(&db).await.ok();
                     tracing::warn!("failed {id} -> {} ({})", event.target_url, status);
+                    forward_to_rules(&db, &event, &client, "failure", Some(status)).await;
                 }
             }
             Err(e) => {
@@ -200,7 +236,7 @@ pub async fn worker(db: sqlx::PgPool, mut redis: ConnectionManager, max_retries:
                 }
                 let err_msg = e.to_string();
                 let retry_count = event.retry_count + 1;
-                if retry_count > max_retries {
+                if event.retry_count >= max_retries {
                     record_attempt(
                         &db,
                         id,
@@ -216,9 +252,10 @@ pub async fn worker(db: sqlx::PgPool, mut redis: ConnectionManager, max_retries:
                     sqlx::query(
                         "UPDATE webhook_events SET status = 'failed', retry_count = $1 WHERE id = $2 AND status != 'delivered'",
                     )
-                    .bind(retry_count).bind(id)
+                    .bind(event.retry_count).bind(id)
                     .execute(&db).await.ok();
-                    tracing::warn!("failed {id} after {retry_count} attempts");
+                    tracing::warn!("failed {id} after {attempt_number} attempts");
+                    forward_to_rules(&db, &event, &client, "failure", None).await;
                 } else {
                     record_attempt(
                         &db,
@@ -237,7 +274,7 @@ pub async fn worker(db: sqlx::PgPool, mut redis: ConnectionManager, max_retries:
                     )
                     .bind(retry_count).bind(id)
                     .execute(&db).await.ok();
-                    let delay = 10 * 2u64.pow(retry_count as u32);
+                    let delay = retry_delay_secs(retry_count);
                     let retry_at = Utc::now().timestamp() as i64 + delay as i64;
                     redis::cmd("ZADD")
                         .arg(RETRY_KEY)
@@ -361,7 +398,35 @@ pub async fn retry_worker(db: sqlx::PgPool, mut redis: ConnectionManager) {
                             .bind(status).bind(&resp_h).bind(&resp_b).bind(id)
                             .execute(&db).await.ok();
                             info!("retry delivered {id}");
-                            forward_to_rules(&db, &event, &client).await;
+                            forward_to_rules(&db, &event, &client, "success", Some(status)).await;
+                        } else if is_retryable_status(status) && event.retry_count < event.max_retries {
+                            let retry_count = event.retry_count + 1;
+                            record_attempt(
+                                &db,
+                                id,
+                                attempt_number,
+                                "retrying",
+                                Some(status),
+                                Some(&resp_h),
+                                resp_b_ref,
+                                None,
+                                duration_ms,
+                            )
+                            .await;
+                            sqlx::query(
+                                "UPDATE webhook_events SET status = 'retrying', retry_count = $1, response_status = $2, response_headers = $3, response_body = $4 WHERE id = $5 AND status != 'delivered'",
+                            )
+                            .bind(retry_count).bind(status).bind(&resp_h).bind(&resp_b).bind(id)
+                            .execute(&db).await.ok();
+                            let delay = retry_delay_secs(retry_count);
+                            let retry_at = Utc::now().timestamp() + delay as i64;
+                            redis::cmd("ZADD")
+                                .arg(RETRY_KEY)
+                                .arg(retry_at)
+                                .arg(id.to_string())
+                                .query_async::<()>(&mut redis)
+                                .await
+                                .ok();
                         } else {
                             record_attempt(
                                 &db,
@@ -375,34 +440,19 @@ pub async fn retry_worker(db: sqlx::PgPool, mut redis: ConnectionManager) {
                                 duration_ms,
                             )
                             .await;
-                            let retry_count = event.retry_count + 1;
-                            if retry_count > event.max_retries {
-                                sqlx::query(
-                                    "UPDATE webhook_events SET status = 'failed', retry_count = $1 WHERE id = $2 AND status != 'delivered'",
-                                )
-                                .bind(retry_count)
-                                .bind(id)
-                                .execute(&db)
-                                .await
-                                .ok();
-                                tracing::warn!("retry failed {id} after {retry_count} attempts");
-                            } else {
-                                let delay = 10 * 2u64.pow(retry_count as u32);
-                                let retry_at = Utc::now().timestamp() as i64 + delay as i64;
-                                redis::cmd("ZADD")
-                                    .arg(RETRY_KEY)
-                                    .arg(retry_at)
-                                    .arg(id.to_string())
-                                    .query_async::<()>(&mut redis)
-                                    .await
-                                    .ok();
-                            }
+                            sqlx::query(
+                                "UPDATE webhook_events SET status = 'failed', response_status = $1, response_headers = $2, response_body = $3 WHERE id = $4 AND status != 'delivered'",
+                            )
+                            .bind(status).bind(&resp_h).bind(&resp_b).bind(id)
+                            .execute(&db).await.ok();
+                            tracing::warn!("retry failed {id} after {attempt_number} attempts");
+                            forward_to_rules(&db, &event, &client, "failure", Some(status)).await;
                         }
                     }
                     Err(e) => {
                         let err_msg = e.to_string();
                         let retry_count = event.retry_count + 1;
-                        if retry_count > event.max_retries {
+                        if event.retry_count >= event.max_retries {
                             record_attempt(
                                 &db,
                                 id,
@@ -418,12 +468,13 @@ pub async fn retry_worker(db: sqlx::PgPool, mut redis: ConnectionManager) {
                             sqlx::query(
                                 "UPDATE webhook_events SET status = 'failed', retry_count = $1 WHERE id = $2 AND status != 'delivered'",
                             )
-                            .bind(retry_count)
+                            .bind(event.retry_count)
                             .bind(id)
                             .execute(&db)
                             .await
                             .ok();
-                            tracing::warn!("retry failed {id} after {retry_count} attempts");
+                            tracing::warn!("retry failed {id} after {attempt_number} attempts");
+                            forward_to_rules(&db, &event, &client, "failure", None).await;
                         } else {
                             record_attempt(
                                 &db,
@@ -437,7 +488,15 @@ pub async fn retry_worker(db: sqlx::PgPool, mut redis: ConnectionManager) {
                                 duration_ms,
                             )
                             .await;
-                            let delay = 10 * 2u64.pow(retry_count as u32);
+                            sqlx::query(
+                                "UPDATE webhook_events SET status = 'retrying', retry_count = $1 WHERE id = $2 AND status != 'delivered'",
+                            )
+                            .bind(retry_count)
+                            .bind(id)
+                            .execute(&db)
+                            .await
+                            .ok();
+                            let delay = retry_delay_secs(retry_count);
                             let retry_at = Utc::now().timestamp() as i64 + delay as i64;
                             redis::cmd("ZADD")
                                 .arg(RETRY_KEY)
@@ -457,10 +516,6 @@ pub async fn retry_worker(db: sqlx::PgPool, mut redis: ConnectionManager) {
     }
 }
 
-async fn rule_matches(source: &str, event: &WebhookEvent) -> bool {
-    source == "*" || source == &event.source
-}
-
 /// Build an outbound request honoring the rule's `method`, custom `headers`,
 /// and optional HMAC `signing_secret`. When a secret is present, an
 /// `X-Terusin-Signature: sha256=<hex>` header is added over the body bytes.
@@ -468,6 +523,8 @@ fn build_rule_request(
     client: &reqwest::Client,
     rule: &ForwardRule,
     body: &serde_json::Value,
+    delivery_status: &str,
+    response_status: Option<i32>,
 ) -> reqwest::RequestBuilder {
     let method = match rule.method.to_uppercase().as_str() {
         "GET" => reqwest::Method::GET,
@@ -495,20 +552,42 @@ fn build_rule_request(
             req = req.header("X-Terusin-Signature", sign_body(secret, &body_bytes));
         }
     }
+    req = req.header("X-Terusin-Delivery-Status", delivery_status);
+    if let Some(status) = response_status {
+        req = req.header("X-Terusin-Response-Status", status.to_string());
+    }
     req
 }
 
-async fn forward_to_rules(db: &sqlx::PgPool, event: &WebhookEvent, client: &reqwest::Client) {
-    let rules = sqlx::query_as::<_, ForwardRule>("SELECT * FROM forward_rules WHERE active = true")
+async fn forward_to_rules(
+    db: &sqlx::PgPool,
+    event: &WebhookEvent,
+    client: &reqwest::Client,
+    trigger_on: &str,
+    response_status: Option<i32>,
+) {
+    let rules = sqlx::query_as::<_, ForwardRule>(
+        r#"SELECT hook.*
+           FROM forward_rules AS hook
+           JOIN forward_rules AS provider ON provider.id = hook.provider_id
+           WHERE hook.organization_id = $1
+             AND hook.rule_kind = 'hook'
+             AND hook.active = true
+             AND hook.trigger_on = $2
+             AND provider.rule_kind = 'provider'
+             AND provider.active = true
+             AND provider.source_pattern = $3"#,
+    )
+        .bind(event.organization_id)
+        .bind(trigger_on)
+        .bind(&event.source)
         .fetch_all(db)
         .await
         .unwrap_or_default();
 
     for rule in rules {
-        if !rule_matches(&rule.source_pattern, event).await {
-            continue;
-        }
-        let req = build_rule_request(client, &rule, &event.body);
+        let delivery_status = if trigger_on == "success" { "delivered" } else { "failed" };
+        let req = build_rule_request(client, &rule, &event.body, delivery_status, response_status);
         let res = req.send().await;
         if let Ok(r) = res {
             tracing::info!("hook {} -> {}: {}", rule.name, rule.target_url, r.status());

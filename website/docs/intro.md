@@ -3,9 +3,9 @@ sidebar_position: 1
 title: Selamat datang
 ---
 
-# Terusin
+# trusin
 
-Terusin adalah webhook relay self-hosted untuk tim yang butuh delivery andal, audit trail, dashboard operasional, CLI/TUI, MCP, dan kontrol penuh atas data webhook. Ia menerima request dari provider, menyimpan event di Postgres, memasukkan ID event ke antrean Redis, lalu worker meneruskannya ke endpoint tujuan.
+trusin adalah webhook relay self-hosted untuk tim yang butuh delivery andal, audit trail, dashboard operasional, CLI/TUI, MCP, dan kontrol penuh atas data webhook. Ia menerima request dari provider, menyimpan event di Postgres, memasukkan ID event ke antrean Redis, lalu worker meneruskannya ke endpoint tujuan.
 
 ## Quick start
 
@@ -31,7 +31,6 @@ Untuk production, aktifkan Google OAuth dan gunakan API token untuk CLI/TUI/MCP.
 ```bash
 curl -X POST http://localhost:3011/github/webhook \
   -H 'content-type: application/json' \
-  -H 'x-target-url: http://localhost:3000/webhook' \
   -d '{"action":"ping"}'
 ```
 

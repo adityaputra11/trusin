@@ -1,7 +1,1 @@
-<svg width="64" height="64" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
-  <defs><linearGradient id="g" x1="10" y1="8" x2="54" y2="56" gradientUnits="userSpaceOnUse"><stop stop-color="#76F2A3"/><stop offset="1" stop-color="#35C86C"/></linearGradient></defs>
-  <rect x="1" y="1" width="62" height="62" rx="15" fill="#0B0F0C" stroke="#28342C" stroke-width="2"/>
-  <path d="M15 20H42C46.4 20 50 23.6 50 28S46.4 36 42 36H35" stroke="url(#g)" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
-  <path d="M32 21V48M42 29L49 36L42 43" stroke="url(#g)" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
-  <circle cx="15" cy="20" r="3.5" fill="#76F2A3"/>
-</svg>
+<svg width="64" height="64" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="trusin"><image href="icon-trusin.png" width="64" height="64" preserveAspectRatio="xMidYMid slice"/></svg>

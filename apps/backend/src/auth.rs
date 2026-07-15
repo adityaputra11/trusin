@@ -34,7 +34,12 @@ use crate::{AppState, User};
 #[derive(Debug, Clone)]
 pub struct CurrentUser {
     pub id: Uuid,
+    pub organization_id: Uuid,
     pub role: String,
+    pub scopes: Vec<String>,
+    /// Only password/cookie sessions can carry this server-side privilege.
+    /// Bearer API keys deliberately never inherit platform access.
+    pub is_platform_operator: bool,
 }
 
 /// Cloudflare Turnstile verification.
@@ -104,10 +109,14 @@ impl OAuthConfig {
         if client_id.is_empty() || client_secret.is_empty() {
             return None;
         }
+        let app_url = std::env::var("APP_URL")
+            .or_else(|_| std::env::var("FRONTEND_URL"))
+            .unwrap_or_else(|_| "http://localhost:5173".to_string())
+            .trim_end_matches('/')
+            .to_string();
         let redirect_uri = std::env::var("OAUTH_REDIRECT_URI")
-            .unwrap_or_else(|_| "http://localhost:5173/api/auth/callback/google".to_string());
-        let frontend_url =
-            std::env::var("FRONTEND_URL").unwrap_or_else(|_| "http://localhost:5173".to_string());
+            .unwrap_or_else(|_| format!("{app_url}/api/auth/callback/google"));
+        let frontend_url = std::env::var("FRONTEND_URL").unwrap_or(app_url);
         let jwt_secret = std::env::var("JWT_SECRET").unwrap_or_else(|_| {
             tracing::warn!("JWT_SECRET not set — using insecure default. Set it in production!");
             "dev-insecure-secret-change-me".to_string()
@@ -201,6 +210,7 @@ fn hex_encode(bytes: &[u8]) -> String {
 pub struct ApiTokenInfo {
     pub id: Uuid,
     pub name: String,
+    pub scopes: Vec<String>,
     pub last_used_at: Option<chrono::DateTime<chrono::Utc>>,
     pub created_at: chrono::DateTime<chrono::Utc>,
 }
@@ -258,16 +268,33 @@ pub struct GoogleUserInfo {
 
 // ── Endpoint: GET /api/auth/google ────────────────────────────────────────
 
-pub async fn google_login(State(state): State<Arc<AppState>>) -> Response {
+#[derive(Debug, Deserialize)]
+pub struct GoogleLoginQuery {
+    pub invite: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Default)]
+struct OAuthState {
+    invite_token: Option<String>,
+}
+
+pub async fn google_login(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<GoogleLoginQuery>,
+) -> Response {
     let Some(cfg) = state.oauth.as_ref() else {
         return not_configured();
     };
     let oauth_state = generate_oauth_state();
     let mut redis = state.redis.clone();
+    let stored_state = serde_json::to_string(&OAuthState {
+        invite_token: query.invite.filter(|token| !token.trim().is_empty()),
+    })
+    .unwrap_or_else(|_| "{}".to_string());
     let stored = redis::cmd("SETEX")
         .arg(format!("terusin:oauth:state:{oauth_state}"))
         .arg(600)
-        .arg("1")
+        .arg(stored_state)
         .query_async::<()>(&mut redis)
         .await;
     if let Err(e) = stored {
@@ -332,9 +359,10 @@ pub async fn google_callback(
         .query_async(&mut redis)
         .await
         .ok();
-    if valid_state.is_none() {
+    let Some(valid_state) = valid_state else {
         return oauth_error(&cfg, "Google login expired. Please try again.");
-    }
+    };
+    let oauth_state = serde_json::from_str::<OAuthState>(&valid_state).unwrap_or_default();
     let _ = redis::cmd("DEL")
         .arg(&key)
         .query_async::<()>(&mut redis)
@@ -406,8 +434,14 @@ pub async fn google_callback(
     }
 
     // 3. Upsert user row.
-    let user = match upsert_oauth_user(&state.db, &user_info).await {
+    let user = match upsert_oauth_user(&state.db, &user_info, oauth_state.invite_token.as_deref()).await {
         Ok(u) => u,
+        Err(sqlx::Error::RowNotFound) => {
+            return oauth_error(
+                &cfg,
+                "This invitation is invalid, expired, or belongs to a different Google account.",
+            );
+        }
         Err(e) => {
             tracing::error!("upsert oauth user: {e}");
             return oauth_error(&cfg, "Could not save your account.");
@@ -430,7 +464,10 @@ pub async fn google_callback(
         &state,
         Some(&CurrentUser {
             id: user.id,
+            organization_id: user.organization_id,
             role: user.role.clone(),
+            scopes: vec![],
+            is_platform_operator: user.is_platform_operator,
         }),
         "auth.google_login",
         "user",
@@ -438,11 +475,36 @@ pub async fn google_callback(
         serde_json::json!({ "email": user.email }),
     )
     .await;
+    if oauth_state.invite_token.is_some() {
+        crate::audit::record(
+            &state,
+            Some(&CurrentUser {
+                id: user.id,
+                organization_id: user.organization_id,
+                role: user.role.clone(),
+                scopes: vec![],
+                is_platform_operator: user.is_platform_operator,
+            }),
+            "invite.accepted",
+            "invite",
+            None,
+            serde_json::json!({ "email": user.email }),
+        )
+        .await;
+    }
     res
 }
 
 /// Insert-or-update the user row for a Google subject. Returns the user.
-async fn upsert_oauth_user(db: &PgPool, info: &GoogleUserInfo) -> Result<User, sqlx::Error> {
+async fn upsert_oauth_user(
+    db: &PgPool,
+    info: &GoogleUserInfo,
+    invite_token: Option<&str>,
+) -> Result<User, sqlx::Error> {
+    let invite = match invite_token {
+        Some(token) => crate::invites::invite_for_token(db, token, &info.email).await?,
+        None => None,
+    };
     // Try to find an existing OAuth user with this provider+subject.
     if let Some(existing) = sqlx::query_as::<_, User>(
         "SELECT * FROM users WHERE oauth_provider = 'google' AND oauth_subject = $1",
@@ -451,6 +513,11 @@ async fn upsert_oauth_user(db: &PgPool, info: &GoogleUserInfo) -> Result<User, s
     .fetch_optional(db)
     .await?
     {
+        if let Some((_, _, organization_id)) = invite.as_ref() {
+            if existing.organization_id != *organization_id {
+                return Err(sqlx::Error::RowNotFound);
+            }
+        }
         // Refresh display info (name/picture/email can change on Google side).
         sqlx::query(
             r#"UPDATE users SET email = $1, display_name = $2, avatar_url = $3
@@ -462,6 +529,12 @@ async fn upsert_oauth_user(db: &PgPool, info: &GoogleUserInfo) -> Result<User, s
         .bind(existing.id)
         .execute(db)
         .await?;
+        if let Some((invite_id, _, _)) = invite {
+            sqlx::query("UPDATE organization_invites SET accepted_at = NOW() WHERE id = $1")
+                .bind(invite_id)
+                .execute(db)
+                .await?;
+        }
         return sqlx::query_as::<_, User>("SELECT * FROM users WHERE id = $1")
             .bind(existing.id)
             .fetch_one(db)
@@ -472,8 +545,13 @@ async fn upsert_oauth_user(db: &PgPool, info: &GoogleUserInfo) -> Result<User, s
     if let Some(existing) = sqlx::query_as::<_, User>("SELECT * FROM users WHERE email = $1")
         .bind(&info.email)
         .fetch_optional(db)
-        .await?
+    .await?
     {
+        if let Some((_, _, organization_id)) = invite.as_ref() {
+            if existing.organization_id != *organization_id {
+                return Err(sqlx::Error::RowNotFound);
+            }
+        }
         sqlx::query(
             r#"UPDATE users SET oauth_provider = 'google', oauth_subject = $1,
                display_name = COALESCE(display_name, $2),
@@ -486,67 +564,83 @@ async fn upsert_oauth_user(db: &PgPool, info: &GoogleUserInfo) -> Result<User, s
         .bind(existing.id)
         .execute(db)
         .await?;
+        if let Some((invite_id, _, _)) = invite {
+            sqlx::query("UPDATE organization_invites SET accepted_at = NOW() WHERE id = $1")
+                .bind(invite_id)
+                .execute(db)
+                .await?;
+        }
         return sqlx::query_as::<_, User>("SELECT * FROM users WHERE id = $1")
             .bind(existing.id)
             .fetch_one(db)
             .await;
     }
 
-    // Otherwise create a new account with role 'viewer'.
-    let username = derive_username(db, &info.email).await?;
-    sqlx::query(
-        r#"INSERT INTO users
-             (id, username, role, email, display_name, avatar_url, oauth_provider, oauth_subject)
-           VALUES ($1, $2, 'viewer', $3, $4, $5, 'google', $6)"#,
-    )
-    .bind(Uuid::new_v4())
-    .bind(&username)
-    .bind(&info.email)
-    .bind(info.name.as_deref().unwrap_or(&info.email))
-    .bind(info.picture.as_deref())
-    .bind(&info.sub)
-    .execute(db)
-    .await?;
+    if let Some((invite_id, role, organization_id)) = invite {
+        let mut transaction = db.begin().await?;
+        let user = sqlx::query_as::<_, User>(
+            r#"INSERT INTO users (id, organization_id, role, email, display_name, avatar_url, oauth_provider, oauth_subject)
+               VALUES ($1, $2, $3, $4, $5, $6, 'google', $7)
+               RETURNING *"#,
+        )
+        .bind(Uuid::new_v4())
+        .bind(organization_id)
+        .bind(role)
+        .bind(&info.email)
+        .bind(info.name.as_deref().unwrap_or(&info.email))
+        .bind(info.picture.as_deref())
+        .bind(&info.sub)
+        .fetch_one(&mut *transaction)
+        .await?;
+        let accepted = sqlx::query(
+            "UPDATE organization_invites SET accepted_at = NOW() WHERE id = $1 AND accepted_at IS NULL AND revoked_at IS NULL AND expires_at > NOW()",
+        )
+        .bind(invite_id)
+        .execute(&mut *transaction)
+        .await?;
+        if accepted.rows_affected() != 1 {
+            return Err(sqlx::Error::RowNotFound);
+        }
+        transaction.commit().await?;
+        return Ok(user);
+    }
 
-    sqlx::query_as::<_, User>(
-        "SELECT * FROM users WHERE oauth_provider = 'google' AND oauth_subject = $1",
-    )
-    .bind(&info.sub)
-    .fetch_one(db)
-    .await
-}
-
-/// Derive a unique username from the email local-part, suffixing -2, -3, etc.
-async fn derive_username(db: &PgPool, email: &str) -> Result<String, sqlx::Error> {
-    let base = email
+    let display_name = info.name.as_deref().unwrap_or(&info.email).trim();
+    let workspace_name = format!("{}'s workspace", display_name);
+    let base_slug: String = info
+        .email
         .split('@')
         .next()
-        .filter(|s| !s.is_empty())
-        .unwrap_or("user")
+        .unwrap_or("workspace")
         .chars()
-        .map(|c| {
-            if c.is_alphanumeric() || c == '_' {
-                c
-            } else {
-                '_'
-            }
-        })
-        .collect::<String>();
-    let base = base[..base.len().min(32)].to_string();
-
-    let mut candidate = base.clone();
-    let mut n = 1;
-    loop {
-        let taken = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM users WHERE username = $1")
-            .bind(&candidate)
-            .fetch_one(db)
-            .await?;
-        if taken == 0 {
-            return Ok(candidate);
-        }
-        n += 1;
-        candidate = format!("{base}-{n}");
-    }
+        .map(|character| if character.is_ascii_alphanumeric() { character.to_ascii_lowercase() } else { '-' })
+        .collect();
+    let slug = format!("{}-{}", base_slug.trim_matches('-').chars().take(60).collect::<String>(), Uuid::new_v4().simple());
+    let mut transaction = db.begin().await?;
+    let organization_id: Uuid = sqlx::query_scalar(
+        r#"INSERT INTO organizations (name, slug, plan_code, subscription_status, subscriber_name, billing_contact_name, billing_contact_email)
+           VALUES ($1, $2, 'free', 'active', $1, $3, $4) RETURNING id"#,
+    )
+    .bind(workspace_name)
+    .bind(slug)
+    .bind(display_name)
+    .bind(&info.email)
+    .fetch_one(&mut *transaction)
+    .await?;
+    let user = sqlx::query_as::<_, User>(
+        r#"INSERT INTO users (id, organization_id, role, email, display_name, avatar_url, oauth_provider, oauth_subject)
+           VALUES ($1, $2, 'admin', $3, $4, $5, 'google', $6) RETURNING *"#,
+    )
+    .bind(Uuid::new_v4())
+    .bind(organization_id)
+    .bind(&info.email)
+    .bind(display_name)
+    .bind(info.picture.as_deref())
+    .bind(&info.sub)
+    .fetch_one(&mut *transaction)
+    .await?;
+    transaction.commit().await?;
+    Ok(user)
 }
 
 fn build_cookie(jwt: &str, cfg: &OAuthConfig) -> (header::HeaderName, header::HeaderValue) {
@@ -715,7 +809,10 @@ pub async fn login(
                 &state,
                 Some(&CurrentUser {
                     id: u.id,
+                    organization_id: u.organization_id,
                     role: u.role.clone(),
+                    scopes: vec![],
+                    is_platform_operator: u.is_platform_operator,
                 }),
                 "auth.password_login",
                 "user",
@@ -742,6 +839,8 @@ fn user_json(u: User) -> Json<serde_json::Value> {
         "avatar_url": u.avatar_url,
         "role": u.role,
         "oauth_provider": u.oauth_provider,
+        "organization_id": u.organization_id,
+        "is_platform_operator": u.is_platform_operator,
     }))
 }
 
@@ -781,6 +880,8 @@ pub async fn logout(State(_state): State<Arc<AppState>>) -> Response {
 #[derive(Deserialize)]
 pub struct CreateTokenRequest {
     pub name: String,
+    #[serde(default)]
+    pub scopes: Option<Vec<String>>,
 }
 
 pub async fn create_token(
@@ -788,22 +889,59 @@ pub async fn create_token(
     axum::Extension(cu): axum::Extension<CurrentUser>,
     Json(body): Json<CreateTokenRequest>,
 ) -> Response {
+    if crate::middleware::require_admin(&cu).is_err() {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+    if crate::middleware::require_scope(&cu, "organization:manage").is_err() {
+        return StatusCode::FORBIDDEN.into_response();
+    }
     let name = body.name.trim();
     if name.is_empty() || name.len() > 120 {
         return (StatusCode::BAD_REQUEST, "token name must be 1-120 chars").into_response();
     }
 
+    if crate::organizations::ensure_resource_quota(&state, cu.organization_id, "api_keys")
+        .await
+        .is_err()
+    {
+        return (
+            StatusCode::TOO_MANY_REQUESTS,
+            Json(serde_json::json!({"error": "api_key_quota_exceeded"})),
+        )
+            .into_response();
+    }
+    let allowed = [
+        "events:read",
+        "webhooks:send",
+        "rules:read",
+        "rules:write",
+        "organization:manage",
+    ];
+    let scopes = body.scopes.unwrap_or_else(|| {
+        vec![
+            "events:read".to_string(),
+            "webhooks:send".to_string(),
+            "rules:read".to_string(),
+            "rules:write".to_string(),
+            "organization:manage".to_string(),
+        ]
+    });
+    if scopes.is_empty() || scopes.iter().any(|scope| !allowed.contains(&scope.as_str())) {
+        return (StatusCode::BAD_REQUEST, "invalid API key scopes").into_response();
+    }
     let token = generate_token();
     let hash = hash_token(&token);
     let id = Uuid::new_v4();
     let inserted = sqlx::query(
-        r#"INSERT INTO api_tokens (id, user_id, name, token_hash)
-           VALUES ($1, $2, $3, $4)"#,
+        r#"INSERT INTO api_tokens (id, user_id, organization_id, name, token_hash, scopes)
+           VALUES ($1, $2, $3, $4, $5, $6)"#,
     )
     .bind(id)
     .bind(cu.id)
+    .bind(cu.organization_id)
     .bind(name)
     .bind(&hash)
+    .bind(&scopes)
     .execute(&state.db)
     .await;
     if let Err(e) = inserted {
@@ -826,6 +964,7 @@ pub async fn create_token(
         "token_id": id,
         "name": name,
         "role": cu.role,
+        "scopes": scopes,
     }))
     .into_response()
 }
@@ -838,12 +977,18 @@ pub async fn list_tokens(
     State(state): State<Arc<AppState>>,
     axum::Extension(cu): axum::Extension<CurrentUser>,
 ) -> Response {
+    if crate::middleware::require_admin(&cu).is_err() {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+    if crate::middleware::require_scope(&cu, "organization:manage").is_err() {
+        return StatusCode::FORBIDDEN.into_response();
+    }
     match sqlx::query_as::<_, ApiTokenInfo>(
-        r#"SELECT id, name, last_used_at, created_at FROM api_tokens
-           WHERE user_id = $1 AND revoked_at IS NULL
+        r#"SELECT id, name, scopes, last_used_at, created_at FROM api_tokens
+           WHERE organization_id = $1 AND revoked_at IS NULL
            ORDER BY created_at DESC"#,
     )
-    .bind(cu.id)
+    .bind(cu.organization_id)
     .fetch_all(&state.db)
     .await
     {
@@ -865,11 +1010,17 @@ pub async fn revoke_token(
     axum::Extension(cu): axum::Extension<CurrentUser>,
     axum::extract::Path(id): axum::extract::Path<Uuid>,
 ) -> Response {
+    if crate::middleware::require_admin(&cu).is_err() {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+    if crate::middleware::require_scope(&cu, "organization:manage").is_err() {
+        return StatusCode::FORBIDDEN.into_response();
+    }
     let res = sqlx::query(
-        "UPDATE api_tokens SET revoked_at = NOW() WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL",
+        "UPDATE api_tokens SET revoked_at = NOW() WHERE id = $1 AND organization_id = $2 AND revoked_at IS NULL",
     )
     .bind(id)
-    .bind(cu.id)
+    .bind(cu.organization_id)
     .execute(&state.db)
     .await;
     match res {
@@ -897,20 +1048,27 @@ pub async fn revoke_token(
 /// `last_used_at` writes via Redis NX. Returns None on miss/revoked/error so
 /// the middleware falls through to the next auth method.
 pub async fn authenticate_bearer(state: &crate::AppState, token: &str) -> Option<CurrentUser> {
-    // (token_id, user_id, role)
-    let row: Option<(Uuid, Uuid, String)> = sqlx::query_as::<_, (Uuid, Uuid, String)>(
-        r#"SELECT api_tokens.id, api_tokens.user_id, users.role
+    // (token_id, user_id, organization_id, role, scopes)
+    let row: Option<(Uuid, Uuid, Uuid, String, Vec<String>)> = sqlx::query_as(
+        r#"SELECT api_tokens.id, api_tokens.user_id, api_tokens.organization_id, users.role, api_tokens.scopes
            FROM api_tokens
            JOIN users ON users.id = api_tokens.user_id
-           WHERE api_tokens.token_hash = $1 AND api_tokens.revoked_at IS NULL"#,
+           WHERE api_tokens.token_hash = $1 AND api_tokens.revoked_at IS NULL
+             AND users.organization_id = api_tokens.organization_id"#,
     )
     .bind(hash_token(token))
     .fetch_optional(&state.db)
     .await
     .ok()?;
-    let (token_id, user_id, role) = row?;
+    let (token_id, user_id, organization_id, role, scopes) = row?;
     // Best-effort touch on the token row; never fail the request on it.
     let mut conn = state.redis.clone();
     touch_token_last_used(&mut conn, &state.db, &token_id).await;
-    Some(CurrentUser { id: user_id, role })
+    Some(CurrentUser {
+        id: user_id,
+        organization_id,
+        role,
+        scopes,
+        is_platform_operator: false,
+    })
 }

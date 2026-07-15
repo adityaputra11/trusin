@@ -47,7 +47,7 @@ Hal berikut tidak termasuk program ini kecuali menjadi dependency langsung:
 | HTTP status | Initial delivery menandai semua non-2xx sebagai final failure | `429`, `408`, dan `5xx` tidak pulih otomatis |
 | Fan-out | Rule dapat menjadi main target lalu dikirim lagi setelah main delivery | Destination yang sama dapat menerima duplikat dari satu event |
 | Rule delivery | Pengiriman tambahan bersifat best-effort dan tidak punya lifecycle sendiri | Failure rule tidak terlihat dan tidak dapat di-retry dengan benar |
-| Target override | Endpoint publik menerima `X-Target-Url` | SSRF menuju localhost, private network, atau metadata service |
+| Target override | Public override disabled by default; dashboard send uses authenticated API | SSRF menuju localhost, private network, atau metadata service |
 | Payload | Ingest menggunakan JSON extractor dan body diserialisasi ulang | Raw/form/binary webhook dan signature berbasis raw body tidak terjaga |
 | Response capture | Response body dibaca tanpa batas aplikasi | Target dapat menyebabkan konsumsi memori berlebih dan penyimpanan data sensitif |
 | Test | Smoke test membuktikan happy path | Crash recovery, retry policy, SSRF, dan concurrency belum terbukti |
@@ -246,7 +246,8 @@ Tujuan: hentikan correctness/security issue terbesar tanpa menunggu migrasi arsi
 - [ ] Tambahkan timeout outbound yang configurable.
 - [ ] Terapkan retry matrix minimum untuk network error, `408`, `429`, dan `5xx`.
 - [ ] Berhenti mengabaikan error enqueue; log dan expose state yang benar.
-- [ ] Nonaktifkan public `X-Target-Url` secara default.
+- [x] Nonaktifkan public `X-Target-Url` secara default.
+- [x] Pindahkan dashboard test send ke endpoint authenticated admin dengan URL policy.
 - [ ] Cegah duplicate send antara main target dan matching rule.
 - [ ] Tambahkan unit test retry decision, backoff, HMAC, dan URL policy.
 
@@ -404,4 +405,3 @@ Program production hardening selesai jika:
 - Dokumentasi arsitektur menggambarkan implementasi aktual.
 - Upgrade dari schema existing telah diuji dengan data fixture.
 - Operator memiliki dashboard/metrics dan runbook untuk delivery failure.
-

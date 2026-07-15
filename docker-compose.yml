@@ -5,7 +5,7 @@ services:
       POSTGRES_DB: terusin
       POSTGRES_PASSWORD: terusin
     ports:
-      - "5432:5432"
+      - "${POSTGRES_PORT:-5432}:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -15,7 +15,7 @@ services:
   redis:
     image: redis:7-alpine
     ports:
-      - "6379:6379"
+      - "${REDIS_PORT:-6379}:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -31,7 +31,16 @@ services:
       PORT: "3011"
       AUTH_USERNAME: ${AUTH_USERNAME:-admin}
       AUTH_PASSWORD: ${AUTH_PASSWORD:-terusin123}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      APP_URL: ${APP_URL:-http://localhost:5173}
+      OAUTH_REDIRECT_URI: ${OAUTH_REDIRECT_URI:-}
+      FRONTEND_URL: ${FRONTEND_URL:-}
+      JWT_SECRET: ${JWT_SECRET:-dev-insecure-secret-change-me}
       MAX_RETRIES: "5"
+      HOSTED_MODE: "${HOSTED_MODE:-false}"
+      INGEST_CANONICAL_HOST: "${INGEST_CANONICAL_HOST:-ingest.terusin-dev.my.id}"
+      PLATFORM_ADMIN_TOKEN: "${PLATFORM_ADMIN_TOKEN:-}"
     depends_on:
       postgres:
         condition: service_healthy

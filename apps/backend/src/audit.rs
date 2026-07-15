@@ -10,6 +10,7 @@ use serde_json::{json, Value};
 use uuid::Uuid;
 
 use crate::auth::CurrentUser;
+use crate::middleware::require_scope;
 use crate::state::AppState;
 
 #[derive(Debug, Serialize, sqlx::FromRow)]
@@ -54,9 +55,10 @@ pub async fn record(
 
     let _ = sqlx::query(
         r#"INSERT INTO audit_logs
-           (actor_user_id, actor_email, action, resource_type, resource_id, metadata)
-           VALUES ($1, $2, $3, $4, $5, $6)"#,
+           (organization_id, actor_user_id, actor_email, action, resource_type, resource_id, metadata)
+           VALUES ($1, $2, $3, $4, $5, $6, $7)"#,
     )
+    .bind(actor.map(|user| user.organization_id))
     .bind(actor_user_id)
     .bind(actor_email)
     .bind(action)
@@ -70,8 +72,10 @@ pub async fn record(
 
 pub async fn list_audit(
     State(state): State<Arc<AppState>>,
+    axum::Extension(cu): axum::Extension<CurrentUser>,
     Query(q): Query<AuditQuery>,
 ) -> Result<Json<Value>, StatusCode> {
+    require_scope(&cu, "events:read")?;
     let page = q.page.unwrap_or(1).max(1);
     let per_page = q.per_page.unwrap_or(25).clamp(1, 100);
     let offset = (page - 1) * per_page;
@@ -80,14 +84,17 @@ pub async fn list_audit(
         sqlx::query_as::<_, AuditEntry>(
             r#"SELECT id, actor_user_id, actor_email, action, resource_type,
                       resource_id, metadata, created_at
-               FROM audit_logs
+               FROM audit_logs WHERE organization_id = $1
                ORDER BY created_at DESC
-               LIMIT $1 OFFSET $2"#,
+               LIMIT $2 OFFSET $3"#,
         )
+        .bind(cu.organization_id)
         .bind(per_page)
         .bind(offset)
         .fetch_all(&state.db),
-        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM audit_logs").fetch_one(&state.db),
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM audit_logs WHERE organization_id = $1")
+            .bind(cu.organization_id)
+            .fetch_one(&state.db),
     )
     .map_err(|e| {
         tracing::warn!("list audit: {e}");

@@ -1,12 +1,13 @@
-# Menerima dan meneruskan webhook
+# Receiving and forwarding webhooks
 
-Source diambil dari segmen path pertama. `/stripe/webhook` menjadi `stripe`; header `X-Webhook-Source` dapat menggantikannya.
+The source is taken from the first path segment. `/stripe/webhook` becomes `stripe`; the `X-Webhook-Source` header can override it.
 
-Target dipilih dengan urutan berikut:
+The public ingest target is selected in this order:
 
-1. Header `X-Target-Url` pada request.
-2. Forward rule aktif yang cocok dengan source.
-3. `DEFAULT_TARGET_URL` atau default target yang diatur admin.
+1. An active Provider matching the source.
+2. `DEFAULT_TARGET_URL` or the default target configured by an admin.
+
+`X-Target-Url` on public ingest is rejected by default to prevent arbitrary forwarding and SSRF exposure. The legacy override can only be explicitly enabled with `ALLOW_PUBLIC_TARGET_OVERRIDE=true` and must still pass the server URL policy.
 
 ```bash
 curl -X POST https://your-terusin.example/stripe/webhook \
@@ -14,8 +15,25 @@ curl -X POST https://your-terusin.example/stripe/webhook \
   -d '{"type":"payment_intent.succeeded"}'
 ```
 
-Payload JSON dan header disimpan sebelum event masuk antrean. Response `2xx` dari target menandai event `delivered`; network error dijadwalkan ulang dengan exponential backoff. Response HTTP non-2xx saat ini langsung menandai attempt `failed`.
+## Sending from the dashboard
+
+Admins can open the **Send** page and choose an active Provider or **Custom / manual**. Provider mode uses the selected rule's source and target. Custom mode accepts a source and target directly; an empty target uses the default target.
+
+The dashboard uses `POST /api/send`, not a target override on the public ingest endpoint. Targets must be credential-free `http` or `https` URLs that comply with the server network policy.
+
+The JSON payload and headers are stored before an event enters the queue. A `2xx` target response marks an event as `delivered`; retryable network or HTTP failures use exponential backoff. A final non-`2xx` response marks the event as `failed`.
 
 ## Signing
 
-Set `DEFAULT_SIGNING_SECRET` untuk menambahkan `X-Terusin-Signature: sha256=<hex>` pada main delivery. Nilainya adalah HMAC-SHA256 dari raw JSON body.
+Set `DEFAULT_SIGNING_SECRET` to add `X-Terusin-Signature: sha256=<hex>` to the main delivery. Its value is the HMAC-SHA256 of the raw JSON body.
+
+## Provider hooks
+
+A **Provider** is the primary target for a webhook source. A **Hook** is an optional, independent follow-up delivery attached to one provider. Hooks never replace or reroute the provider target.
+
+When creating a hook, choose when it should run:
+
+- **Provider succeeds**: sends the original payload as soon as the provider returns a `2xx` response.
+- **Provider fails**: sends the original payload only after the provider has exhausted all retries or reaches a final, non-retryable failure.
+
+Each hook request includes `X-Terusin-Delivery-Status` (`delivered` or `failed`) and, when the provider returned an HTTP response, `X-Terusin-Response-Status`. A failed hook is logged but does not affect the provider event or trigger another hook.

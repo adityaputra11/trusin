@@ -21,7 +21,7 @@ export function EndpointBox() {
     }
   };
 
-  const masked = url ? `${url.slice(0, 24)}${url.length > 24 ? "•".repeat(8) : ""}` : "";
+  const masked = url ? "••••••••••••••••" : "";
 
   return (
     <div className="relative overflow-hidden bg-[linear-gradient(100deg,rgba(74,222,128,.075),rgba(13,17,14,.82)_60%)] border border-[rgba(74,222,128,.18)] rounded-lg p-4 mb-6 flex items-center gap-3 shadow-[inset_0_1px_rgba(255,255,255,.02)]">
@@ -47,7 +47,10 @@ export function EndpointBox() {
         <button
           onClick={() => setShow((s) => !s)}
           className="p-2 rounded-md text-muted hover:text-foreground hover:bg-hover transition-base"
-          title={show ? "Hide" : "Show"}
+          type="button"
+          title={show ? "Hide endpoint" : "Reveal endpoint"}
+          aria-label={show ? "Hide endpoint" : "Reveal endpoint"}
+          aria-pressed={show}
         >
           {show ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
         </button>

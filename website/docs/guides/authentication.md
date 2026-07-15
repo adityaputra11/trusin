@@ -1,43 +1,51 @@
-# Authentication dan RBAC
+# Authentication and RBAC
 
-Terusin v1 memakai model **single workspace**. Semua user berada di satu instance yang sama, dengan role `admin` atau `viewer`.
+trusin hosted runs isolated organizations in a shared database. Each user belongs to one organization and has either the `admin` or `viewer` role. Events, rules, audit logs, and API keys are always scoped to that organization.
 
-Backend menerima tiga metode auth, sesuai urutan evaluasi:
+Users with the server-side `platform_operator` flag can access `/platform` to view all tenants and subscriber data. This flag is never inherited by API keys, so a tenant token cannot access the control plane.
 
-1. Cookie JWT `terusin_session` dari Google OAuth.
-2. Bearer API token berawalan `ts_` untuk CLI dan MCP.
-3. HTTP Basic untuk kompatibilitas legacy.
+The backend accepts three authentication methods in this order:
 
-Endpoint read menerima role `admin` dan `viewer`. Mutasi rule, retry/ack/delete event, bulk action, dan perubahan default target hanya untuk admin.
+1. The `terusin_session` JWT cookie created by Google OAuth.
+2. A `ts_`-prefixed Bearer API token for the CLI and MCP server.
+3. HTTP Basic authentication for legacy compatibility.
+
+Read endpoints are available to both `admin` and `viewer` roles. Rule changes, event retry/acknowledge/delete actions, bulk actions, and default-target changes require an admin.
 
 ## Google OAuth
 
-Aktifkan Google login dengan environment variable berikut:
+Enable Google sign-in with these environment variables:
 
 ```bash
 GOOGLE_CLIENT_ID=...
 GOOGLE_CLIENT_SECRET=...
-OAUTH_REDIRECT_URI=https://your-terusin.example/api/auth/callback/google
-FRONTEND_URL=https://your-terusin.example
+APP_URL=https://app.your-terusin.example
+# Optional explicit overrides for a split frontend/backend deployment.
+OAUTH_REDIRECT_URI=https://app.your-terusin.example/api/auth/callback/google
+FRONTEND_URL=https://app.your-terusin.example
 JWT_SECRET='random-strong-secret'
+RESEND_API_KEY=re_...
+EMAIL_FROM='trusin <noreply@your-terusin.example>'
 ```
 
-Daftarkan redirect URI yang sama di Google Cloud Console. Saat OAuth aktif, halaman login menampilkan **Continue with Google**. User Google baru dibuat sebagai `viewer`; admin dapat menaikkan role dari dashboard **Users**.
+Register the same redirect URI in Google Cloud Console. When OAuth is enabled, the login page displays **Continue with Google**. A first Google sign-in creates a `free` workspace and makes that account its admin.
 
-OAuth callback divalidasi dengan state token berumur pendek di Redis. Cookie session bersifat `HttpOnly`, `SameSite=Lax`, dan `Secure` saat `FRONTEND_URL` memakai HTTPS.
+Free workspaces are limited to their owner and cannot invite users. Paid workspaces can invite `admin` or `viewer` users from **Users**. Invitations are delivered by Resend, expire after seven days, and can only be claimed by the Google account with the invited email address. In this version, an account belongs to one workspace only.
 
-## API token
+The OAuth callback is protected by a short-lived state token in Redis. Session cookies are `HttpOnly` and `SameSite=Lax`; they also become `Secure` when `FRONTEND_URL` uses HTTPS.
 
-Buat token dari **Settings → API Tokens**. Cleartext hanya ditampilkan sekali; server menyimpan hash SHA-256.
+## API tokens
+
+Create a token from **Settings → API Tokens**. The plaintext token is displayed only once; the server stores a SHA-256 hash. Tokens are organization-scoped and carry explicit scopes: `events:read`, `webhooks:send`, `rules:read`, `rules:write`, or `organization:manage`.
 
 ```bash
 terusin set-token ts_your_token
-# atau
+# or
 export TERUSIN_TOKEN=ts_your_token
 ```
 
-Jangan commit token, `JWT_SECRET`, signing secret, atau password. Gunakan secret manager di production.
+Do not commit tokens, `JWT_SECRET`, signing secrets, or passwords. Use a secrets manager in production.
 
 ## Audit trail
 
-Terusin mencatat aksi penting ke **Activity**: login, token create/revoke, perubahan role, rule create/update/delete, retry/ack/delete event, bulk action, dan perubahan default target. Endpoint audit read-only tersedia di `GET /api/audit` untuk user authenticated.
+trusin records important actions in **Activity**: login, invitation lifecycle events, token creation/revocation, role changes, rule create/update/delete event actions, retry/acknowledge/delete event actions, bulk actions, and default-target changes. Authenticated users can read the audit trail at `GET /api/audit`.

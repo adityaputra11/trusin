@@ -6,10 +6,12 @@ import { UserContext } from "../../lib/user-context";
 
 const TITLES: Record<string, { title: string; subtitle: string }> = {
   "/": { title: "Dashboard", subtitle: "Webhook events & delivery status" },
-  "/providers": { title: "Providers", subtitle: "Source → target mappings" },
-  "/hooks": { title: "Hooks", subtitle: "Forwarding rules" },
+  "/providers": { title: "Providers", subtitle: "Primary source → target deliveries" },
+  "/hooks": { title: "Hooks", subtitle: "Optional provider follow-up deliveries" },
   "/metrics": { title: "Metrics", subtitle: "Throughput, success rate & top sources" },
   "/send": { title: "Send", subtitle: "Send a custom webhook" },
+  "/organization": { title: "Organization", subtitle: "Plan, domains, and API-key entitlements" },
+  "/platform": { title: "Platform", subtitle: "Hosted tenant control plane" },
   "/settings": { title: "Settings", subtitle: "MCP setup & system status" },
 };
 
@@ -17,7 +19,7 @@ function titlesFor(pathname: string) {
   if (pathname.startsWith("/event/")) {
     return { title: "Event Detail", subtitle: "Webhook event" };
   }
-  return TITLES[pathname] ?? { title: "Terusin", subtitle: "" };
+  return TITLES[pathname] ?? { title: "trusin", subtitle: "" };
 }
 
 export function Layout() {

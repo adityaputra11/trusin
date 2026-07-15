@@ -75,10 +75,12 @@ fn handle_call(name: &str, args: &Value) -> Value {
             let body = args.get("body").unwrap_or(&empty);
             let source = args.get("source").and_then(|v| v.as_str()).unwrap_or("mcp");
             let resp = client
-                .post(BACKEND_URL)
-                .header("X-Webhook-Source", source)
-                .header("X-Target-Url", target_url)
-                .json(body)
+                .post(format!("{BACKEND_URL}/api/send"))
+                .json(&json!({
+                    "source": source,
+                    "target_url": target_url,
+                    "body": body,
+                }))
                 .send();
             match resp {
                 Ok(r) => r.json::<Value>().unwrap_or(json!({"status": "sent"})),

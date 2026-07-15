@@ -5,7 +5,7 @@ use std::sync::Arc;
 use axum::body::Body;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
-use axum::response::Response;
+use axum::response::{IntoResponse, Response};
 use axum::Json;
 use bytes::Bytes;
 use serde::Deserialize;
@@ -14,7 +14,7 @@ use tokio_stream::StreamExt;
 use uuid::Uuid;
 
 use crate::auth;
-use crate::middleware::require_admin;
+use crate::middleware::{require_admin, require_scope};
 use crate::model::{DeliveryAttempt, WebhookEvent};
 use crate::state::AppState;
 use crate::workers::{QUEUE_KEY, RETRY_KEY};
@@ -34,20 +34,22 @@ pub struct EventQuery {
 
 pub async fn list_events(
     State(state): State<Arc<AppState>>,
+    axum::Extension(cu): axum::Extension<auth::CurrentUser>,
     Query(q): Query<EventQuery>,
 ) -> Result<Json<Value>, StatusCode> {
+    require_scope(&cu, "events:read")?;
     let page = q.page.unwrap_or(1).max(1);
     let per_page = q.per_page.unwrap_or(10).min(200);
     let offset = (page - 1) * per_page;
 
-    let mut sql = "SELECT * FROM webhook_events WHERE 1=1".to_string();
-    let mut count_sql = "SELECT COUNT(*) FROM webhook_events WHERE 1=1".to_string();
+    let mut sql = "SELECT * FROM webhook_events WHERE organization_id = $1".to_string();
+    let mut count_sql = "SELECT COUNT(*) FROM webhook_events WHERE organization_id = $1".to_string();
     let mut params: Vec<String> = vec![];
 
     if let Some(ref s) = q.search {
         if !s.is_empty() {
             let like = format!("%{}%", s);
-            let idx = params.len() + 1;
+            let idx = params.len() + 2;
             sql += &format!(
                 " AND (source ILIKE ${idx} OR target_url ILIKE ${idx} OR body::text ILIKE ${idx})"
             );
@@ -59,7 +61,7 @@ pub async fn list_events(
     }
     if let Some(ref s) = q.status {
         if !s.is_empty() && s != "all" {
-            let idx = params.len() + 1;
+            let idx = params.len() + 2;
             sql += &format!(" AND status = ${idx}");
             count_sql += &format!(" AND status = ${idx}");
             params.push(s.clone());
@@ -67,7 +69,7 @@ pub async fn list_events(
     }
     if let Some(ref s) = q.source {
         if !s.is_empty() {
-            let idx = params.len() + 1;
+            let idx = params.len() + 2;
             sql += &format!(" AND source = ${idx}");
             count_sql += &format!(" AND source = ${idx}");
             params.push(s.clone());
@@ -75,7 +77,7 @@ pub async fn list_events(
     }
     if let Some(ref ts) = q.from {
         if !ts.is_empty() {
-            let idx = params.len() + 1;
+            let idx = params.len() + 2;
             sql += &format!(" AND created_at >= ${idx}::timestamp");
             count_sql += &format!(" AND created_at >= ${idx}::timestamp");
             params.push(ts.clone());
@@ -83,7 +85,7 @@ pub async fn list_events(
     }
     if let Some(ref ts) = q.to {
         if !ts.is_empty() {
-            let idx = params.len() + 1;
+            let idx = params.len() + 2;
             sql += &format!(" AND created_at < ${idx}::timestamp");
             count_sql += &format!(" AND created_at < ${idx}::timestamp");
             params.push(ts.clone());
@@ -94,6 +96,8 @@ pub async fn list_events(
 
     let mut query = sqlx::query_as::<_, WebhookEvent>(&sql);
     let mut count_q = sqlx::query_scalar::<_, i64>(&count_sql);
+    query = query.bind(cu.organization_id);
+    count_q = count_q.bind(cu.organization_id);
     for p in &params {
         query = query.bind(p);
         count_q = count_q.bind(p);
@@ -114,10 +118,13 @@ pub async fn list_events(
 
 pub async fn get_event(
     State(state): State<Arc<AppState>>,
+    axum::Extension(cu): axum::Extension<auth::CurrentUser>,
     Path(id): Path<Uuid>,
 ) -> Result<Json<WebhookEvent>, StatusCode> {
-    let event = sqlx::query_as::<_, WebhookEvent>("SELECT * FROM webhook_events WHERE id = $1")
+    require_scope(&cu, "events:read")?;
+    let event = sqlx::query_as::<_, WebhookEvent>("SELECT * FROM webhook_events WHERE id = $1 AND organization_id = $2")
         .bind(id)
+        .bind(cu.organization_id)
         .fetch_optional(&state.db)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
@@ -127,12 +134,15 @@ pub async fn get_event(
 /// Delivery attempts for the per-event retry timeline (newest last).
 pub async fn list_attempts(
     State(state): State<Arc<AppState>>,
+    axum::Extension(cu): axum::Extension<auth::CurrentUser>,
     Path(id): Path<Uuid>,
 ) -> Result<Json<Vec<DeliveryAttempt>>, StatusCode> {
+    require_scope(&cu, "events:read")?;
     let rows = sqlx::query_as::<_, DeliveryAttempt>(
-        "SELECT * FROM delivery_attempts WHERE event_id = $1 ORDER BY attempt_number ASC, created_at ASC",
+        "SELECT * FROM delivery_attempts WHERE event_id = $1 AND organization_id = $2 ORDER BY attempt_number ASC, created_at ASC",
     )
     .bind(id)
+    .bind(cu.organization_id)
     .fetch_all(&state.db)
     .await
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
@@ -142,9 +152,12 @@ pub async fn list_attempts(
 /// Distinct sources (for the dashboard source filter dropdown).
 pub async fn list_sources(
     State(state): State<Arc<AppState>>,
+    axum::Extension(cu): axum::Extension<auth::CurrentUser>,
 ) -> Result<Json<Vec<String>>, StatusCode> {
+    require_scope(&cu, "events:read")?;
     let rows: Vec<(String,)> =
-        sqlx::query_as("SELECT DISTINCT source FROM webhook_events ORDER BY source ASC")
+        sqlx::query_as("SELECT DISTINCT source FROM webhook_events WHERE organization_id = $1 ORDER BY source ASC")
+            .bind(cu.organization_id)
             .fetch_all(&state.db)
             .await
             .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
@@ -154,8 +167,15 @@ pub async fn list_sources(
 /// Server-Sent Events stream of newly-created events. Polls the DB every 2s
 /// for events newer than the last seen created_at and emits each as an SSE
 /// `data:` line (JSON). Manual impl because axum-extra 0.10 has no SSE helper.
-pub async fn event_stream(State(state): State<Arc<AppState>>) -> Response {
+pub async fn event_stream(
+    State(state): State<Arc<AppState>>,
+    axum::Extension(cu): axum::Extension<auth::CurrentUser>,
+) -> Response {
+    if require_scope(&cu, "events:read").is_err() {
+        return StatusCode::FORBIDDEN.into_response();
+    }
     let db = state.db.clone();
+    let organization_id = cu.organization_id;
     let (tx, rx) = tokio::sync::mpsc::channel::<Result<String, std::io::Error>>(16);
 
     tokio::spawn(async move {
@@ -166,8 +186,9 @@ pub async fn event_stream(State(state): State<Arc<AppState>>) -> Response {
         loop {
             ticker.tick().await;
             let rows: Vec<WebhookEvent> = match sqlx::query_as::<_, WebhookEvent>(
-                "SELECT * FROM webhook_events WHERE created_at > $1 ORDER BY created_at ASC LIMIT 100",
+                "SELECT * FROM webhook_events WHERE organization_id = $1 AND created_at > $2 ORDER BY created_at ASC LIMIT 100",
             )
+            .bind(organization_id)
             .bind(last_seen)
             .fetch_all(&db)
             .await
@@ -209,14 +230,30 @@ pub async fn retry_event(
     Path(id): Path<Uuid>,
 ) -> Result<StatusCode, StatusCode> {
     require_admin(&cu)?;
-    let event = sqlx::query_as::<_, WebhookEvent>("SELECT * FROM webhook_events WHERE id = $1")
+    require_scope(&cu, "organization:manage")?;
+    let event = sqlx::query_as::<_, WebhookEvent>("SELECT * FROM webhook_events WHERE id = $1 AND organization_id = $2")
         .bind(id)
+        .bind(cu.organization_id)
         .fetch_optional(&state.db)
         .await;
 
     match event {
         Ok(Some(_)) => {
+            sqlx::query(
+                "UPDATE webhook_events SET status = 'queued', retry_count = 0 WHERE id = $1 AND organization_id = $2",
+            )
+            .bind(id)
+            .bind(cu.organization_id)
+            .execute(&state.db)
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
             let mut conn = state.redis.clone();
+            redis::cmd("ZREM")
+                .arg(RETRY_KEY)
+                .arg(id.to_string())
+                .query_async::<()>(&mut conn)
+                .await
+                .ok();
             redis::cmd("LPUSH")
                 .arg(QUEUE_KEY)
                 .arg(id.to_string())
@@ -244,10 +281,12 @@ pub async fn ack_event(
     Path(id): Path<Uuid>,
 ) -> Result<StatusCode, StatusCode> {
     require_admin(&cu)?;
+    require_scope(&cu, "organization:manage")?;
     sqlx::query(
-        "UPDATE webhook_events SET status = 'delivered', response_status = 200 WHERE id = $1",
+        "UPDATE webhook_events SET status = 'delivered', response_status = 200 WHERE id = $1 AND organization_id = $2",
     )
     .bind(id)
+    .bind(cu.organization_id)
     .execute(&state.db)
     .await
     .ok();
@@ -284,8 +323,10 @@ pub async fn delete_event(
     Path(id): Path<Uuid>,
 ) -> Result<StatusCode, StatusCode> {
     require_admin(&cu)?;
-    let res = sqlx::query("DELETE FROM webhook_events WHERE id = $1")
+    require_scope(&cu, "organization:manage")?;
+    let res = sqlx::query("DELETE FROM webhook_events WHERE id = $1 AND organization_id = $2")
         .bind(id)
+        .bind(cu.organization_id)
         .execute(&state.db)
         .await;
     let removed = matches!(res, Ok(r) if r.rows_affected() > 0);
@@ -331,19 +372,27 @@ pub async fn bulk_retry(
     Json(input): Json<BulkIds>,
 ) -> Result<Json<Value>, StatusCode> {
     require_admin(&cu)?;
+    require_scope(&cu, "organization:manage")?;
     let mut enqueued = 0;
     let mut conn = state.redis.clone();
     for id in &input.ids {
-        let exists: bool = sqlx::query_scalar::<_, bool>(
-            "SELECT EXISTS(SELECT 1 FROM webhook_events WHERE id = $1)",
+        let reset = sqlx::query(
+            "UPDATE webhook_events SET status = 'queued', retry_count = 0 WHERE id = $1 AND organization_id = $2",
         )
         .bind(id)
-        .fetch_one(&state.db)
+        .bind(cu.organization_id)
+        .execute(&state.db)
         .await
-        .unwrap_or(false);
-        if !exists {
+        .ok();
+        if !matches!(reset, Some(result) if result.rows_affected() > 0) {
             continue;
         }
+        redis::cmd("ZREM")
+            .arg(RETRY_KEY)
+            .arg(id.to_string())
+            .query_async::<()>(&mut conn)
+            .await
+            .ok();
         redis::cmd("LPUSH")
             .arg(QUEUE_KEY)
             .arg(id.to_string())
@@ -373,11 +422,13 @@ pub async fn bulk_delete(
     Json(input): Json<BulkIds>,
 ) -> Result<Json<Value>, StatusCode> {
     require_admin(&cu)?;
+    require_scope(&cu, "organization:manage")?;
     let mut conn = state.redis.clone();
     let mut deleted = 0;
     for id in &input.ids {
-        let res = sqlx::query("DELETE FROM webhook_events WHERE id = $1")
+        let res = sqlx::query("DELETE FROM webhook_events WHERE id = $1 AND organization_id = $2")
             .bind(id)
+            .bind(cu.organization_id)
             .execute(&state.db)
             .await;
         if matches!(res, Ok(r) if r.rows_affected() > 0) {
