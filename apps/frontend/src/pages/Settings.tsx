@@ -411,18 +411,6 @@ export function Settings() {
 
   return (
     <div className="mx-auto max-w-6xl">
-      <div className="mb-7 flex flex-col gap-2 border-b border-border pb-6 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <p className="text-[10px] font-semibold tracking-[.16em] text-success uppercase">Workspace administration</p>
-          <h2 className="mt-2 text-2xl font-semibold tracking-tight text-foreground">Settings</h2>
-          <p className="mt-1 max-w-2xl text-sm text-secondary">Manage your workspace, access controls, security records, and developer integrations.</p>
-        </div>
-        <div className="flex items-center gap-2 rounded-md border border-border bg-card px-3 py-2 text-xs text-muted">
-          <LockKeyhole className="h-3.5 w-3.5 text-success" />
-          {canWrite ? "Workspace administrator" : "Read-only workspace access"}
-        </div>
-      </div>
-
       <div className="grid gap-6 lg:grid-cols-[220px_minmax(0,1fr)]">
         <SettingsNavigation activeSection={activeSection} canWrite={canWrite} onSelect={(next) => navigate(`/settings/${next}`)} />
         <section className="min-w-0">

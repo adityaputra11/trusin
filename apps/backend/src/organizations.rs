@@ -301,7 +301,7 @@ pub async fn current_organization(
 
     let period = period_start();
     let used: i64 = sqlx::query_scalar(
-        "SELECT COALESCE(events_accepted, 0) FROM organization_usage WHERE organization_id = $1 AND period_start = $2",
+        "SELECT COALESCE(events_accepted, 0)::BIGINT FROM organization_usage WHERE organization_id = $1 AND period_start = $2",
     )
     .bind(cu.organization_id)
     .bind(period)
