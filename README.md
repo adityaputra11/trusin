@@ -67,6 +67,12 @@ trusin
 The installer automatically selects the correct Apple Silicon, Intel, x86_64,
 or ARM64 binary and verifies its SHA-256 checksum. To pin a release, run
 `curl -fsSL https://download.trusin.my.id/install.sh | TERUSIN_VERSION=v0.1.0 sh`;
+
+To remove the CLI, bundled MCP server, and local credentials, run:
+
+```sh
+trusin uninstall
+```
 use `TERUSIN_INSTALL=$HOME/.local/bin` in the same position to install without
 `sudo`. On first run, `trusin` asks for an API token from **Settings → Developer
 → API Tokens**, stores it locally, and opens the terminal dashboard.
