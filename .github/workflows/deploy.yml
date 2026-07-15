@@ -235,4 +235,4 @@ jobs:
             curl --fail --silent https://trusin.my.id/sitemap.xml | grep -F '<urlset'
             curl --fail --silent https://docs.trusin.my.id/robots.txt | grep -F 'Sitemap:'
             curl --fail --silent https://docs.trusin.my.id/sitemap.xml | grep -F '<urlset'
-            curl --fail --silent https://trusin.my.id | grep -F 'https://trusin.my.id/og-image.svg'
+            curl --fail --silent https://trusin.my.id | grep -F 'https://trusin.my.id/og-image.png'
