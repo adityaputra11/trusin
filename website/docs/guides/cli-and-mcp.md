@@ -62,6 +62,29 @@ cargo build --release --bin trusin
 
 `forward` points the default target at a local service and can start ngrok when the backend is remote. Tokens are stored in the OS keychain when available.
 
+## Local development without ngrok
+
+Use `trusin dev` to mirror new events from one source to your local service. The
+CLI keeps an authenticated outbound stream to trusin, so your laptop does not
+need a public URL and private targets never reach the production API.
+
+Start a local receiver or your application:
+
+```bash
+cargo run --bin receiver
+```
+
+In another terminal, mirror a source such as Stripe:
+
+```bash
+trusin dev --source stripe --port 3000
+```
+
+`trusin dev` adds `X-Trusin-Event-Id` and `X-Trusin-Source` headers, then posts
+the original JSON body to `http://127.0.0.1:<port>`. It is a **mirror**: normal
+production delivery and event status are left unchanged. Use `trusin forward`
+only when you explicitly need trusin to make your local server its delivery target.
+
 ## Interactive TUI
 
 Running `trusin` opens a full-screen terminal dashboard for operators after

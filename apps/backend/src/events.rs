@@ -32,6 +32,11 @@ pub struct EventQuery {
     pub per_page: Option<i64>,
 }
 
+#[derive(Deserialize, Default)]
+pub struct EventStreamQuery {
+    pub source: Option<String>,
+}
+
 pub async fn list_events(
     State(state): State<Arc<AppState>>,
     axum::Extension(cu): axum::Extension<auth::CurrentUser>,
@@ -170,12 +175,14 @@ pub async fn list_sources(
 pub async fn event_stream(
     State(state): State<Arc<AppState>>,
     axum::Extension(cu): axum::Extension<auth::CurrentUser>,
+    Query(query): Query<EventStreamQuery>,
 ) -> Response {
     if require_scope(&cu, "events:read").is_err() {
         return StatusCode::FORBIDDEN.into_response();
     }
     let db = state.db.clone();
     let organization_id = cu.organization_id;
+    let source = query.source.filter(|source| !source.trim().is_empty());
     let (tx, rx) = tokio::sync::mpsc::channel::<Result<String, std::io::Error>>(16);
 
     tokio::spawn(async move {
@@ -185,14 +192,24 @@ pub async fn event_stream(
         let _ = tx.send(Ok(": connected\n\n".to_string())).await;
         loop {
             ticker.tick().await;
-            let rows: Vec<WebhookEvent> = match sqlx::query_as::<_, WebhookEvent>(
-                "SELECT * FROM webhook_events WHERE organization_id = $1 AND created_at > $2 ORDER BY created_at ASC LIMIT 100",
-            )
-            .bind(organization_id)
-            .bind(last_seen)
-            .fetch_all(&db)
-            .await
-            {
+            let rows: Vec<WebhookEvent> = match if let Some(source) = &source {
+                sqlx::query_as::<_, WebhookEvent>(
+                    "SELECT * FROM webhook_events WHERE organization_id = $1 AND created_at > $2 AND source = $3 ORDER BY created_at ASC LIMIT 100",
+                )
+                .bind(organization_id)
+                .bind(last_seen)
+                .bind(source)
+                .fetch_all(&db)
+                .await
+            } else {
+                sqlx::query_as::<_, WebhookEvent>(
+                    "SELECT * FROM webhook_events WHERE organization_id = $1 AND created_at > $2 ORDER BY created_at ASC LIMIT 100",
+                )
+                .bind(organization_id)
+                .bind(last_seen)
+                .fetch_all(&db)
+                .await
+            } {
                 Ok(r) => r,
                 Err(_) => continue,
             };

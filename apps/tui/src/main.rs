@@ -2,13 +2,12 @@ mod auth;
 mod interactive;
 
 use crate::auth::{
-    auth_client, config_path, ensure_token, keychain_delete, load_config, managed_config_dirs,
-    resolve_token, save_config, store_token, Config,
+    auth_client, auth_stream_client, config_path, ensure_token, keychain_delete, load_config,
+    managed_config_dirs, resolve_token, save_config, store_token, Config,
 };
 use clap::{Parser, Subcommand};
 use reqwest::Client;
 use serde::Deserialize;
-use std::collections::HashSet;
 use std::io::{self, Write};
 use std::path::PathBuf;
 use std::process::Command;
@@ -56,12 +55,14 @@ enum Commands {
     },
     /// Retry a failed event
     Retry { id: String },
-    /// Poll events from server and forward to local port (no ngrok needed)
-    Listen {
+    /// Mirror one webhook source to a local port without ngrok
+    #[command(visible_alias = "listen")]
+    Dev {
         #[arg(short, long, default_value = "3000")]
         port: u16,
-        #[arg(short, long, default_value_t = 5)]
-        interval: u64,
+        /// Webhook source to mirror, for example `stripe` or `github`
+        #[arg(short, long)]
+        source: String,
     },
     /// Open web dashboard
     Dashboard,
@@ -88,6 +89,13 @@ struct Event {
 #[derive(Deserialize)]
 struct EventList {
     events: Vec<Event>,
+}
+
+#[derive(Deserialize)]
+struct LocalDevEvent {
+    id: String,
+    source: String,
+    body: serde_json::Value,
 }
 
 #[derive(Deserialize)]
@@ -194,6 +202,80 @@ fn run_uninstall(confirmed: bool) {
         }
         eprintln!("Close any running trusin processes and try `trusin uninstall --yes` again.");
     }
+}
+
+async fn run_local_dev(cfg: &Config, port: u16, source: String) {
+    let target = format!("http://127.0.0.1:{port}");
+    println!(" Local relay ready");
+    println!(" Source:  {source}");
+    println!(" Target:  {target}");
+    println!(" Mode:    mirror (production delivery is unchanged)");
+    println!(" Press Ctrl+C to stop.\n");
+
+    loop {
+        let response = auth_stream_client(cfg)
+            .get(format!("{}/events/stream", cfg.backend))
+            .query(&[("source", source.as_str())])
+            .send()
+            .await;
+        let mut response = match response.and_then(reqwest::Response::error_for_status) {
+            Ok(response) => response,
+            Err(error) => {
+                eprintln!(" Stream disconnected: {error}. Retrying in 2s...");
+                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                continue;
+            }
+        };
+        let mut buffer = String::new();
+        while let Ok(Some(chunk)) = response.chunk().await {
+            buffer.push_str(&String::from_utf8_lossy(&chunk));
+            for data in take_sse_event_data(&mut buffer) {
+                let event: LocalDevEvent = match serde_json::from_str(&data) {
+                    Ok(event) => event,
+                    Err(error) => {
+                        eprintln!(" Ignored malformed stream event: {error}");
+                        continue;
+                    }
+                };
+                match Client::new()
+                    .post(&target)
+                    .header("x-trusin-event-id", &event.id)
+                    .header("x-trusin-source", &event.source)
+                    .json(&event.body)
+                    .send()
+                    .await
+                {
+                    Ok(response) if response.status().is_success() => {
+                        println!(" {} → {}", &event.id[..8], target);
+                    }
+                    Ok(response) => eprintln!(
+                        " {} → {} returned HTTP {}",
+                        &event.id[..8],
+                        target,
+                        response.status()
+                    ),
+                    Err(error) => eprintln!(" {} → {} failed: {error}", &event.id[..8], target),
+                }
+            }
+        }
+        eprintln!(" Stream closed. Reconnecting...");
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    }
+}
+
+fn take_sse_event_data(buffer: &mut String) -> Vec<String> {
+    let mut events = Vec::new();
+    while let Some(frame_end) = buffer.find("\n\n") {
+        let frame = buffer[..frame_end].to_string();
+        buffer.drain(..frame_end + 2);
+        if !frame.starts_with("event: event\n") {
+            continue;
+        }
+        if let Some(data) = frame.lines().find_map(|line| line.strip_prefix("data: ")) {
+            events.push(data.to_string());
+        }
+    }
+    events
 }
 
 #[tokio::main]
@@ -368,51 +450,11 @@ async fn main() {
                 Err(error) => eprintln!(" Could not retry {id}: {error}"),
             }
         }
-        Commands::Listen { port, interval } => {
+        Commands::Dev { port, source } => {
             if !ensure_token(&mut cfg) {
                 return;
             }
-            let auth = auth_client(&cfg);
-            let fallback = format!("http://127.0.0.1:{port}");
-            println!(" Listening: polling {}/events", cfg.backend);
-            let mut seen = HashSet::new();
-            loop {
-                let resp = auth
-                    .get(format!("{}/events?per_page=100", cfg.backend))
-                    .send()
-                    .await;
-                if let Ok(r) = resp {
-                    let data: serde_json::Value = r.json().await.unwrap_or_default();
-                    let events = data["events"].as_array().cloned().unwrap_or_default();
-                    for e in &events {
-                        let id = e["id"].as_str().unwrap_or("").to_string();
-                        if id.is_empty() || !seen.insert(id.clone()) {
-                            continue;
-                        }
-                        let body = e["body"].clone();
-                        if body.is_null() {
-                            continue;
-                        }
-                        let target = e["target_url"].as_str().unwrap_or("").to_string();
-                        let url = if target.is_empty() || !target.starts_with("http") {
-                            fallback.clone()
-                        } else {
-                            target
-                        };
-                        match Client::new().post(&url).json(&body).send().await {
-                            Ok(_) => {
-                                auth.post(format!("{}/events/{id}/ack", cfg.backend))
-                                    .send()
-                                    .await
-                                    .ok();
-                                println!("  {} → {}", &id[..8], url);
-                            }
-                            Err(e) => println!("  {} → {} ERR: {e}", &id[..8], url),
-                        }
-                    }
-                }
-                tokio::time::sleep(std::time::Duration::from_secs(interval)).await;
-            }
+            run_local_dev(&cfg, port, source).await;
         }
         Commands::Dashboard => {
             open::that(&cfg.web).ok();
@@ -467,5 +509,22 @@ async fn main() {
                 Err(e) => eprintln!("Error: {e}"),
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::take_sse_event_data;
+
+    #[test]
+    fn extracts_complete_event_frames_and_keeps_partial_frames() {
+        let mut buffer = ": connected\n\nevent: event\ndata: {\"id\":\"one\"}\n\nevent: event\ndata: {\"id\":\"two\"}".to_string();
+
+        assert_eq!(take_sse_event_data(&mut buffer), vec![r#"{"id":"one"}"#]);
+        assert_eq!(buffer, "event: event\ndata: {\"id\":\"two\"}");
+
+        buffer.push_str("\n\n");
+        assert_eq!(take_sse_event_data(&mut buffer), vec![r#"{"id":"two"}"#]);
+        assert!(buffer.is_empty());
     }
 }
