@@ -139,7 +139,7 @@ pub async fn list_attempts(
 ) -> Result<Json<Vec<DeliveryAttempt>>, StatusCode> {
     require_scope(&cu, "events:read")?;
     let rows = sqlx::query_as::<_, DeliveryAttempt>(
-        "SELECT * FROM delivery_attempts WHERE event_id = $1 AND organization_id = $2 ORDER BY attempt_number ASC, created_at ASC",
+        "SELECT * FROM delivery_attempts WHERE event_id = $1 AND organization_id = $2 ORDER BY created_at ASC, id ASC",
     )
     .bind(id)
     .bind(cu.organization_id)
