@@ -21,12 +21,12 @@
 | `MAX_RETRIES` | `5` | Batas network retry |
 | `WORKER_COUNT` | `4` | Worker delivery paralel |
 | `WEB_URL` | localhost dev origins | Daftar origin CORS dipisah koma |
-| `PUBLIC_URL` | `https://app.terusin-dev.my.id` | URL yang ditampilkan dashboard |
+| `PUBLIC_URL` | `https://ingest.trusin.my.id` | URL yang ditampilkan dashboard |
 | `TERUSIN_TOKEN` | - | Token CLI/MCP |
 | `HOSTED_MODE` | `false` | Aktifkan entitlement dan quota paket hosted Free |
-| `INGEST_CANONICAL_HOST` | `ingest.terusin-dev.my.id` | Target CNAME untuk domain ingest customer |
+| `INGEST_CANONICAL_HOST` | `ingest.trusin.my.id` | Target CNAME untuk domain ingest customer |
 | `PLATFORM_ADMIN_TOKEN` | - | Bearer secret satu-kali untuk bootstrap platform operator; jangan pernah diberikan ke browser |
 
-Untuk production, gunakan HTTPS untuk `FRONTEND_URL`, secret manager untuk nilai sensitif, dan redirect URI publik yang sama persis dengan konfigurasi Google Cloud. Untuk instalasi hosted trusin, gunakan `https://app.terusin-dev.my.id` sebagai `PUBLIC_URL`, `FRONTEND_URL`, dan origin di `WEB_URL`.
+Untuk production, gunakan HTTPS untuk `FRONTEND_URL`, secret manager untuk nilai sensitif, dan redirect URI publik yang sama persis dengan konfigurasi Google Cloud. Untuk instalasi hosted trusin, gunakan `https://app.trusin.my.id` sebagai `FRONTEND_URL` dan origin di `WEB_URL`, serta `https://ingest.trusin.my.id` sebagai `PUBLIC_URL`.
 
 `HOSTED_MODE=false` (default) membuat instalasi self-hosted tetap tanpa quota. Saat `HOSTED_MODE=true`, paket Free membatasi 10.000 event diterima per bulan UTC, 1 domain aktif, 10 provider, 3 API key aktif, 3 user, dan retention event 7 hari.

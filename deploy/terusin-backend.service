@@ -1,19 +1,20 @@
 [Unit]
-Description=Terusin Backend
+Description=trusin backend
 After=network.target postgresql.service redis.service
 
 [Service]
 Type=simple
 User=terusin
-WorkingDirectory=/opt/terusin
-EnvironmentFile=/opt/terusin/.env
-ExecStart=/opt/terusin/bin/backend
+WorkingDirectory=/opt/trusin/current
+EnvironmentFile=/etc/trusin/trusin.env
+ExecStart=/opt/trusin/current/bin/backend
 Restart=always
 RestartSec=5
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
 PrivateTmp=true
+ReadWritePaths=/opt/trusin
 
 [Install]
 WantedBy=multi-user.target

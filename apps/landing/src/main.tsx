@@ -3,8 +3,8 @@ import { createRoot } from "react-dom/client";
 import "./styles.css";
 
 const config = {
-  appUrl: import.meta.env.VITE_APP_URL || "https://app.terusin-dev.my.id",
-  docsUrl: import.meta.env.VITE_DOCS_URL || "https://docs.terusin-dev.my.id",
+  appUrl: import.meta.env.VITE_APP_URL || "https://app.trusin.my.id",
+  docsUrl: import.meta.env.VITE_DOCS_URL || "https://docs.trusin.my.id",
   githubUrl:
     import.meta.env.VITE_GITHUB_URL || "https://github.com/adityaputra11/terusin",
   managedEmail: import.meta.env.VITE_MANAGED_CONTACT_EMAIL || "",

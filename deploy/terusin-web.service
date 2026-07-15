@@ -1,19 +1,20 @@
 [Unit]
-Description=Terusin Web
+Description=trusin web dashboard
 After=network.target terusin-backend.service
 
 [Service]
 Type=simple
 User=terusin
-WorkingDirectory=/opt/terusin
-EnvironmentFile=/opt/terusin/.env
-ExecStart=/opt/terusin/bin/web
+WorkingDirectory=/opt/trusin/current
+EnvironmentFile=/etc/trusin/trusin.env
+ExecStart=/opt/trusin/current/bin/web
 Restart=always
 RestartSec=5
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
 PrivateTmp=true
+ReadWritePaths=/opt/trusin
 
 [Install]
 WantedBy=multi-user.target

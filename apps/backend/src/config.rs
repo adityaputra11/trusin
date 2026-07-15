@@ -87,7 +87,7 @@ async fn get_ngrok_url() -> Option<String> {
 /// ngrok probe, which a browser cannot reach directly.
 pub async fn get_endpoint() -> Json<serde_json::Value> {
     let public_url =
-        std::env::var("PUBLIC_URL").unwrap_or_else(|_| "https://terusin-dev.my.id".to_string());
+        std::env::var("PUBLIC_URL").unwrap_or_else(|_| "https://ingest.trusin.my.id".to_string());
     let ngrok = get_ngrok_url().await;
     Json(serde_json::json!({
         "endpoint": public_url,

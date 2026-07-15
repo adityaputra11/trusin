@@ -32,7 +32,7 @@ services:
       MAX_RETRIES: "${MAX_RETRIES:-5}"
       WORKER_COUNT: "${WORKER_COUNT:-4}"
       HOSTED_MODE: "${HOSTED_MODE:-false}"
-      INGEST_CANONICAL_HOST: "${INGEST_CANONICAL_HOST:-ingest.terusin-dev.my.id}"
+      INGEST_CANONICAL_HOST: "${INGEST_CANONICAL_HOST:-ingest.trusin.my.id}"
       PLATFORM_ADMIN_TOKEN: "${PLATFORM_ADMIN_TOKEN:-}"
     depends_on:
       postgres:
