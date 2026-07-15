@@ -1,10 +1,6 @@
-//! Background delivery workers.
-//!
-//! `worker` pops ids from the main Redis list (`terusin:queue`) and attempts
-//! delivery to the event's target; on failure it schedules a retry in the
-//! `terusin:retry` sorted set with exponential backoff. `retry_worker` pops
-//! due retries and re-attempts. Both fan out to `forward_to_rules` after a
-//! successful main delivery.
+//! Background delivery workers. `worker` pops ids from `terusin:queue` and
+//! delivers; on failure schedules a retry in the `terusin:retry` sorted set
+//! (exponential backoff). `retry_worker` re-attempts due retries.
 
 use chrono::Utc;
 use hmac::{Hmac, Mac};

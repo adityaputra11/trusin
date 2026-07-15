@@ -1,5 +1,4 @@
-//! Webhook ingest handlers: the public `POST /` and `POST /{source}` entry
-//! points. These persist the raw event and enqueue its id for the workers.
+//! Webhook ingest handlers (`POST /`, `POST /{source}`).
 
 use std::sync::Arc;
 

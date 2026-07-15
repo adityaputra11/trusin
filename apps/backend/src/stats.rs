@@ -1,6 +1,4 @@
-//! Aggregated observability metrics for the dashboard: status totals,
-//! success rate, hourly throughput timeseries, top sources/targets, and the
-//! current Redis queue depth.
+//! Aggregated observability metrics for the dashboard.
 
 use std::sync::Arc;
 

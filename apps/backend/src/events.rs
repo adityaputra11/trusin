@@ -1,5 +1,4 @@
-//! Webhook event handlers: list/get/stream events, per-event delivery attempts,
-//! and admin actions (retry/ack/delete, bulk variants).
+//! Webhook event handlers: list/get/stream, per-event attempts, admin actions.
 
 use std::sync::Arc;
 

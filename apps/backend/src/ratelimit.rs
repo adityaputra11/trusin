@@ -1,6 +1,4 @@
-//! Per-IP rate limiting via `governor` (GCRA). Used by the auth endpoints to
-//! throttle login/me brute-force attempts. All items are `pub` because the
-//! limiter type appears in `AppState` and the helpers are called by `auth.rs`.
+//! Per-IP rate limiting via `governor` (GCRA), used by the auth endpoints.
 
 use std::net::IpAddr;
 use std::sync::Arc;
