@@ -5,7 +5,6 @@ use crate::auth::{
     auth_client, config_path, ensure_token, keychain_delete, load_config, resolve_token,
     save_config, store_token, Config,
 };
-use base64::Engine;
 use clap::{Parser, Subcommand};
 use reqwest::Client;
 use serde::Deserialize;
@@ -18,7 +17,7 @@ use std::process::Command;
 #[command(name = "trusin", about = "Webhook relay CLI")]
 struct Cli {
     #[command(subcommand)]
-    command: Commands,
+    command: Option<Commands>,
 }
 
 #[derive(Subcommand)]
@@ -34,17 +33,6 @@ enum Commands {
     },
     /// Forget the API key / clear stored credentials
     Logout,
-    /// Login with username & password (legacy; prefer `set-token`)
-    Login {
-        #[arg(short, long)]
-        user: Option<String>,
-        #[arg(short, long)]
-        password: Option<String>,
-        #[arg(short, long)]
-        backend: Option<String>,
-        #[arg(long)]
-        web: Option<String>,
-    },
     /// Forward webhooks to a local port
     Forward {
         #[arg(short, long, default_value = "8080")]
@@ -141,9 +129,19 @@ fn run_mcp(cfg: &Config, override_path: Option<PathBuf>) {
 async fn main() {
     let cli = Cli::parse();
     let mut cfg = load_config();
+    let Some(command) = cli.command else {
+        println!("\n  trusin CLI\n");
+        if !ensure_token(&mut cfg) {
+            return;
+        }
+        if let Err(error) = interactive::run(cfg).await {
+            eprintln!("Interactive TUI error: {error}");
+        }
+        return;
+    };
     let client = Client::new();
 
-    match cli.command {
+    match command {
         Commands::SetToken { token } => {
             let mut c = cfg;
             // Take the key from the positional arg, or prompt for it (hidden).
@@ -172,92 +170,6 @@ async fn main() {
             c.token = None;
             save_config(&c);
             println!(" ✓ Token cleared (keychain + config).");
-        }
-        Commands::Login {
-            user,
-            password,
-            backend,
-            web,
-        } => {
-            let mut c = cfg;
-
-            let default = Config::default();
-            if let Some(b) = backend {
-                c.backend = b;
-            }
-            if let Some(w) = web {
-                c.web = w;
-            }
-
-            if user.is_none() || password.is_none() {
-                println!(
-                    " Login to {} (legacy password flow; prefer `trusin set-token`)",
-                    c.backend
-                );
-            }
-            if let Some(u) = user {
-                c.user = u;
-            }
-            if c.user.is_empty() {
-                print!(" Username [{}]: ", default.user);
-                io::stdout().flush().ok();
-                let mut input = String::new();
-                io::stdin().read_line(&mut input).ok();
-                let u = input.trim();
-                c.user = if u.is_empty() {
-                    default.user.clone()
-                } else {
-                    u.to_string()
-                };
-            }
-            if let Some(p) = password {
-                c.password = p;
-            }
-            if c.password.is_empty() {
-                print!(" Password: ");
-                io::stdout().flush().ok();
-                let mut input = String::new();
-                io::stdin().read_line(&mut input).ok();
-                let p = input.trim();
-                c.password = if p.is_empty() {
-                    default.password.clone()
-                } else {
-                    p.to_string()
-                };
-            }
-
-            // verify credentials
-            let test = Client::builder()
-                .default_headers({
-                    let mut h = reqwest::header::HeaderMap::new();
-                    let b = base64::engine::general_purpose::STANDARD
-                        .encode(format!("{}:{}", c.user, c.password));
-                    h.insert(
-                        reqwest::header::AUTHORIZATION,
-                        format!("Basic {b}").parse().unwrap(),
-                    );
-                    h
-                })
-                .build()
-                .unwrap()
-                .get(format!("{}/events", c.backend))
-                .send()
-                .await;
-
-            match test {
-                Ok(r) if r.status().is_success() => {
-                    save_config(&c);
-                    println!(" Saved to {}", config_path().display());
-                    open::that(&c.web).ok();
-                    println!(" Opening {}", c.web);
-                }
-                Ok(_) => {
-                    eprintln!(" Login gagal — credential ditolak di {}", c.backend);
-                }
-                Err(e) => {
-                    eprintln!(" Gagal connect ke {}: {e}", c.backend);
-                }
-            }
         }
         Commands::Forward { port, url } => {
             if !ensure_token(&mut cfg) {
@@ -450,7 +362,6 @@ async fn main() {
                         }
                     );
                     println!(" Auth:    {auth_mode}");
-                    println!(" User:    {}", cfg.user);
                     println!(" Backend: {}", cfg.backend);
                     println!(" Web:     {}", cfg.web);
                     println!(" Config:  {}", config_path().display());

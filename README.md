@@ -75,7 +75,6 @@ Build from source instead:
 ```sh
 alias trusin='cargo run --bin trusin --'
 
-trusin login              # save credentials
 trusin status             # check forwarding state
 trusin interactive        # full-screen terminal dashboard
 trusin forward --port 3000   # forward webhooks to localhost:3000

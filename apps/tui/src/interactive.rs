@@ -487,7 +487,14 @@ fn draw_config(frame: &mut ratatui::Frame, app: &App, area: Rect) {
                 &app.data.config.default_target
             }
         )),
-        Line::from(format!("Config auth user: {}", app.cfg.user)),
+        Line::from(format!(
+            "API token: {}",
+            if resolve_token(&app.cfg).is_some() {
+                "configured"
+            } else {
+                "not configured"
+            }
+        )),
     ];
     frame.render_widget(
         Paragraph::new(lines).block(Block::default().title("Config").borders(Borders::ALL)),
@@ -499,9 +506,7 @@ fn draw_tokens(frame: &mut ratatui::Frame, app: &App, area: Rect) {
     let lines = vec![
         Line::from("API keys are created in the web dashboard: Settings > API Tokens."),
         Line::from("Paste one into this machine with: trusin set-token ts_..."),
-        Line::from(
-            "Precedence: TERUSIN_TOKEN env > OS keychain > config.toml token > Basic fallback.",
-        ),
+        Line::from("Precedence: TERUSIN_TOKEN env > OS keychain > config.toml token."),
         Line::from(""),
         Line::from(format!(
             "Active auth mode: {}",
