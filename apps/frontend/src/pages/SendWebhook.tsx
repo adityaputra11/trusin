@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from "react";
 import { Navigate } from "react-router-dom";
 import { Send, CheckCircle2, AlertCircle } from "lucide-react";
-import { api } from "../lib/api";
+import { ApiError, api } from "../lib/api";
 import { useRules } from "../lib/hooks";
 import { Button, Card, CardHeader, Field, Input, Select, Textarea } from "../components/ui";
 import { useCanWrite } from "../lib/user-context";
@@ -94,9 +94,14 @@ export function SendWebhook() {
         id: res.id,
       });
     } catch (err) {
+      const quotaExceeded = err instanceof ApiError && err.code === "event_quota_exceeded";
       setResult({
         ok: false,
-        message: err instanceof Error ? err.message : "Failed to send webhook.",
+        message: quotaExceeded
+          ? "Your Free plan has reached its monthly event limit. Upgrade or wait for the next UTC reset."
+          : err instanceof Error
+            ? err.message
+            : "Failed to send webhook.",
       });
     } finally {
       setLoading(false);

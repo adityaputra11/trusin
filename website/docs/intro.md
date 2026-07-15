@@ -1,11 +1,11 @@
 ---
 sidebar_position: 1
-title: Selamat datang
+title: Welcome
 ---
 
 # trusin
 
-trusin adalah webhook relay self-hosted untuk tim yang butuh delivery andal, audit trail, dashboard operasional, CLI/TUI, MCP, dan kontrol penuh atas data webhook. Ia menerima request dari provider, menyimpan event di Postgres, memasukkan ID event ke antrean Redis, lalu worker meneruskannya ke endpoint tujuan.
+trusin is a self-hosted webhook relay for teams that need reliable delivery, audit history, an operations dashboard, CLI/TUI, MCP, and control over webhook data. It receives provider requests, stores events in Postgres, pushes event IDs to Redis, and delivers them to target endpoints with background workers.
 
 ## Quick start
 
@@ -14,7 +14,7 @@ docker compose up -d postgres redis
 AUTH_USERNAME=admin AUTH_PASSWORD=change-me-in-production PORT=3011 cargo run --bin backend
 ```
 
-Di terminal lain:
+In a second terminal:
 
 ```bash
 cd apps/frontend && npm install && npm run build && cd ../..
@@ -22,11 +22,11 @@ AUTH_USERNAME=admin AUTH_PASSWORD=change-me-in-production \
   BACKEND_URL=http://localhost:3011 PORT=3012 cargo run --bin web
 ```
 
-Buka `http://localhost:3012`, lalu login dengan kredensial yang sama. Ganti password default sebelum mengekspos service ke internet.
+Open `http://localhost:3012` and sign in with the same credentials. Change the default password before exposing the service to the internet.
 
-Untuk production, aktifkan Google OAuth dan gunakan API token untuk CLI/TUI/MCP. Lihat panduan **Authentication dan RBAC** sebelum membuka instance ke internet.
+For production, enable Google OAuth and use API tokens for CLI/TUI/MCP. Read **Authentication and RBAC** before exposing an instance to the internet.
 
-## Kirim webhook pertama
+## Send your first webhook
 
 ```bash
 curl -X POST http://localhost:3011/github/webhook \
@@ -34,4 +34,4 @@ curl -X POST http://localhost:3011/github/webhook \
   -d '{"action":"ping"}'
 ```
 
-Respons berisi `id` event dan status awal `queued`. Pantau hasil delivery dari dashboard atau `GET /events/{id}`.
+The response includes an event `id` and the initial `queued` status. Monitor delivery from the dashboard or `GET /events/{id}`.

@@ -12,7 +12,7 @@ const config: Config = {
   projectName: 'terusin',
   onBrokenLinks: 'throw',
   onBrokenMarkdownLinks: 'warn',
-  i18n: {defaultLocale: 'id', locales: ['id']},
+  i18n: {defaultLocale: 'en', locales: ['en']},
   presets: [
     ['classic', {
       docs: {sidebarPath: './sidebars.ts', routeBasePath: 'docs'},

@@ -13,11 +13,11 @@ flowchart LR
   C[CLI / MCP] --> B
 ```
 
-- **backend** menangani ingest, API, auth, queue, dan worker.
-- **frontend** adalah React + Vite SPA.
-- **web** meng-embed bundle SPA dan reverse-proxy path API ke backend.
-- **tui** menyediakan CLI operasional.
-- **mcp** menyediakan tool berbasis stdio JSON-RPC untuk AI client.
-- **receiver** adalah target contoh untuk development.
+- **backend** handles ingest, the API, authentication, the queue, and workers.
+- **frontend** is a React + Vite SPA.
+- **web** embeds the SPA bundle and reverse-proxies API paths to the backend.
+- **tui** provides an operational CLI.
+- **mcp** provides stdio JSON-RPC tools for AI clients.
+- **receiver** is an example target for development.
 
-Ingest publik tidak menunggu target selesai. Event disimpan dan diantrikan dahulu, sehingga latency provider tidak bergantung pada target.
+Public ingest does not wait for the target to finish. Events are stored and queued first, so provider latency does not depend on downstream delivery.

@@ -6,11 +6,15 @@
 import { clearAuth, getAuthHeader } from "./auth";
 
 export class ApiError extends Error {
+  public code?: string;
+
   constructor(
     public status: number,
     message: string,
+    code?: string,
   ) {
     super(message);
+    this.code = code;
     this.name = "ApiError";
   }
 }
@@ -63,13 +67,22 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
 
   if (!res.ok) {
     let msg = `${res.status} ${res.statusText}`;
+    let code: string | undefined;
     try {
       const text = await res.text();
-      if (text) msg = text;
+      if (text) {
+        try {
+          const payload = JSON.parse(text) as { error?: string; message?: string };
+          code = payload.error;
+          msg = payload.message ?? payload.error ?? msg;
+        } catch {
+          msg = text;
+        }
+      }
     } catch {
       /* ignore */
     }
-    throw new ApiError(res.status, msg);
+    throw new ApiError(res.status, msg, code);
   }
 
   // Some endpoints return empty bodies (DELETE, retry).

@@ -1,26 +1,26 @@
 # Troubleshooting
 
-## Backend gagal start
+## Backend does not start
 
-Pastikan Postgres dan Redis hidup, lalu periksa `DATABASE_URL` dan `REDIS_URL`.
+Ensure Postgres and Redis are running, then inspect `DATABASE_URL` and `REDIS_URL`.
 
 ```bash
 docker compose ps
 docker compose logs postgres redis
 ```
 
-## Event tidak terkirim
+## An event is not delivered
 
-- Pastikan target dapat diakses dari host/container backend; `localhost` di container menunjuk container itu sendiri.
-- Periksa event detail dan `/events/{id}/attempts`.
-- Pastikan target mengembalikan HTTP 2xx.
-- Periksa `MAX_RETRIES` dan sorted set Redis jika status `retrying`.
+- Ensure the target is reachable from the backend host/container; `localhost` inside a container points to that container.
+- Inspect event details and `/events/{id}/attempts`.
+- Ensure the target returns HTTP 2xx.
+- Inspect `MAX_RETRIES` and the Redis sorted set when status is `retrying`.
 
-## Dashboard menampilkan 401
+## Dashboard shows 401
 
-Pastikan `AUTH_USERNAME` dan `AUTH_PASSWORD` pada process web sama dengan user backend yang di-seed. Untuk Vite dev, login browser dipakai langsung ke backend.
+Ensure `AUTH_USERNAME` and `AUTH_PASSWORD` in the web process match the seeded backend user. Vite development sends browser credentials directly to the backend.
 
-## Perubahan frontend tidak muncul di binary web
+## Frontend changes do not appear in the web binary
 
 Build ulang frontend, lalu paksa recompilation resource embed:
 
@@ -30,6 +30,6 @@ touch apps/web/src/main.rs
 cargo build --bin web
 ```
 
-## Smoke test gagal
+## Smoke test fails
 
-Baca `/tmp/terusin-e2e-backend.log`, `/tmp/terusin-e2e-web.log`, dan `/tmp/terusin-e2e-receiver.log`. Pastikan port test tidak sedang dipakai process lain.
+Read `/tmp/terusin-e2e-backend.log`, `/tmp/terusin-e2e-web.log`, and `/tmp/terusin-e2e-receiver.log`. Ensure another process is not using the test ports.

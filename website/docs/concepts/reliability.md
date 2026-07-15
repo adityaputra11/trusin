@@ -1,11 +1,11 @@
 # Reliability model
 
-Event dimulai sebagai `queued`. Worker mengambil ID dengan `BRPOP`, membaca payload dari Postgres, lalu mengirim HTTP POST.
+An event starts as `queued`. A worker pops its ID with `BRPOP`, reads the payload from Postgres, and sends an HTTP POST.
 
-- Network error mengubah status menjadi `retrying` dan menjadwalkan ID di sorted set `terusin:retry`.
-- Delay retry adalah `10 × 2^retry_count` detik.
-- Setelah batas `MAX_RETRIES`, status menjadi `failed`.
-- Response 2xx menjadi `delivered` dan detail attempt dicatat.
-- Admin dapat retry, acknowledge, atau delete event.
+- A network error changes the status to `retrying` and schedules the ID in the `terusin:retry` sorted set.
+- Retry delay is `10 × 2^retry_count` seconds.
+- After `MAX_RETRIES`, the status becomes `failed`.
+- A 2xx response becomes `delivered` and records an attempt.
+- Admins can retry, acknowledge, or delete an event.
 
-Delivery bersifat **at least once**: receiver harus idempotent. Gunakan event ID bisnis dari provider atau deduplication key pada target.
+Delivery is **at least once**: receivers must be idempotent. Use the provider business event ID or a deduplication key at the target.

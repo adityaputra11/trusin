@@ -1,11 +1,11 @@
 # Local development
 
-## Prasyarat
+## Prerequisites
 
 - Rust 1.85 atau lebih baru
 - Node.js 18 atau lebih baru
-- Docker dengan Compose
-- `curl` untuk smoke test
+- Docker with Compose
+- `curl` for smoke tests
 
 ## Development loop
 
@@ -22,7 +22,7 @@ npm install
 npm run dev
 ```
 
-Dashboard development tersedia di `http://localhost:5173`. Untuk menguji bundle production yang di-embed:
+The development dashboard is available at `http://localhost:5173`. To test the embedded production bundle:
 
 ```bash
 cd apps/frontend && npm run build && cd ../..
@@ -30,9 +30,9 @@ touch apps/web/src/main.rs
 PORT=3012 BACKEND_URL=http://localhost:3011 cargo run --bin web
 ```
 
-`touch` memaksa `rust-embed` membaca ulang isi `dist/`.
+`touch` forces `rust-embed` to read the `dist/` contents again.
 
-## Dokumentasi
+## Documentation
 
 ```bash
 cd website
@@ -40,4 +40,4 @@ npm install
 npm start
 ```
 
-Docusaurus tersedia di `http://localhost:3000`.
+Docusaurus is available at `http://localhost:3000`.

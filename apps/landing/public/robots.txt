@@ -1,0 +1,5 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://trusin.my.id/sitemap.xml
+Sitemap: https://docs.trusin.my.id/sitemap.xml

@@ -2,19 +2,19 @@
 
 ## Public
 
-| Method | Path | Fungsi |
+| Method | Path | Purpose |
 |---|---|---|
 | GET | `/health` | Health probe |
-| POST | `/` atau `/{source}` | Webhook ingest |
+| POST | `/` or `/{source}` | Webhook ingest |
 | GET | `/config/endpoint` | Public/ngrok endpoint |
-| GET | `/config/oauth` | Status Google OAuth |
-| GET | `/api/auth/google` | Redirect ke Google OAuth |
+| GET | `/config/oauth` | Google OAuth status |
+| GET | `/api/auth/google` | Redirect to Google OAuth |
 | GET | `/api/auth/callback/google` | Callback Google OAuth |
 | GET | `/api/auth/me` | Probe session/token/basic auth |
 | POST | `/api/auth/login` | Login password |
 | POST | `/api/auth/logout` | Logout |
 
-## Authenticated
+## Authenticated endpoints
 
 | Method | Path | Role |
 |---|---|---|
@@ -36,17 +36,17 @@
 | PATCH | `/api/users/{id}/role` | admin |
 | GET/POST/DELETE | `/api/auth/tokens...` | own tokens |
 
-Gunakan `Authorization: Bearer ts_...` atau Basic auth. API key dapat membawa scope `events:read`, `webhooks:send`, `rules:read`, `rules:write`, dan `organization:manage`. Event listing mendukung `search`, `status`, `source`, `from`, `to`, `page`, dan `per_page` (maksimum 200).
+Use `Authorization: Bearer ts_...` or Basic auth. API keys can carry `events:read`, `webhooks:send`, `rules:read`, `rules:write`, and `organization:manage` scopes. Event listing supports `search`, `status`, `source`, `from`, `to`, `page`, and `per_page` (maximum 200).
 
 ## Platform operator provisioning
 
-Bootstrap user operator pertama dengan `POST /api/platform/bootstrap/operator` dan `Authorization: Bearer $PLATFORM_ADMIN_TOKEN`:
+Bootstrap the first operator with `POST /api/platform/bootstrap/operator` and `Authorization: Bearer $PLATFORM_ADMIN_TOKEN`:
 
 ```json
 { "username": "admin" }
 ```
 
-Endpoint ini hanya berjalan selama belum ada operator. Setelah bootstrap, login normal sebagai operator lalu gunakan dashboard internal `/platform` atau API session-protected berikut:
+This endpoint only works while no operator exists. After bootstrap, sign in normally as the operator and use the internal `/platform` dashboard or these session-protected APIs:
 
 - `GET /api/platform/overview`
 - `GET /api/platform/organizations`
@@ -54,7 +54,7 @@ Endpoint ini hanya berjalan selama belum ada operator. Setelah bootstrap, login 
 - `POST /api/platform/organizations`
 - `PATCH /api/platform/organizations/{id}/subscription`
 
-Organisasi hosted tidak dapat dibuat oleh tenant admin. Platform operator membuat organisasi dan admin awal, beserta data subscriber dan billing contact:
+Hosted organizations cannot be created by a tenant admin. A platform operator creates an organization and its initial admin, plus subscriber and billing-contact data:
 
 ```json
 {
@@ -71,11 +71,11 @@ Organisasi hosted tidak dapat dibuat oleh tenant admin. Platform operator membua
 
 ## Custom ingest domains
 
-Admin membuat domain melalui `POST /api/domains`, lalu menambahkan CNAME `<domain>` ke `INGEST_CANONICAL_HOST` dan TXT `_terusin-verification.<domain>` dengan token yang dikembalikan API. `POST /api/domains/{id}/verify` mengaktifkan domain hanya jika kedua record valid. Hanya domain berstatus `active` menerima webhook.
+An admin creates a domain through `POST /api/domains`, then adds CNAME `<domain>` to `INGEST_CANONICAL_HOST` and TXT `_terusin-verification.<domain>` with the API-returned token. `POST /api/domains/{id}/verify` activates the domain only when both records are valid. Only an `active` domain accepts webhooks.
 
 ### Send webhook
 
-`POST /api/send` hanya tersedia untuk admin. Pilih provider aktif dengan `provider_id`, atau kirim secara manual dengan `source` dan `target_url`. `target_url` boleh dikosongkan pada mode manual jika default target sudah dikonfigurasi.
+`POST /api/send` is available only to admins. Select an active provider with `provider_id`, or send manually with `source` and `target_url`. `target_url` may be empty in manual mode when a default target is configured.
 
 ```json
 {
@@ -84,11 +84,11 @@ Admin membuat domain melalui `POST /api/domains`, lalu menambahkan CNAME `<domai
 }
 ```
 
-Target manual harus menggunakan `http` atau `https`, tidak boleh menyertakan credential di URL, dan harus memenuhi target network policy. `X-Target-Url` pada public ingest dinonaktifkan secara default.
+Manual targets must use `http` or `https`, must not include URL credentials, and must pass the target network policy. `X-Target-Url` is disabled by default on public ingest.
 
 ## Audit entry
 
-`GET /api/audit?page=1&per_page=25` mengembalikan:
+`GET /api/audit?page=1&per_page=25` returns:
 
 ```json
 {

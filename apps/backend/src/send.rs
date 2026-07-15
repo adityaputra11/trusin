@@ -29,6 +29,21 @@ fn error(status: StatusCode, message: &str) -> (StatusCode, Json<Value>) {
     (status, Json(serde_json::json!({ "error": message })))
 }
 
+fn enqueue_error(status: StatusCode) -> (StatusCode, Json<Value>) {
+    if status == StatusCode::TOO_MANY_REQUESTS {
+        return (
+            status,
+            Json(serde_json::json!({
+                "error": "event_quota_exceeded",
+                "message": "Your Free plan has reached its monthly event limit.",
+                "limit": crate::organizations::FREE_EVENT_LIMIT,
+                "reset_at": crate::organizations::next_event_quota_reset(),
+            })),
+        );
+    }
+    error(status, "Could not queue the webhook. Please try again.")
+}
+
 pub async fn send_webhook(
     State(state): State<Arc<AppState>>,
     Extension(cu): Extension<auth::CurrentUser>,
@@ -122,5 +137,5 @@ pub async fn send_webhook(
         target_url,
     )
     .await
-        .map_err(|status| error(status, "failed to queue webhook"))
+    .map_err(enqueue_error)
 }

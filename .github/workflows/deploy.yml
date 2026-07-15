@@ -48,6 +48,8 @@ jobs:
           VITE_DOCS_URL: https://docs.trusin.my.id
           VITE_GITHUB_URL: https://github.com/adityaputra11/trusin
           VITE_MANAGED_CONTACT_EMAIL: ${{ secrets.MANAGED_CONTACT_EMAIL }}
+          VITE_GOOGLE_SITE_VERIFICATION: ${{ vars.GOOGLE_SITE_VERIFICATION }}
+          VITE_BING_SITE_VERIFICATION: ${{ vars.BING_SITE_VERIFICATION }}
         run: |
           npm ci
           npm run build
@@ -141,34 +143,41 @@ jobs:
         run: |
           mkdir -p upload/trusin-release-${{ github.sha }}
           tar -xzf artifact/trusin-release.tar.gz -C upload/trusin-release-${{ github.sha }}
-          cat > upload/trusin-release-${{ github.sha }}/release/runtime.env <<EOF
-          DATABASE_URL=$DATABASE_URL
-          REDIS_URL=${REDIS_URL:-redis://127.0.0.1:6379}
-          PORT=3011
-          BACKEND_URL=http://127.0.0.1:3011
-          BACKEND_PORT=3011
-          WEB_PORT=3012
-          PUBLIC_URL=https://ingest.trusin.my.id
-          APP_URL=https://app.trusin.my.id
-          FRONTEND_URL=https://app.trusin.my.id
-          OAUTH_REDIRECT_URI=https://app.trusin.my.id/api/auth/callback/google
-          WEB_URL=https://app.trusin.my.id
-          HOSTED_MODE=true
-          INGEST_CANONICAL_HOST=ingest.trusin.my.id
-          AUTH_USERNAME=$AUTH_USERNAME
-          AUTH_PASSWORD=$AUTH_PASSWORD
-          JWT_SECRET=$JWT_SECRET
-          GOOGLE_CLIENT_ID=$GOOGLE_CLIENT_ID
-          GOOGLE_CLIENT_SECRET=$GOOGLE_CLIENT_SECRET
-          RESEND_API_KEY=$RESEND_API_KEY
-          EMAIL_FROM=$EMAIL_FROM
-          PLATFORM_ADMIN_TOKEN=$PLATFORM_ADMIN_TOKEN
-          TURNSTILE_SITE_KEY=$TURNSTILE_SITE_KEY
-          TURNSTILE_SECRET_KEY=$TURNSTILE_SECRET_KEY
-          DEFAULT_SIGNING_SECRET=$DEFAULT_SIGNING_SECRET
-          MAX_RETRIES=5
-          WORKER_COUNT=4
-          EOF
+          write_env() {
+            local key="$1" value="$2"
+            value="${value//\\/\\\\}"
+            value="${value//\"/\\\"}"
+            value="${value//\$/\\\$}"
+            printf '%s="%s"\n' "$key" "$value"
+          }
+          {
+            write_env DATABASE_URL "$DATABASE_URL"
+            write_env REDIS_URL "${REDIS_URL:-redis://127.0.0.1:6379}"
+            write_env PORT 3011
+            write_env BACKEND_URL http://127.0.0.1:3011
+            write_env BACKEND_PORT 3011
+            write_env WEB_PORT 3012
+            write_env PUBLIC_URL https://ingest.trusin.my.id
+            write_env APP_URL https://app.trusin.my.id
+            write_env FRONTEND_URL https://app.trusin.my.id
+            write_env OAUTH_REDIRECT_URI https://app.trusin.my.id/api/auth/callback/google
+            write_env WEB_URL https://app.trusin.my.id
+            write_env HOSTED_MODE true
+            write_env INGEST_CANONICAL_HOST ingest.trusin.my.id
+            write_env AUTH_USERNAME "$AUTH_USERNAME"
+            write_env AUTH_PASSWORD "$AUTH_PASSWORD"
+            write_env JWT_SECRET "$JWT_SECRET"
+            write_env GOOGLE_CLIENT_ID "$GOOGLE_CLIENT_ID"
+            write_env GOOGLE_CLIENT_SECRET "$GOOGLE_CLIENT_SECRET"
+            write_env RESEND_API_KEY "$RESEND_API_KEY"
+            write_env EMAIL_FROM "$EMAIL_FROM"
+            write_env PLATFORM_ADMIN_TOKEN "$PLATFORM_ADMIN_TOKEN"
+            write_env TURNSTILE_SITE_KEY "$TURNSTILE_SITE_KEY"
+            write_env TURNSTILE_SECRET_KEY "$TURNSTILE_SECRET_KEY"
+            write_env DEFAULT_SIGNING_SECRET "$DEFAULT_SIGNING_SECRET"
+            write_env MAX_RETRIES 5
+            write_env WORKER_COUNT 4
+          } > upload/trusin-release-${{ github.sha }}/release/runtime.env
           tar -czf production-upload.tar.gz -C upload trusin-release-${{ github.sha }}
 
       - uses: appleboy/scp-action@v0.1.7
@@ -217,3 +226,8 @@ jobs:
             done
 
             test "$(curl --silent --output /dev/null --write-out '%{http_code}' https://api.trusin.my.id/api/auth/me)" = 401
+            curl --fail --silent https://trusin.my.id/robots.txt | grep -Fx 'Sitemap: https://trusin.my.id/sitemap.xml'
+            curl --fail --silent https://trusin.my.id/sitemap.xml | grep -F '<urlset'
+            curl --fail --silent https://docs.trusin.my.id/robots.txt | grep -F 'Sitemap:'
+            curl --fail --silent https://docs.trusin.my.id/sitemap.xml | grep -F '<urlset'
+            curl --fail --silent https://trusin.my.id | grep -F 'https://trusin.my.id/og-image.svg'
