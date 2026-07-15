@@ -24,12 +24,11 @@ function Arrow() {
 function Logo() {
   return (
     <a className="logo" href="#top" aria-label="trusin home">
-      <picture>
+      <picture className="logo-mark">
         <source srcSet="/icon-trusin.webp" type="image/webp" />
-        <img className="logo-mark" src="/icon-trusin-128.png" width="30" height="30" alt="" />
+        <img className="logo-mark-image" src="/icon-trusin-128.png" width="44" height="44" alt="" />
       </picture>
       <span>trusin</span>
-      <i aria-hidden="true" />
     </a>
   );
 }
