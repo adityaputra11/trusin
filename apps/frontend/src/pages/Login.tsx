@@ -171,7 +171,7 @@ export function Login() {
           <p className="mb-2 text-xs font-semibold uppercase tracking-[.16em] text-success">Webhook operations</p>
           <h1 className="text-3xl font-semibold tracking-tight text-foreground">Sign in or create your workspace</h1>
           <p className="mt-2 max-w-sm text-sm leading-6 text-secondary">
-            Your first Google or GitHub sign-in creates a free workspace. Invited teammates join the workspace they were invited to.
+            Your first Google or GitHub sign-in creates a workspace with a 30-day Pro trial. Invited teammates join the workspace they were invited to.
           </p>
         </div>
 
@@ -241,13 +241,7 @@ export function Login() {
             loading={loading}
             disabled={captchaBlocked}
           >
-            {loading ? (
-              <>
-                <Loader2 className="h-4 w-4 animate-spin" /> Signing in…
-              </>
-            ) : (
-              "Sign in"
-            )}
+            {loading ? "Signing in…" : "Sign in"}
           </Button>
         </form>
         <p className="mt-5 text-center text-xs text-muted">Secure access for your workspace.</p>

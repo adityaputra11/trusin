@@ -1,13 +1,11 @@
 import { useMemo, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
   Activity,
   Building2,
   Code2,
   Copy,
   Check,
-  ChevronRight,
-  LockKeyhole,
   Terminal,
   Plug,
   Server,
@@ -16,7 +14,6 @@ import {
   Plus,
   KeyRound,
   AlertTriangle,
-  ShieldCheck,
   Users,
 } from "lucide-react";
 import { Card, CardHeader, Badge, Button, Input, Modal } from "../components/ui";
@@ -32,12 +29,22 @@ import { Activity as ActivityPage } from "./Activity";
 import { Organization } from "./Organization";
 import { Users as UsersPage } from "./Users";
 
-// The MCP server is a stdio process — its tools are static and known.
+// The MCP server is a stdio process — its public tool contract is static.
 const MCP_TOOLS = [
   {
     name: "list_events",
-    description: "List recent webhook events",
-    args: "limit?: number (default 20)",
+    description: "Find webhook events with delivery filters",
+    args: "search?, status?, source?, page?, per_page?",
+  },
+  {
+    name: "get_event",
+    description: "Inspect one webhook event",
+    args: "id: string (required)",
+  },
+  {
+    name: "get_delivery_attempts",
+    description: "Inspect an event delivery timeline",
+    args: "id: string (required)",
   },
   {
     name: "retry_event",
@@ -50,8 +57,13 @@ const MCP_TOOLS = [
     args: "target_url, body, source?",
   },
   {
-    name: "health",
-    description: "Check backend health",
+    name: "get_metrics",
+    description: "Review delivery metrics",
+    args: "range?: 24h | 7d | 30d",
+  },
+  {
+    name: "get_health",
+    description: "Check relay health and readiness",
     args: "—",
   },
 ] as const;
@@ -65,10 +77,10 @@ const CLIENTS: { key: ClientKey; label: string; file: string }[] = [
 ];
 
 function buildSnippet(client: ClientKey, binaryPath: string): string {
-  // Token is the preferred auth mode — generate one in "Devices & API Tokens"
-  // above, then paste it here. User/pass is the legacy fallback.
+  // The MCP binary uses a scoped API token and calls the public backend URL.
   const env = {
     TERUSIN_TOKEN: "<ts_... from Settings → Devices & Tokens>",
+    TERUSIN_URL: "https://api.trusin.my.id",
   };
   const server = { command: binaryPath, env };
   switch (client) {
@@ -315,9 +327,8 @@ function GeneralTab() {
         <CardHeader title="Environment Variables" subtitle="Read by the MCP binary at startup" />
         <div className="space-y-2">
           {[
-            { k: "TERUSIN_TOKEN", v: "\u2014", desc: "API token (preferred). Bearer auth." },
-            { k: "TERUSIN_USER", v: "admin", desc: "Basic auth username (legacy fallback)." },
-            { k: "TERUSIN_PASS", v: "\u2014", desc: "Basic auth password (legacy fallback)." },
+            { k: "TERUSIN_URL", v: "http://127.0.0.1:3011", desc: "Backend URL. Use https://api.trusin.my.id in production." },
+            { k: "TERUSIN_TOKEN", v: "\u2014", desc: "Required scoped API token. Bearer auth only." },
           ].map((row) => (
             <div key={row.k} className="flex items-start gap-4 py-2 border-b border-border last:border-0">
               <code className="text-xs font-mono text-success w-36 shrink-0">{row.k}</code>
@@ -396,7 +407,7 @@ function McpTab() {
         <div className="flex items-center gap-3 text-sm">
           <Activity className="h-4 w-4 text-muted" />
           <span className="text-secondary">Verify:</span>
-          <code className="text-xs font-mono text-foreground bg-surface border border-border rounded px-2 py-1">{`echo '{"method":"health"}' | `}{binaryPath}</code>
+          <code className="text-xs font-mono text-foreground bg-surface border border-border rounded px-2 py-1">{`echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' | `}{binaryPath}</code>
         </div>
       </div>
     </Card>
@@ -406,38 +417,26 @@ function McpTab() {
 export function Settings() {
   const navigate = useNavigate();
   const { section } = useParams();
+  const [searchParams] = useSearchParams();
   const canWrite = useCanWrite();
-  const activeSection = isSettingsSection(section) ? section : "workspace";
+  const activeSection = isSettingsSection(section) && (section !== "access" || canWrite)
+    ? section
+    : "workspace";
+  const showActivity = searchParams.get("panel") === "activity";
 
   return (
     <div className="mx-auto max-w-6xl">
-      <div className="mb-7 flex flex-col gap-2 border-b border-border pb-6 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <p className="text-[10px] font-semibold tracking-[.16em] text-success uppercase">Workspace administration</p>
-          <h2 className="mt-2 text-2xl font-semibold tracking-tight text-foreground">Settings</h2>
-          <p className="mt-1 max-w-2xl text-sm text-secondary">Manage your workspace, access controls, security records, and developer integrations.</p>
-        </div>
-        <div className="flex items-center gap-2 rounded-md border border-border bg-card px-3 py-2 text-xs text-muted">
-          <LockKeyhole className="h-3.5 w-3.5 text-success" />
-          {canWrite ? "Workspace administrator" : "Read-only workspace access"}
-        </div>
-      </div>
-
-      <div className="grid gap-6 lg:grid-cols-[220px_minmax(0,1fr)]">
-        <SettingsNavigation activeSection={activeSection} canWrite={canWrite} onSelect={(next) => navigate(`/settings/${next}`)} />
-        <section className="min-w-0">
-          <SettingsSectionHeader section={activeSection} />
-          {activeSection === "workspace" && <Organization />}
-          {activeSection === "access" && (canWrite ? <UsersPage /> : <RestrictedAccess />)}
-          {activeSection === "security" && <ActivityPage />}
-          {activeSection === "developer" && <DeveloperSettings />}
-        </section>
-      </div>
+      <SettingsNavigation activeSection={activeSection} canWrite={canWrite} onSelect={(next) => navigate(`/settings/${next}`)} />
+      <section className="mt-6 min-w-0">
+        {activeSection === "workspace" && <><Organization /><WorkspaceActivityPanel defaultOpen={showActivity} /></>}
+        {activeSection === "access" && <UsersPage />}
+        {activeSection === "developer" && <DeveloperSettings />}
+      </section>
     </div>
   );
 }
 
-type SettingsSection = "workspace" | "access" | "security" | "developer";
+type SettingsSection = "workspace" | "access" | "developer";
 
 const SETTINGS_SECTIONS: {
   key: SettingsSection;
@@ -446,10 +445,9 @@ const SETTINGS_SECTIONS: {
   icon: typeof Building2;
   adminOnly?: boolean;
 }[] = [
-  { key: "workspace", label: "Workspace", description: "Organization, plan, usage, and domains", icon: Building2 },
-  { key: "access", label: "Access", description: "Members, roles, and invitations", icon: Users, adminOnly: true },
-  { key: "security", label: "Security", description: "Audit trail and operational history", icon: ShieldCheck },
-  { key: "developer", label: "Developer", description: "API tokens, MCP, and connectivity", icon: Code2 },
+  { key: "workspace", label: "Workspace", description: "Plan, usage, domains, and activity", icon: Building2 },
+  { key: "access", label: "Team", description: "Members, roles, and invitations", icon: Users, adminOnly: true },
+  { key: "developer", label: "Developer", description: "API tokens, MCP, and relay health", icon: Code2 },
 ];
 
 function isSettingsSection(value: string | undefined): value is SettingsSection {
@@ -457,11 +455,18 @@ function isSettingsSection(value: string | undefined): value is SettingsSection 
 }
 
 function SettingsNavigation({ activeSection, canWrite, onSelect }: { activeSection: SettingsSection; canWrite: boolean; onSelect: (section: SettingsSection) => void }) {
+  const visibleSections = SETTINGS_SECTIONS.filter((section) => !section.adminOnly || canWrite);
   return (
-    <nav aria-label="Settings sections" className="h-fit rounded-lg border border-border bg-card p-2 lg:sticky lg:top-6">
-      <div className="hidden lg:block px-3 pb-2 pt-2 text-[10px] font-semibold uppercase tracking-[.14em] text-muted">Configuration</div>
-      <div className="flex gap-1 overflow-x-auto lg:flex-col">
-        {SETTINGS_SECTIONS.map((section) => {
+    <nav aria-label="Settings sections" className="rounded-lg border border-border bg-card p-1.5">
+      <select
+        className="w-full rounded-md border border-border bg-surface px-3 py-2 text-sm text-foreground lg:hidden"
+        value={activeSection}
+        onChange={(event) => onSelect(event.target.value as SettingsSection)}
+      >
+        {visibleSections.map((section) => <option key={section.key} value={section.key}>{section.label}</option>)}
+      </select>
+      <div className="hidden gap-1 lg:flex">
+        {visibleSections.map((section) => {
           const Icon = section.icon;
           const active = activeSection === section.key;
           return (
@@ -469,14 +474,10 @@ function SettingsNavigation({ activeSection, canWrite, onSelect }: { activeSecti
               key={section.key}
               type="button"
               onClick={() => onSelect(section.key)}
-              className={`group flex min-w-[148px] items-center gap-3 rounded-md px-3 py-2.5 text-left transition-base lg:min-w-0 ${active ? "bg-[linear-gradient(90deg,rgba(74,222,128,.12),rgba(74,222,128,.03))] text-foreground shadow-[inset_2px_0_0_#4ade80]" : "text-secondary hover:bg-hover hover:text-foreground"}`}
+              className={`group flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium transition-base ${active ? "bg-[rgba(74,222,128,.1)] text-foreground" : "text-secondary hover:bg-hover hover:text-foreground"}`}
             >
               <Icon className={`h-4 w-4 shrink-0 ${active ? "text-success" : "text-muted group-hover:text-success"}`} />
-              <span className="min-w-0 flex-1">
-                <span className="block text-sm font-medium">{section.label}</span>
-                <span className="mt-0.5 hidden text-[11px] leading-4 text-muted lg:block">{section.description}</span>
-              </span>
-              {section.adminOnly && !canWrite ? <LockKeyhole className="h-3.5 w-3.5 text-muted" /> : <ChevronRight className={`h-3.5 w-3.5 ${active ? "text-success" : "text-muted opacity-0 group-hover:opacity-100"}`} />}
+              {section.label}
             </button>
           );
         })}
@@ -485,22 +486,16 @@ function SettingsNavigation({ activeSection, canWrite, onSelect }: { activeSecti
   );
 }
 
-function SettingsSectionHeader({ section }: { section: SettingsSection }) {
-  const current = SETTINGS_SECTIONS.find((item) => item.key === section)!;
-  const Icon = current.icon;
+function WorkspaceActivityPanel({ defaultOpen }: { defaultOpen: boolean }) {
+  const [open, setOpen] = useState(defaultOpen);
   return (
-    <div className="mb-5 flex items-center gap-3">
-      <div className="grid h-10 w-10 place-items-center rounded-md border border-[rgba(74,222,128,.2)] bg-[rgba(74,222,128,.07)]"><Icon className="h-5 w-5 text-success" /></div>
-      <div><h3 className="text-lg font-semibold text-foreground">{current.label}</h3><p className="text-sm text-muted">{current.description}</p></div>
-    </div>
-  );
-}
-
-function RestrictedAccess() {
-  return (
-    <Card>
-      <CardHeader title="Access controls" subtitle="Members, roles, and invitations are managed by workspace administrators." action={<LockKeyhole className="h-5 w-5 text-muted" />} />
-      <div className="rounded-md border border-border bg-surface p-4 text-sm text-secondary">Your viewer role can inspect workspace activity and use personal developer credentials, but it cannot change membership or send invitations.</div>
+    <Card className="mt-6">
+      <CardHeader
+        title="Activity"
+        subtitle="Audit history for workspace changes and sign-ins."
+        action={<Button variant="outline" size="sm" onClick={() => setOpen((value) => !value)}>{open ? "Hide activity" : "View activity"}</Button>}
+      />
+      {open && <ActivityPage />}
     </Card>
   );
 }

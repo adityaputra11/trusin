@@ -87,11 +87,19 @@ Add providers with target URLs via dashboard or `terusin` CLI. Webhooks are forw
     "terusin": {
       "command": "cargo",
       "args": ["run", "--bin", "mcp"],
-      "dir": "/path/to/terusin"
+      "dir": "/path/to/terusin",
+      "env": {
+        "TERUSIN_URL": "https://api.trusin.my.id",
+        "TERUSIN_TOKEN": "ts_..."
+      }
     }
   }
 }
 ```
+
+Create the scoped API token in **Settings → Developer**. The MCP server uses
+local stdio and exposes relay health, metrics, event inspection, webhook sends,
+and event retries.
 
 ## Benchmark (k6)
 

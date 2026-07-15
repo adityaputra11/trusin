@@ -46,7 +46,14 @@ export function Organization() {
     setHostname("");
   };
 
-  if (organization.isLoading) return <p className="text-sm text-muted">Loading organization…</p>;
+  if (organization.isLoading && !data) {
+    return (
+      <div className="max-w-5xl space-y-6 animate-pulse" aria-label="Loading workspace settings">
+        <div className="h-40 rounded-xl border border-border bg-card" />
+        <div className="h-56 rounded-xl border border-border bg-card" />
+      </div>
+    );
+  }
   if (!data) {
     return (
       <Card className="max-w-xl">
@@ -60,23 +67,25 @@ export function Organization() {
   }
 
   const { usage, limits } = data;
+  const isTrial = data.organization.plan_code === "pro" && data.organization.subscription_status === "trialing";
+  const planLabel = isTrial ? "30-day Pro trial" : data.organization.plan_code;
   return (
     <div className="max-w-5xl space-y-6">
       <Card>
         <CardHeader
           title={data.organization.name}
-          subtitle={data.hosted ? "Hosted organization with Free-plan entitlements" : "Self-hosted organization — unlimited entitlements"}
-          action={<Badge variant={data.hosted ? "success" : "purple"}>{data.hosted ? "FREE" : "SELF-HOSTED"}</Badge>}
+          subtitle={data.hosted ? (isTrial ? `Premium access ends ${new Date(data.organization.billing_period_end).toLocaleDateString()}` : "Hosted organization with Free-plan entitlements") : "Self-hosted organization — unlimited entitlements"}
+          action={<Badge variant={data.hosted ? "success" : "purple"}>{data.hosted ? (isTrial ? "PRO TRIAL" : "FREE") : "SELF-HOSTED"}</Badge>}
         />
         <div className="grid gap-4 sm:grid-cols-3 text-sm">
-          <div><p className="text-xs text-muted">Plan</p><p className="mt-1 font-medium text-foreground capitalize">{data.organization.plan_code}</p></div>
+          <div><p className="text-xs text-muted">Plan</p><p className="mt-1 font-medium text-foreground capitalize">{planLabel}</p></div>
           <div><p className="text-xs text-muted">Status</p><p className="mt-1 font-medium text-success capitalize">{data.organization.subscription_status}</p></div>
           <div><p className="text-xs text-muted">Current period (UTC)</p><p className="mt-1 font-medium text-foreground">{usage.period_start} → {usage.period_end}</p></div>
         </div>
       </Card>
 
       <Card>
-        <CardHeader title="Usage & limits" subtitle={data.hosted ? `Free events reset on ${usage.period_end} UTC. Events are retained for ${limits.retention_days} days.` : "Subscription quotas are disabled for self-hosted deployments."} />
+        <CardHeader title="Usage & limits" subtitle={data.hosted ? (isTrial ? `Premium limits are active until ${new Date(data.organization.billing_period_end).toLocaleString()}.` : `Free events reset on ${usage.period_end} UTC. Events are retained for ${limits.retention_days} days.`) : "Subscription quotas are disabled for self-hosted deployments."} />
         <div className="grid gap-x-10 gap-y-5 sm:grid-cols-2">
           <LimitBar label="Accepted webhook events" used={usage.events_accepted} limit={limits.events} />
           <LimitBar label="Active custom domains" used={usage.domains} limit={limits.domains} />

@@ -19,20 +19,38 @@ interface NavItem {
   adminOnly?: boolean;
 }
 
-const NAV_ITEMS: NavItem[] = [
-  { to: "/", label: "Dashboard", icon: LayoutDashboard, end: true },
-  { to: "/providers", label: "Providers", icon: Settings2 },
-  { to: "/hooks", label: "Hooks", icon: Webhook },
-  { to: "/metrics", label: "Metrics", icon: BarChart3 },
-  { to: "/send", label: "Send", icon: Send, adminOnly: true },
-  { to: "/settings", label: "Settings", icon: Settings },
+const NAV_GROUPS: { label: string; items: NavItem[] }[] = [
+  {
+    label: "Operate",
+    items: [
+      { to: "/", label: "Dashboard", icon: LayoutDashboard, end: true },
+      { to: "/metrics", label: "Metrics", icon: BarChart3 },
+    ],
+  },
+  {
+    label: "Build",
+    items: [
+      { to: "/providers", label: "Providers", icon: Settings2 },
+      { to: "/hooks", label: "Hooks", icon: Webhook },
+      { to: "/send", label: "Send", icon: Send, adminOnly: true },
+    ],
+  },
+  {
+    label: "Manage",
+    items: [{ to: "/settings", label: "Settings", icon: Settings }],
+  },
 ];
+
+function visibleNavigationItems(items: NavItem[], canWrite: boolean) {
+  return items.filter((item) => !item.adminOnly || canWrite);
+}
 
 export const Sidebar = memo(function Sidebar() {
   const canWrite = useCanWrite();
-  const visibleItems = NAV_ITEMS.filter(
-    (i) => !i.adminOnly || canWrite,
-  );
+  const visibleGroups = NAV_GROUPS.map((group) => ({
+    ...group,
+    items: visibleNavigationItems(group.items, canWrite),
+  })).filter((group) => group.items.length > 0);
 
   return (
     <aside className="hidden lg:flex w-[248px] shrink-0 border-r border-border bg-[rgba(10,13,11,.96)] flex-col relative">
@@ -47,28 +65,34 @@ export const Sidebar = memo(function Sidebar() {
         <span className="ml-auto text-[9px] font-semibold tracking-[.14em] text-success border border-[rgba(74,222,128,.2)] bg-[rgba(74,222,128,.06)] px-2 py-1 rounded-full">CORE</span>
       </div>
 
-      <div className="px-5 pt-6 pb-2 text-[10px] font-semibold tracking-[.14em] text-muted uppercase">Workspace</div>
-      <nav className="flex-1 py-1 px-3 space-y-1">
-        {visibleItems.map((item) => {
-          const Icon = item.icon;
-          return (
-            <NavLink
-              key={item.to}
-              to={item.to}
-              end={item.end}
-              className={({ isActive }) =>
-                `group flex items-center gap-3 px-3 py-2.5 rounded-md text-[13px] font-medium transition-base border ${
-                  isActive
-                    ? "bg-[linear-gradient(90deg,rgba(74,222,128,.1),rgba(74,222,128,.025))] text-foreground border-[rgba(74,222,128,.22)] shadow-[inset_3px_0_0_#4ade80]"
-                    : "text-secondary border-transparent hover:bg-hover hover:text-foreground hover:border-border"
-                }`
-              }
-            >
-              <Icon className="h-[17px] w-[17px] text-muted group-hover:text-success transition-colors" strokeWidth={1.75} />
-              {item.label}
-            </NavLink>
-          );
-        })}
+      <nav className="flex-1 px-3 py-5 space-y-5">
+        {visibleGroups.map((group) => (
+          <div key={group.label}>
+            <p className="px-2 pb-2 text-[10px] font-semibold tracking-[.14em] text-muted uppercase">{group.label}</p>
+            <div className="space-y-1">
+              {group.items.map((item) => {
+                const Icon = item.icon;
+                return (
+                  <NavLink
+                    key={item.to}
+                    to={item.to}
+                    end={item.end}
+                    className={({ isActive }) =>
+                      `group flex items-center gap-3 px-3 py-2.5 rounded-md text-[13px] font-medium transition-base border ${
+                        isActive
+                          ? "bg-[linear-gradient(90deg,rgba(74,222,128,.1),rgba(74,222,128,.025))] text-foreground border-[rgba(74,222,128,.22)] shadow-[inset_3px_0_0_#4ade80]"
+                          : "text-secondary border-transparent hover:bg-hover hover:text-foreground hover:border-border"
+                      }`
+                    }
+                  >
+                    <Icon className="h-[17px] w-[17px] text-muted group-hover:text-success transition-colors" strokeWidth={1.75} />
+                    {item.label}
+                  </NavLink>
+                );
+              })}
+            </div>
+          </div>
+        ))}
       </nav>
 
       <div className="p-4 border-t border-border">
@@ -83,7 +107,7 @@ export const Sidebar = memo(function Sidebar() {
 
 export const MobileNav = memo(function MobileNav() {
   const canWrite = useCanWrite();
-  const visibleItems = NAV_ITEMS.filter((i) => !i.adminOnly || canWrite);
+  const visibleItems = NAV_GROUPS.flatMap((group) => visibleNavigationItems(group.items, canWrite));
 
   return (
     <nav className="lg:hidden fixed bottom-0 inset-x-0 z-40 border-t border-border bg-[rgba(8,11,9,.94)] backdrop-blur-xl px-2 pb-[max(.5rem,env(safe-area-inset-bottom))] pt-2">
