@@ -38,7 +38,10 @@ async fn main() {
         .parse::<u16>()
         .unwrap_or(3002);
 
-    let client = reqwest::Client::builder().build().expect("reqwest client");
+    let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .expect("reqwest client");
 
     let state = Arc::new(AppState {
         backend_url: backend_url.clone(),
