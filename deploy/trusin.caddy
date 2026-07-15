@@ -1,7 +1,23 @@
-trusin.my.id, www.trusin.my.id {
+www.trusin.my.id {
+    redir https://trusin.my.id{uri} permanent
+}
+
+trusin.my.id {
     root * /var/www/trusin/landing
-    try_files {path} /index.html
+    @hashed_assets path_regexp hashed_assets ^/assets/.+\.(?:css|js)$
+    header @hashed_assets Cache-Control "public, max-age=31536000, immutable"
+    @static_assets path *.webp *.png *.svg *.woff2
+    header @static_assets Cache-Control "public, max-age=2592000"
+    @documents path / /index.html /robots.txt /sitemap.xml /404.html
+    header @documents Cache-Control "no-cache"
+    try_files {path} {path}/
     file_server
+
+    handle_errors {
+        @not_found expression `{http.error.status_code} == 404`
+        rewrite @not_found /404.html
+        file_server
+    }
 }
 
 docs.trusin.my.id {

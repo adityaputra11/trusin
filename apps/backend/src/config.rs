@@ -55,11 +55,14 @@ pub async fn health() -> Json<serde_json::Value> {
     Json(serde_json::json!({"status": "ok"}))
 }
 
-/// Public flag telling the frontend whether the "Continue with Google"
-/// button should be shown. Driven by whether GOOGLE_CLIENT_ID/SECRET were
-/// set at startup (state.oauth.is_some()).
+/// Public browser OAuth configuration used to show only enabled providers.
 pub async fn get_oauth_status(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
-    Json(serde_json::json!({ "enabled": state.oauth.is_some() }))
+    let providers = state
+        .oauth
+        .as_ref()
+        .map(|config| config.enabled_providers())
+        .unwrap_or_default();
+    Json(serde_json::json!({ "enabled": !providers.is_empty(), "providers": providers }))
 }
 
 /// Probe ngrok's local API (port 4040) for an active public tunnel.

@@ -41,7 +41,13 @@ fn enqueue_error(status: StatusCode) -> (StatusCode, Json<Value>) {
             })),
         );
     }
-    error(status, "Could not queue the webhook. Please try again.")
+    (
+        StatusCode::SERVICE_UNAVAILABLE,
+        Json(serde_json::json!({
+            "error": "queue_unavailable",
+            "message": "Webhook delivery is temporarily unavailable. Please try again shortly.",
+        })),
+    )
 }
 
 pub async fn send_webhook(

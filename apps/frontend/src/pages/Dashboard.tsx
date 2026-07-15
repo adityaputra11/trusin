@@ -1,5 +1,6 @@
 import { memo, useCallback, useEffect, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
+import { toast } from "sonner";
 import {
   Inbox,
   Search,
@@ -11,12 +12,10 @@ import {
 } from "lucide-react";
 import {
   useEvents,
-  useEventStream,
   useSources,
   useBulkRetry,
   useBulkDelete,
 } from "../lib/hooks";
-import type { EventStreamStatus } from "../lib/hooks";
 import { useCanWrite } from "../lib/user-context";
 import { EndpointBox } from "../components/EndpointBox";
 import { EventRow } from "../components/EventRow";
@@ -50,29 +49,6 @@ const STATUS_FILTERS: { value: string; label: string }[] = [
 const STATUS_LABEL: Record<string, string> = Object.fromEntries(
   STATUS_FILTERS.map((s) => [s.value, s.label]),
 );
-
-/** Small "Live" / "Reconnecting…" indicator for the event delivery stream. */
-function LiveBadge({ status }: { status: EventStreamStatus }) {
-  if (status === "idle") return null;
-  const connected = status === "connected";
-  return (
-    <span
-      className={`inline-flex items-center gap-1.5 text-xs font-medium px-2.5 h-7 rounded-md border ${
-        connected
-          ? "text-success bg-[rgba(34,197,94,.08)] border-[rgba(34,197,94,.25)]"
-          : "text-warning bg-[rgba(245,158,11,.08)] border-[rgba(245,158,11,.25)]"
-      }`}
-      title={connected ? "Connected — events stream live" : "Stream interrupted — reconnecting…"}
-    >
-      <span
-        className={`h-1.5 w-1.5 rounded-full ${
-          connected ? "bg-success animate-pulse" : "bg-warning"
-        }`}
-      />
-      {connected ? "Live" : "Reconnecting…"}
-    </span>
-  );
-}
 
 // Isolated + memoized so typing in the search input re-renders only this bar,
 // not the 50-row table body beneath it. Search is the one filter that stays
@@ -290,6 +266,7 @@ function FilterModal({
 
 export function Dashboard() {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const canWrite = useCanWrite();
 
   // UI state (what the user typed) vs committed state (what we query for).
@@ -303,6 +280,14 @@ export function Dashboard() {
   const [page, setPage] = useState(1);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [filterModalOpen, setFilterModalOpen] = useState(false);
+
+  useEffect(() => {
+    if (searchParams.get("welcome") !== "1") return;
+    toast.success("Welcome to trusin — your workspace is ready.");
+    const next = new URLSearchParams(searchParams);
+    next.delete("welcome");
+    setSearchParams(next, { replace: true });
+  }, [searchParams, setSearchParams]);
 
   // Debounce timer in a ref: setting it never triggers a re-render.
   const debounceRef = useRef<number | undefined>(undefined);
@@ -318,13 +303,10 @@ export function Dashboard() {
     per_page: 10,
   };
 
-  // Live updates via SSE; falls back gracefully if the stream is unavailable.
-  const streamStatus = useEventStream(true);
   const { data: sources } = useSources();
   const bulkRetry = useBulkRetry();
   const bulkDelete = useBulkDelete();
 
-  // SSE pushes invalidate the query; keep a slow refetchInterval as a backstop.
   const { data, isLoading, isFetching, isError, refetch } = useEvents(query, {
     refetchInterval: 15000,
   });
@@ -441,10 +423,6 @@ export function Dashboard() {
 
       <div className="flex items-end justify-between mb-3 mt-1">
         <div><p className="text-[10px] uppercase tracking-[.13em] text-success font-semibold">Event operations</p><h2 className="text-base font-semibold mt-1 text-foreground">Recent deliveries</h2></div>
-        <div className="flex items-center gap-3">
-          <LiveBadge status={streamStatus} />
-          <p className="hidden sm:block text-[11px] text-muted">Auto-refreshing every 15 seconds</p>
-        </div>
       </div>
       <Card className="p-0 overflow-hidden">
         <FilterBar

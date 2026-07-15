@@ -12,10 +12,8 @@ export function Login() {
   const [params] = useSearchParams();
   const oauthError = params.get("error");
   const inviteToken = params.get("invite");
-  // Whether the backend has Google OAuth configured. The button + divider
-  // are only rendered when enabled, so users never see a broken 503 path.
   const { data: oauthStatus } = useOAuthStatus();
-  const oauthEnabled = oauthStatus?.enabled === true;
+  const providers = oauthStatus?.providers ?? [];
 
   const [user, setUser] = useState("");
   const [password, setPassword] = useState("");
@@ -110,12 +108,9 @@ export function Login() {
     }
   };
 
-  const google = () => {
-    // Hand off to the backend, which redirects to Google's consent screen.
-    // The backend sets the session cookie after the callback, then bounces
-    // us back to "/".
+  const oauth = (provider: "google" | "github") => {
     const query = inviteToken ? `?invite=${encodeURIComponent(inviteToken)}` : "";
-    window.location.assign(`/api/auth/google${query}`);
+    window.location.assign(`/api/auth/${provider}${query}`);
   };
 
   return (
@@ -137,17 +132,10 @@ export function Login() {
           </p>
         </div>
 
-        {/* Google sign-in — hidden entirely when OAuth is not configured on
-            the backend, so users never hit a 503 by clicking it. */}
-        {oauthEnabled && (
+        {providers.length > 0 && (
           <>
-            <button
-              onClick={google}
-              className="mb-1 flex w-full items-center justify-center gap-3 rounded-lg border border-border bg-card px-4 py-3 text-sm font-medium text-foreground transition-base hover:border-border-hover hover:bg-card-secondary"
-            >
-              <GoogleIcon />
-              Continue with Google
-            </button>
+            {providers.includes("google") && <button onClick={() => oauth("google")} className="mb-2 flex w-full items-center justify-center gap-3 rounded-lg border border-border bg-card px-4 py-3 text-sm font-medium text-foreground transition-base hover:border-border-hover hover:bg-card-secondary"><GoogleIcon />Continue with Google</button>}
+            {providers.includes("github") && <button onClick={() => oauth("github")} className="mb-1 flex w-full items-center justify-center gap-3 rounded-lg border border-border bg-card px-4 py-3 text-sm font-medium text-foreground transition-base hover:border-border-hover hover:bg-card-secondary"><GitHubIcon />Continue with GitHub</button>}
 
             <div className="my-5 flex items-center gap-3">
               <div className="flex-1 h-px bg-border" />
@@ -238,6 +226,14 @@ function GoogleIcon() {
         fill="#EA4335"
         d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1A10.99 10.99 0 0 0 2.18 7.07l3.66 2.83C6.71 7.31 9.14 5.38 12 5.38z"
       />
+    </svg>
+  );
+}
+
+function GitHubIcon() {
+  return (
+    <svg className="h-5 w-5 fill-current" viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M12 2C6.48 2 2 6.58 2 12.23c0 4.52 2.87 8.35 6.84 9.71.5.1.68-.22.68-.49 0-.24-.01-1.05-.01-1.9-2.78.62-3.37-1.2-3.37-1.2-.45-1.19-1.11-1.5-1.11-1.5-.91-.64.06-.63.06-.63 1.01.07 1.54 1.07 1.54 1.07.9 1.57 2.35 1.12 2.92.86.09-.67.35-1.12.64-1.38-2.22-.26-4.56-1.15-4.56-5.12 0-1.13.39-2.05 1.04-2.77-.1-.26-.45-1.31.1-2.73 0 0 .85-.28 2.75 1.06A9.3 9.3 0 0 1 12 6.9c.85 0 1.7.12 2.5.34 1.9-1.34 2.75-1.06 2.75-1.06.55 1.42.2 2.47.1 2.73.65.72 1.04 1.64 1.04 2.77 0 3.98-2.34 4.86-4.57 5.12.36.32.68.93.68 1.88 0 1.36-.01 2.45-.01 2.79 0 .27.18.59.69.49A10.25 10.25 0 0 0 22 12.23C22 6.58 17.52 2 12 2Z" />
     </svg>
   );
 }

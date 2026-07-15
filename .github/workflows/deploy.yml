@@ -18,11 +18,11 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       # Build the React frontend first — the `web` binary embeds apps/frontend/dist
       # via rust-embed at compile time. Without this the cargo build fails.
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: '22'
           cache: 'npm'
@@ -50,6 +50,7 @@ jobs:
           VITE_MANAGED_CONTACT_EMAIL: ${{ secrets.MANAGED_CONTACT_EMAIL }}
           VITE_GOOGLE_SITE_VERIFICATION: ${{ vars.GOOGLE_SITE_VERIFICATION }}
           VITE_BING_SITE_VERIFICATION: ${{ vars.BING_SITE_VERIFICATION }}
+          VITE_GA_MEASUREMENT_ID: ${{ vars.GA_MEASUREMENT_ID }}
         run: |
           npm ci
           npm run build
@@ -64,7 +65,7 @@ jobs:
           npm ci
           npm run build
 
-      - uses: actions/cache@v4
+      - uses: actions/cache@v5
         with:
           path: |
             ~/.cargo/registry
@@ -84,7 +85,7 @@ jobs:
             deploy/trusin.caddy deploy/install-release.sh release/deploy/
           tar -czf trusin-release.tar.gz release
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: production-release
           path: trusin-release.tar.gz
@@ -94,9 +95,9 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v5
         with:
           name: production-release
           path: artifact
@@ -112,6 +113,8 @@ jobs:
           JWT_SECRET: ${{ secrets.JWT_SECRET }}
           GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
           GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+          GITHUB_CLIENT_ID: ${{ secrets.GITHUB_CLIENT_ID }}
+          GITHUB_CLIENT_SECRET: ${{ secrets.GITHUB_CLIENT_SECRET }}
           RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
           EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
           PLATFORM_ADMIN_TOKEN: ${{ secrets.PLATFORM_ADMIN_TOKEN }}
@@ -169,6 +172,8 @@ jobs:
             write_env JWT_SECRET "$JWT_SECRET"
             write_env GOOGLE_CLIENT_ID "$GOOGLE_CLIENT_ID"
             write_env GOOGLE_CLIENT_SECRET "$GOOGLE_CLIENT_SECRET"
+            write_env GITHUB_CLIENT_ID "$GITHUB_CLIENT_ID"
+            write_env GITHUB_CLIENT_SECRET "$GITHUB_CLIENT_SECRET"
             write_env RESEND_API_KEY "$RESEND_API_KEY"
             write_env EMAIL_FROM "$EMAIL_FROM"
             write_env PLATFORM_ADMIN_TOKEN "$PLATFORM_ADMIN_TOKEN"

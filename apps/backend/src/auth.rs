@@ -19,13 +19,19 @@ use axum::{
     Json,
 };
 use base64::Engine;
+use handlebars::Handlebars;
 use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation};
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
+use std::collections::HashMap;
 use std::sync::Arc;
 use uuid::Uuid;
 
+use async_trait::async_trait;
+
 use crate::{AppState, User};
+
+const WELCOME_EMAIL_TEMPLATE: &str = include_str!("../templates/welcome.hbs");
 
 /// The authenticated principal, made available to handlers via the axum
 /// `Extension<CurrentUser>` extractor. Inserted by `auth_middleware` after any
@@ -86,49 +92,115 @@ impl TurnstileConfig {
     }
 }
 
+/// OAuth strategy shared by every browser identity provider.
+#[async_trait]
+pub trait OAuthStrategy: Send + Sync {
+    fn provider(&self) -> &'static str;
+    fn authorization_url(&self, state: &str, code_challenge: &str) -> String;
+    async fn identity(&self, code: &str, code_verifier: &str) -> Result<OAuthIdentity, String>;
+}
+
+#[derive(Debug, Clone)]
+pub struct OAuthIdentity {
+    pub provider: &'static str,
+    pub subject: String,
+    pub email: String,
+    pub display_name: String,
+    pub avatar_url: Option<String>,
+}
+
+struct GoogleOAuthStrategy {
+    client_id: String,
+    client_secret: String,
+    redirect_uri: String,
+    http_client: reqwest::Client,
+}
+
+struct GitHubOAuthStrategy {
+    client_id: String,
+    client_secret: String,
+    redirect_uri: String,
+    http_client: reqwest::Client,
+}
+
 /// OAuth + JWT configuration, built once from env vars at startup.
 #[derive(Clone)]
 pub struct OAuthConfig {
-    pub client_id: String,
-    pub client_secret: String,
-    /// Where Google should send the user back. Same-origin with the browser.
-    pub redirect_uri: String,
     /// Where to send the user after a successful login (the SPA root).
     pub frontend_url: String,
     /// HS256 secret for signing session JWTs.
     pub jwt_secret: String,
-    pub http_client: reqwest::Client,
+    providers: HashMap<&'static str, Arc<dyn OAuthStrategy>>,
 }
 
 impl OAuthConfig {
-    /// Returns Some(config) only if Google OAuth is enabled (client id+secret
-    /// present). When None, the auth routes respond 501.
+    /// Returns Some(config when at least one browser OAuth provider is configured.
     pub fn from_env() -> Option<Self> {
-        let client_id = std::env::var("GOOGLE_CLIENT_ID").ok()?;
-        let client_secret = std::env::var("GOOGLE_CLIENT_SECRET").ok()?;
-        if client_id.is_empty() || client_secret.is_empty() {
-            return None;
-        }
         let app_url = std::env::var("APP_URL")
             .or_else(|_| std::env::var("FRONTEND_URL"))
             .unwrap_or_else(|_| "http://localhost:5173".to_string())
             .trim_end_matches('/')
             .to_string();
-        let redirect_uri = std::env::var("OAUTH_REDIRECT_URI")
-            .unwrap_or_else(|_| format!("{app_url}/api/auth/callback/google"));
         let frontend_url = std::env::var("FRONTEND_URL").unwrap_or(app_url);
         let jwt_secret = std::env::var("JWT_SECRET").unwrap_or_else(|_| {
             tracing::warn!("JWT_SECRET not set — using insecure default. Set it in production!");
             "dev-insecure-secret-change-me".to_string()
         });
-        Some(Self {
-            client_id,
-            client_secret,
-            redirect_uri,
+        let client = reqwest::Client::builder().build().expect("reqwest client");
+        let mut providers: HashMap<&'static str, Arc<dyn OAuthStrategy>> = HashMap::new();
+
+        if let (Ok(client_id), Ok(client_secret)) = (
+            std::env::var("GOOGLE_CLIENT_ID"),
+            std::env::var("GOOGLE_CLIENT_SECRET"),
+        ) {
+            if !client_id.trim().is_empty() && !client_secret.trim().is_empty() {
+                let redirect_uri = std::env::var("OAUTH_REDIRECT_URI")
+                    .unwrap_or_else(|_| format!("{frontend_url}/api/auth/callback/google"));
+                providers.insert(
+                    "google",
+                    Arc::new(GoogleOAuthStrategy {
+                        client_id,
+                        client_secret,
+                        redirect_uri,
+                        http_client: client.clone(),
+                    }),
+                );
+            }
+        }
+        if let (Ok(client_id), Ok(client_secret)) = (
+            std::env::var("GITHUB_CLIENT_ID"),
+            std::env::var("GITHUB_CLIENT_SECRET"),
+        ) {
+            if !client_id.trim().is_empty() && !client_secret.trim().is_empty() {
+                providers.insert(
+                    "github",
+                    Arc::new(GitHubOAuthStrategy {
+                        client_id,
+                        client_secret,
+                        redirect_uri: format!(
+                            "{}/api/auth/callback/github",
+                            frontend_url.trim_end_matches('/')
+                        ),
+                        http_client: client.clone(),
+                    }),
+                );
+            }
+        }
+        (!providers.is_empty()).then_some(Self {
             frontend_url,
             jwt_secret,
-            http_client: reqwest::Client::builder().build().expect("reqwest client"),
+            providers,
         })
+    }
+
+    pub fn provider(&self, provider: &str) -> Option<&Arc<dyn OAuthStrategy>> {
+        self.providers.get(provider)
+    }
+
+    pub fn enabled_providers(&self) -> Vec<&'static str> {
+        let mut providers = self.providers.keys().copied().collect::<Vec<_>>();
+        providers.sort_unstable();
+        providers
     }
 }
 
@@ -246,352 +318,463 @@ pub async fn touch_token_last_used(
     }
 }
 
-// ── Google API types ──────────────────────────────────────────────────────
+// ── Browser OAuth strategies ─────────────────────────────────────────────
 
 #[derive(Debug, Deserialize)]
-pub struct CodeExchangeResponse {
-    pub access_token: String,
-    // refresh_token / id_token / scope also present but unused here.
+struct CodeExchangeResponse {
+    access_token: String,
 }
-
-#[derive(Debug, Deserialize, Serialize)]
-pub struct GoogleUserInfo {
-    pub sub: String,
-    pub email: String,
-    #[serde(default)]
-    pub email_verified: bool,
-    #[serde(default)]
-    pub name: Option<String>,
-    #[serde(default)]
-    pub picture: Option<String>,
-}
-
-// ── Endpoint: GET /api/auth/google ────────────────────────────────────────
 
 #[derive(Debug, Deserialize)]
-pub struct GoogleLoginQuery {
+struct GoogleUserInfo {
+    sub: String,
+    email: String,
+    #[serde(default)]
+    email_verified: bool,
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    picture: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct GitHubUserInfo {
+    id: u64,
+    login: String,
+    email: Option<String>,
+    name: Option<String>,
+    avatar_url: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct GitHubEmail {
+    email: String,
+    primary: bool,
+    verified: bool,
+}
+
+#[async_trait]
+impl OAuthStrategy for GoogleOAuthStrategy {
+    fn provider(&self) -> &'static str {
+        "google"
+    }
+
+    fn authorization_url(&self, state: &str, code_challenge: &str) -> String {
+        let params = [
+            ("client_id", self.client_id.as_str()),
+            ("redirect_uri", self.redirect_uri.as_str()),
+            ("response_type", "code"),
+            ("scope", "openid email profile"),
+            ("access_type", "online"),
+            ("prompt", "consent"),
+            ("code_challenge", code_challenge),
+            ("code_challenge_method", "S256"),
+            ("state", state),
+        ];
+        format!(
+            "https://accounts.google.com/o/oauth2/v2/auth?{}",
+            serde_urlencoded::to_string(params).unwrap_or_default()
+        )
+    }
+
+    async fn identity(&self, code: &str, code_verifier: &str) -> Result<OAuthIdentity, String> {
+        let tokens: CodeExchangeResponse = self
+            .http_client
+            .post("https://oauth2.googleapis.com/token")
+            .form(&[
+                ("code", code),
+                ("client_id", &self.client_id),
+                ("client_secret", &self.client_secret),
+                ("redirect_uri", &self.redirect_uri),
+                ("grant_type", "authorization_code"),
+                ("code_verifier", code_verifier),
+            ])
+            .send()
+            .await
+            .map_err(|error| format!("token request failed: {error}"))?
+            .error_for_status()
+            .map_err(|error| format!("token exchange rejected: {error}"))?
+            .json()
+            .await
+            .map_err(|error| format!("token response invalid: {error}"))?;
+        let user: GoogleUserInfo = self
+            .http_client
+            .get("https://www.googleapis.com/oauth2/v3/userinfo")
+            .bearer_auth(tokens.access_token)
+            .send()
+            .await
+            .map_err(|error| format!("profile request failed: {error}"))?
+            .error_for_status()
+            .map_err(|error| format!("profile request rejected: {error}"))?
+            .json()
+            .await
+            .map_err(|error| format!("profile response invalid: {error}"))?;
+        if !user.email_verified {
+            return Err("Google did not return a verified email address.".to_string());
+        }
+        Ok(OAuthIdentity {
+            provider: self.provider(),
+            subject: user.sub,
+            email: user.email.clone(),
+            display_name: user.name.unwrap_or(user.email),
+            avatar_url: user.picture,
+        })
+    }
+}
+
+#[async_trait]
+impl OAuthStrategy for GitHubOAuthStrategy {
+    fn provider(&self) -> &'static str {
+        "github"
+    }
+
+    fn authorization_url(&self, state: &str, code_challenge: &str) -> String {
+        let params = [
+            ("client_id", self.client_id.as_str()),
+            ("redirect_uri", self.redirect_uri.as_str()),
+            ("scope", "read:user user:email"),
+            ("state", state),
+            ("code_challenge", code_challenge),
+            ("code_challenge_method", "S256"),
+        ];
+        format!(
+            "https://github.com/login/oauth/authorize?{}",
+            serde_urlencoded::to_string(params).unwrap_or_default()
+        )
+    }
+
+    async fn identity(&self, code: &str, code_verifier: &str) -> Result<OAuthIdentity, String> {
+        let tokens: CodeExchangeResponse = self
+            .http_client
+            .post("https://github.com/login/oauth/access_token")
+            .header(header::ACCEPT, "application/json")
+            .form(&[
+                ("client_id", self.client_id.as_str()),
+                ("client_secret", self.client_secret.as_str()),
+                ("code", code),
+                ("redirect_uri", self.redirect_uri.as_str()),
+                ("code_verifier", code_verifier),
+            ])
+            .send()
+            .await
+            .map_err(|error| format!("token request failed: {error}"))?
+            .error_for_status()
+            .map_err(|error| format!("token exchange rejected: {error}"))?
+            .json()
+            .await
+            .map_err(|error| format!("token response invalid: {error}"))?;
+        let user: GitHubUserInfo = self
+            .http_client
+            .get("https://api.github.com/user")
+            .header(header::USER_AGENT, "trusin")
+            .bearer_auth(&tokens.access_token)
+            .send()
+            .await
+            .map_err(|error| format!("profile request failed: {error}"))?
+            .error_for_status()
+            .map_err(|error| format!("profile request rejected: {error}"))?
+            .json()
+            .await
+            .map_err(|error| format!("profile response invalid: {error}"))?;
+        let emails: Vec<GitHubEmail> = self
+            .http_client
+            .get("https://api.github.com/user/emails")
+            .header(header::USER_AGENT, "trusin")
+            .bearer_auth(&tokens.access_token)
+            .send()
+            .await
+            .map_err(|error| format!("email request failed: {error}"))?
+            .error_for_status()
+            .map_err(|error| format!("email request rejected: {error}"))?
+            .json()
+            .await
+            .map_err(|error| format!("email response invalid: {error}"))?;
+        let email = emails
+            .into_iter()
+            .find(|entry| entry.primary && entry.verified)
+            .map(|entry| entry.email)
+            .or(user.email)
+            .ok_or_else(|| "GitHub did not return a verified primary email address.".to_string())?;
+        Ok(OAuthIdentity {
+            provider: self.provider(),
+            subject: user.id.to_string(),
+            email,
+            display_name: user.name.unwrap_or(user.login),
+            avatar_url: user.avatar_url,
+        })
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct OAuthLoginQuery {
     pub invite: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Default)]
 struct OAuthState {
+    provider: String,
     invite_token: Option<String>,
+    code_verifier: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CallbackParams {
+    pub code: Option<String>,
+    pub state: Option<String>,
+    pub error: Option<String>,
 }
 
 pub async fn google_login(
     State(state): State<Arc<AppState>>,
-    Query(query): Query<GoogleLoginQuery>,
+    Query(query): Query<OAuthLoginQuery>,
+) -> Response {
+    oauth_login_for_provider(state, "google", query).await
+}
+
+pub async fn github_login(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<OAuthLoginQuery>,
+) -> Response {
+    oauth_login_for_provider(state, "github", query).await
+}
+
+async fn oauth_login_for_provider(
+    state: Arc<AppState>,
+    provider_name: &'static str,
+    query: OAuthLoginQuery,
 ) -> Response {
     let Some(cfg) = state.oauth.as_ref() else {
-        return not_configured();
+        return not_configured(provider_name);
     };
-    let oauth_state = generate_oauth_state();
-    let mut redis = state.redis.clone();
-    let stored_state = serde_json::to_string(&OAuthState {
+    let Some(provider) = cfg.provider(provider_name) else {
+        return not_configured(provider_name);
+    };
+    let state_token = generate_oauth_secret();
+    let code_verifier = generate_oauth_secret();
+    let stored_state = OAuthState {
+        provider: provider_name.to_string(),
         invite_token: query.invite.filter(|token| !token.trim().is_empty()),
-    })
-    .unwrap_or_else(|_| "{}".to_string());
+        code_verifier: code_verifier.clone(),
+    };
+    let mut redis = state.redis.clone();
     let stored = redis::cmd("SETEX")
-        .arg(format!("terusin:oauth:state:{oauth_state}"))
+        .arg(format!("terusin:oauth:state:{state_token}"))
         .arg(600)
-        .arg(stored_state)
+        .arg(serde_json::to_string(&stored_state).unwrap_or_default())
         .query_async::<()>(&mut redis)
         .await;
-    if let Err(e) = stored {
-        tracing::warn!("oauth state store failed: {e}");
+    if let Err(error) = stored {
+        tracing::warn!(
+            provider = provider_name,
+            "oauth state store failed: {error}"
+        );
         return (
             StatusCode::SERVICE_UNAVAILABLE,
-            "Could not start Google OAuth login.",
+            "Could not start sign-in. Please try again.",
         )
             .into_response();
     }
-    let params = [
-        ("client_id", cfg.client_id.as_str()),
-        ("redirect_uri", cfg.redirect_uri.as_str()),
-        ("response_type", "code"),
-        ("scope", "openid email profile"),
-        ("access_type", "online"),
-        ("prompt", "consent"),
-        ("state", oauth_state.as_str()),
-    ];
-    let qs = serde_urlencoded::to_string(&params).unwrap_or_default();
-    Redirect::temporary(&format!(
-        "https://accounts.google.com/o/oauth2/v2/auth?{qs}"
-    ))
-    .into_response()
+    Redirect::temporary(&provider.authorization_url(&state_token, &pkce_challenge(&code_verifier)))
+        .into_response()
 }
 
-fn not_configured() -> Response {
+fn not_configured(provider: &str) -> Response {
     (
         StatusCode::SERVICE_UNAVAILABLE,
-        "Google OAuth not configured (set GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET).",
+        format!("{} sign-in is not configured.", provider),
     )
         .into_response()
 }
 
-fn generate_oauth_state() -> String {
+fn generate_oauth_secret() -> String {
     use rand::RngCore;
     let mut bytes = [0u8; 32];
     rand::thread_rng().fill_bytes(&mut bytes);
     base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes)
 }
 
-// ── Endpoint: GET /api/auth/callback/google ───────────────────────────────
-
-#[derive(Debug, Deserialize)]
-pub struct CallbackParams {
-    pub code: String,
-    pub state: String,
-    // Google may also send `scope`; we ignore it.
+fn pkce_challenge(verifier: &str) -> String {
+    use sha2::{Digest, Sha256};
+    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes()))
 }
 
 pub async fn google_callback(
     State(state): State<Arc<AppState>>,
     Query(params): Query<CallbackParams>,
 ) -> Response {
+    oauth_callback_for_provider(state, "google", params).await
+}
+
+pub async fn github_callback(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<CallbackParams>,
+) -> Response {
+    oauth_callback_for_provider(state, "github", params).await
+}
+
+async fn oauth_callback_for_provider(
+    state: Arc<AppState>,
+    provider_name: &'static str,
+    params: CallbackParams,
+) -> Response {
     let Some(cfg) = state.oauth.as_ref() else {
-        return not_configured();
+        return not_configured(provider_name);
+    };
+    if params.error.is_some() {
+        return oauth_error(cfg, "Sign-in was cancelled or denied.");
+    }
+    let (Some(code), Some(state_token)) = (params.code.as_deref(), params.state.as_deref()) else {
+        return oauth_error(
+            cfg,
+            "The sign-in response was incomplete. Please try again.",
+        );
     };
     let mut redis = state.redis.clone();
-    let key = format!("terusin:oauth:state:{}", params.state);
+    let key = format!("terusin:oauth:state:{state_token}");
     let valid_state: Option<String> = redis::cmd("GET")
         .arg(&key)
         .query_async(&mut redis)
         .await
         .ok();
     let Some(valid_state) = valid_state else {
-        return oauth_error(&cfg, "Google login expired. Please try again.");
+        return oauth_error(cfg, "Sign-in expired. Please try again.");
     };
-    let oauth_state = serde_json::from_str::<OAuthState>(&valid_state).unwrap_or_default();
     let _ = redis::cmd("DEL")
         .arg(&key)
         .query_async::<()>(&mut redis)
         .await;
-
-    // 1. Exchange code → access_token (server-side, secret stays here).
-    let token_res = cfg
-        .http_client
-        .post("https://oauth2.googleapis.com/token")
-        .form(&[
-            ("code", params.code.as_str()),
-            ("client_id", cfg.client_id.as_str()),
-            ("client_secret", cfg.client_secret.as_str()),
-            ("redirect_uri", cfg.redirect_uri.as_str()),
-            ("grant_type", "authorization_code"),
-        ])
-        .send()
-        .await;
-
-    let tokens: CodeExchangeResponse = match token_res {
-        Ok(r) if r.status().is_success() => match r.json().await {
-            Ok(t) => t,
-            Err(e) => {
-                tracing::warn!("google token parse: {e}");
-                return oauth_error(&cfg, "Could not read Google response.");
-            }
-        },
-        Ok(r) => {
-            let status = r.status();
-            let body = r.text().await.unwrap_or_default();
-            tracing::warn!("google token exchange {status}: {body}");
-            return oauth_error(&cfg, "Google rejected the login code.");
-        }
-        Err(e) => {
-            tracing::warn!("google token network: {e}");
-            return oauth_error(&cfg, "Could not reach Google.");
-        }
-    };
-
-    // 2. Fetch the user profile from Google.
-    let user_info: GoogleUserInfo = match cfg
-        .http_client
-        .get("https://www.googleapis.com/oauth2/v3/userinfo")
-        .bearer_auth(&tokens.access_token)
-        .send()
-        .await
-    {
-        Ok(r) if r.status().is_success() => match r.json().await {
-            Ok(u) => u,
-            Err(e) => {
-                tracing::warn!("google userinfo parse: {e}");
-                return oauth_error(&cfg, "Could not read your Google profile.");
-            }
-        },
-        Ok(r) => {
-            let status = r.status();
-            let body = r.text().await.unwrap_or_default();
-            tracing::warn!("google userinfo {status}: {body}");
-            return oauth_error(&cfg, "Google did not return your profile.");
-        }
-        Err(e) => {
-            tracing::warn!("google userinfo network: {e}");
-            return oauth_error(&cfg, "Could not reach Google.");
-        }
-    };
-
-    if !user_info.email_verified {
-        return oauth_error(&cfg, "Your Google email is not verified.");
+    let stored_state = serde_json::from_str::<OAuthState>(&valid_state).unwrap_or_default();
+    if stored_state.provider != provider_name {
+        return oauth_error(cfg, "Invalid sign-in response. Please try again.");
     }
-
-    // 3. Upsert user row.
-    let user = match upsert_oauth_user(&state.db, &user_info, oauth_state.invite_token.as_deref()).await {
-        Ok(u) => u,
-        Err(sqlx::Error::RowNotFound) => {
-            return oauth_error(
-                &cfg,
-                "This invitation is invalid, expired, or belongs to a different Google account.",
-            );
-        }
-        Err(e) => {
-            tracing::error!("upsert oauth user: {e}");
-            return oauth_error(&cfg, "Could not save your account.");
+    let Some(provider) = cfg.provider(provider_name) else {
+        return not_configured(provider_name);
+    };
+    let identity = match provider.identity(code, &stored_state.code_verifier).await {
+        Ok(identity) => identity,
+        Err(error) => {
+            tracing::warn!(provider = provider_name, "oauth identity failed: {error}");
+            return oauth_error(cfg, "We could not verify your account. Please try again.");
         }
     };
-
-    // 4. Issue JWT + set cookie + redirect to SPA.
-    let jwt = match issue_jwt(&user.id, &cfg.jwt_secret) {
-        Ok(t) => t,
-        Err(e) => {
-            tracing::error!("jwt issue: {e}");
-            return oauth_error(&cfg, "Could not start a session.");
+    let result =
+        match upsert_oauth_user(&state.db, &identity, stored_state.invite_token.as_deref()).await {
+            Ok(result) => result,
+            Err(sqlx::Error::RowNotFound) => {
+                return oauth_error(
+                    cfg,
+                    "This invitation is invalid, expired, or belongs to a different account.",
+                )
+            }
+            Err(error) => {
+                tracing::error!(provider = provider_name, "upsert oauth user: {error}");
+                return oauth_error(cfg, "Could not save your account.");
+            }
+        };
+    if result.created_workspace {
+        trigger_welcome_delivery(&state, result.user.id).await;
+    }
+    let jwt = match issue_jwt(&result.user.id, &cfg.jwt_secret) {
+        Ok(token) => token,
+        Err(error) => {
+            tracing::error!("jwt issue: {error}");
+            return oauth_error(cfg, "Could not start a session.");
         }
     };
-
     let (name, value) = build_cookie(&jwt, cfg);
-    let mut res = Redirect::temporary(&cfg.frontend_url).into_response();
-    res.headers_mut().insert(name, value);
+    let destination = if result.created_workspace {
+        format!("{}?welcome=1", cfg.frontend_url.trim_end_matches('/'))
+    } else {
+        cfg.frontend_url.clone()
+    };
+    let mut response = Redirect::temporary(&destination).into_response();
+    response.headers_mut().insert(name, value);
+    let current_user = CurrentUser {
+        id: result.user.id,
+        organization_id: result.user.organization_id,
+        role: result.user.role.clone(),
+        scopes: vec![],
+        is_platform_operator: result.user.is_platform_operator,
+    };
     crate::audit::record(
         &state,
-        Some(&CurrentUser {
-            id: user.id,
-            organization_id: user.organization_id,
-            role: user.role.clone(),
-            scopes: vec![],
-            is_platform_operator: user.is_platform_operator,
-        }),
-        "auth.google_login",
+        Some(&current_user),
+        &format!("auth.{provider_name}_login"),
         "user",
-        Some(user.id.to_string()),
-        serde_json::json!({ "email": user.email }),
+        Some(result.user.id.to_string()),
+        serde_json::json!({ "email": result.user.email }),
     )
     .await;
-    if oauth_state.invite_token.is_some() {
+    if stored_state.invite_token.is_some() {
         crate::audit::record(
             &state,
-            Some(&CurrentUser {
-                id: user.id,
-                organization_id: user.organization_id,
-                role: user.role.clone(),
-                scopes: vec![],
-                is_platform_operator: user.is_platform_operator,
-            }),
+            Some(&current_user),
             "invite.accepted",
             "invite",
             None,
-            serde_json::json!({ "email": user.email }),
+            serde_json::json!({ "email": result.user.email }),
         )
         .await;
     }
-    res
+    response
 }
 
-/// Insert-or-update the user row for a Google subject. Returns the user.
+struct OAuthUpsert {
+    user: User,
+    created_workspace: bool,
+}
+
 async fn upsert_oauth_user(
     db: &PgPool,
-    info: &GoogleUserInfo,
+    info: &OAuthIdentity,
     invite_token: Option<&str>,
-) -> Result<User, sqlx::Error> {
+) -> Result<OAuthUpsert, sqlx::Error> {
     let invite = match invite_token {
         Some(token) => crate::invites::invite_for_token(db, token, &info.email).await?,
         None => None,
     };
-    // Try to find an existing OAuth user with this provider+subject.
-    if let Some(existing) = sqlx::query_as::<_, User>(
-        "SELECT * FROM users WHERE oauth_provider = 'google' AND oauth_subject = $1",
+    let existing_by_identity = sqlx::query_as::<_, User>(
+        r#"SELECT users.* FROM users
+           JOIN user_oauth_identities identities ON identities.user_id = users.id
+           WHERE identities.provider = $1 AND identities.subject = $2"#,
     )
-    .bind(&info.sub)
+    .bind(info.provider)
+    .bind(&info.subject)
     .fetch_optional(db)
-    .await?
-    {
-        if let Some((_, _, organization_id)) = invite.as_ref() {
-            if existing.organization_id != *organization_id {
-                return Err(sqlx::Error::RowNotFound);
-            }
-        }
-        // Refresh display info (name/picture/email can change on Google side).
-        sqlx::query(
-            r#"UPDATE users SET email = $1, display_name = $2, avatar_url = $3
-               WHERE id = $4"#,
-        )
-        .bind(&info.email)
-        .bind(info.name.as_deref().unwrap_or(&info.email))
-        .bind(info.picture.as_deref())
-        .bind(existing.id)
-        .execute(db)
-        .await?;
-        if let Some((invite_id, _, _)) = invite {
-            sqlx::query("UPDATE organization_invites SET accepted_at = NOW() WHERE id = $1")
-                .bind(invite_id)
-                .execute(db)
-                .await?;
-        }
-        return sqlx::query_as::<_, User>("SELECT * FROM users WHERE id = $1")
-            .bind(existing.id)
-            .fetch_one(db)
-            .await;
+    .await?;
+    if let Some(existing) = existing_by_identity {
+        validate_invite_organization(invite.as_ref(), existing.organization_id)?;
+        refresh_oauth_user(db, existing.id, info).await?;
+        accept_invite_if_present(db, invite.as_ref()).await?;
+        return fetch_oauth_upsert(db, existing.id, false).await;
     }
 
-    // Also avoid duplicate email: link an existing email-matched account.
     if let Some(existing) = sqlx::query_as::<_, User>("SELECT * FROM users WHERE email = $1")
         .bind(&info.email)
         .fetch_optional(db)
-    .await?
+        .await?
     {
-        if let Some((_, _, organization_id)) = invite.as_ref() {
-            if existing.organization_id != *organization_id {
-                return Err(sqlx::Error::RowNotFound);
-            }
-        }
+        validate_invite_organization(invite.as_ref(), existing.organization_id)?;
+        let mut transaction = db.begin().await?;
+        link_identity(&mut transaction, existing.id, info).await?;
         sqlx::query(
-            r#"UPDATE users SET oauth_provider = 'google', oauth_subject = $1,
-               display_name = COALESCE(display_name, $2),
-               avatar_url = COALESCE(avatar_url, $3)
-               WHERE id = $4"#,
+            r#"UPDATE users SET display_name = COALESCE(display_name, $1),
+               avatar_url = COALESCE(avatar_url, $2) WHERE id = $3"#,
         )
-        .bind(&info.sub)
-        .bind(info.name.as_deref().unwrap_or(&info.email))
-        .bind(info.picture.as_deref())
+        .bind(&info.display_name)
+        .bind(&info.avatar_url)
         .bind(existing.id)
-        .execute(db)
+        .execute(&mut *transaction)
         .await?;
-        if let Some((invite_id, _, _)) = invite {
-            sqlx::query("UPDATE organization_invites SET accepted_at = NOW() WHERE id = $1")
-                .bind(invite_id)
-                .execute(db)
-                .await?;
-        }
-        return sqlx::query_as::<_, User>("SELECT * FROM users WHERE id = $1")
-            .bind(existing.id)
-            .fetch_one(db)
-            .await;
+        accept_invite_in_transaction(&mut transaction, invite.as_ref()).await?;
+        transaction.commit().await?;
+        return fetch_oauth_upsert(db, existing.id, false).await;
     }
 
     if let Some((invite_id, role, organization_id)) = invite {
         let mut transaction = db.begin().await?;
-        let user = sqlx::query_as::<_, User>(
-            r#"INSERT INTO users (id, organization_id, role, email, display_name, avatar_url, oauth_provider, oauth_subject)
-               VALUES ($1, $2, $3, $4, $5, $6, 'google', $7)
-               RETURNING *"#,
-        )
-        .bind(Uuid::new_v4())
-        .bind(organization_id)
-        .bind(role)
-        .bind(&info.email)
-        .bind(info.name.as_deref().unwrap_or(&info.email))
-        .bind(info.picture.as_deref())
-        .bind(&info.sub)
-        .fetch_one(&mut *transaction)
-        .await?;
+        let user = insert_oauth_user(&mut transaction, organization_id, &role, info).await?;
+        link_identity(&mut transaction, user.id, info).await?;
         let accepted = sqlx::query(
             "UPDATE organization_invites SET accepted_at = NOW() WHERE id = $1 AND accepted_at IS NULL AND revoked_at IS NULL AND expires_at > NOW()",
         )
@@ -602,10 +785,13 @@ async fn upsert_oauth_user(
             return Err(sqlx::Error::RowNotFound);
         }
         transaction.commit().await?;
-        return Ok(user);
+        return Ok(OAuthUpsert {
+            user,
+            created_workspace: false,
+        });
     }
 
-    let display_name = info.name.as_deref().unwrap_or(&info.email).trim();
+    let display_name = info.display_name.trim();
     let workspace_name = format!("{}'s workspace", display_name);
     let base_slug: String = info
         .email
@@ -613,9 +799,23 @@ async fn upsert_oauth_user(
         .next()
         .unwrap_or("workspace")
         .chars()
-        .map(|character| if character.is_ascii_alphanumeric() { character.to_ascii_lowercase() } else { '-' })
+        .map(|character| {
+            if character.is_ascii_alphanumeric() {
+                character.to_ascii_lowercase()
+            } else {
+                '-'
+            }
+        })
         .collect();
-    let slug = format!("{}-{}", base_slug.trim_matches('-').chars().take(60).collect::<String>(), Uuid::new_v4().simple());
+    let slug = format!(
+        "{}-{}",
+        base_slug
+            .trim_matches('-')
+            .chars()
+            .take(60)
+            .collect::<String>(),
+        Uuid::new_v4().simple()
+    );
     let mut transaction = db.begin().await?;
     let organization_id: Uuid = sqlx::query_scalar(
         r#"INSERT INTO organizations (name, slug, plan_code, subscription_status, subscriber_name, billing_contact_name, billing_contact_email)
@@ -627,20 +827,237 @@ async fn upsert_oauth_user(
     .bind(&info.email)
     .fetch_one(&mut *transaction)
     .await?;
-    let user = sqlx::query_as::<_, User>(
+    let user = insert_oauth_user(&mut transaction, organization_id, "admin", info).await?;
+    link_identity(&mut transaction, user.id, info).await?;
+    sqlx::query(
+        "INSERT INTO email_deliveries (user_id, kind, recipient) VALUES ($1, 'welcome', $2)",
+    )
+    .bind(user.id)
+    .bind(&info.email)
+    .execute(&mut *transaction)
+    .await?;
+    transaction.commit().await?;
+    Ok(OAuthUpsert {
+        user,
+        created_workspace: true,
+    })
+}
+
+async fn insert_oauth_user(
+    transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    organization_id: Uuid,
+    role: &str,
+    info: &OAuthIdentity,
+) -> Result<User, sqlx::Error> {
+    sqlx::query_as::<_, User>(
         r#"INSERT INTO users (id, organization_id, role, email, display_name, avatar_url, oauth_provider, oauth_subject)
-           VALUES ($1, $2, 'admin', $3, $4, $5, 'google', $6) RETURNING *"#,
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *"#,
     )
     .bind(Uuid::new_v4())
     .bind(organization_id)
+    .bind(role)
     .bind(&info.email)
-    .bind(display_name)
-    .bind(info.picture.as_deref())
-    .bind(&info.sub)
-    .fetch_one(&mut *transaction)
+    .bind(&info.display_name)
+    .bind(&info.avatar_url)
+    .bind(info.provider)
+    .bind(&info.subject)
+    .fetch_one(&mut **transaction)
+    .await
+}
+
+async fn link_identity(
+    transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    user_id: Uuid,
+    info: &OAuthIdentity,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "INSERT INTO user_oauth_identities (user_id, provider, subject, email) VALUES ($1, $2, $3, $4) ON CONFLICT (provider, subject) DO NOTHING",
+    )
+    .bind(user_id)
+    .bind(info.provider)
+    .bind(&info.subject)
+    .bind(&info.email)
+    .execute(&mut **transaction)
     .await?;
-    transaction.commit().await?;
-    Ok(user)
+    Ok(())
+}
+
+fn validate_invite_organization(
+    invite: Option<&(Uuid, String, Uuid)>,
+    organization_id: Uuid,
+) -> Result<(), sqlx::Error> {
+    if invite.is_some_and(|(_, _, expected)| *expected != organization_id) {
+        Err(sqlx::Error::RowNotFound)
+    } else {
+        Ok(())
+    }
+}
+
+async fn refresh_oauth_user(
+    db: &PgPool,
+    user_id: Uuid,
+    info: &OAuthIdentity,
+) -> Result<(), sqlx::Error> {
+    sqlx::query("UPDATE users SET email = $1, display_name = $2, avatar_url = $3 WHERE id = $4")
+        .bind(&info.email)
+        .bind(&info.display_name)
+        .bind(&info.avatar_url)
+        .bind(user_id)
+        .execute(db)
+        .await?;
+    Ok(())
+}
+
+async fn accept_invite_if_present(
+    db: &PgPool,
+    invite: Option<&(Uuid, String, Uuid)>,
+) -> Result<(), sqlx::Error> {
+    if let Some((invite_id, _, _)) = invite {
+        sqlx::query("UPDATE organization_invites SET accepted_at = NOW() WHERE id = $1")
+            .bind(invite_id)
+            .execute(db)
+            .await?;
+    }
+    Ok(())
+}
+
+async fn accept_invite_in_transaction(
+    transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    invite: Option<&(Uuid, String, Uuid)>,
+) -> Result<(), sqlx::Error> {
+    if let Some((invite_id, _, _)) = invite {
+        sqlx::query("UPDATE organization_invites SET accepted_at = NOW() WHERE id = $1")
+            .bind(invite_id)
+            .execute(&mut **transaction)
+            .await?;
+    }
+    Ok(())
+}
+
+async fn fetch_oauth_upsert(
+    db: &PgPool,
+    user_id: Uuid,
+    created_workspace: bool,
+) -> Result<OAuthUpsert, sqlx::Error> {
+    let user = sqlx::query_as::<_, User>("SELECT * FROM users WHERE id = $1")
+        .bind(user_id)
+        .fetch_one(db)
+        .await?;
+    Ok(OAuthUpsert {
+        user,
+        created_workspace,
+    })
+}
+
+#[derive(sqlx::FromRow)]
+struct WelcomeDelivery {
+    id: Uuid,
+    user_id: Uuid,
+    recipient: String,
+    display_name: Option<String>,
+}
+
+async fn trigger_welcome_delivery(state: &Arc<AppState>, user_id: Uuid) {
+    if let Err(error) = deliver_welcome_email(&state.db, user_id).await {
+        tracing::warn!(%user_id, "welcome email delivery deferred: {error}");
+    }
+}
+
+pub async fn welcome_email_worker(db: PgPool) {
+    loop {
+        let users = sqlx::query_scalar::<_, Uuid>(
+            "SELECT user_id FROM email_deliveries WHERE kind = 'welcome' AND ((status IN ('pending', 'failed') AND next_attempt_at <= NOW()) OR (status = 'sending' AND updated_at <= NOW() - INTERVAL '15 minutes')) ORDER BY created_at LIMIT 20",
+        )
+        .fetch_all(&db)
+        .await
+        .unwrap_or_default();
+        for user_id in users {
+            if let Err(error) = deliver_welcome_email(&db, user_id).await {
+                tracing::warn!(%user_id, "welcome email worker delivery failed: {error}");
+            }
+        }
+        tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+    }
+}
+
+async fn deliver_welcome_email(db: &PgPool, user_id: Uuid) -> Result<(), String> {
+    let delivery = sqlx::query_as::<_, WelcomeDelivery>(
+        r#"UPDATE email_deliveries SET status = 'sending', attempts = attempts + 1, updated_at = NOW()
+           WHERE id = (
+             SELECT id FROM email_deliveries WHERE user_id = $1 AND kind = 'welcome'
+             AND ((status IN ('pending', 'failed') AND next_attempt_at <= NOW()) OR (status = 'sending' AND updated_at <= NOW() - INTERVAL '15 minutes'))
+             FOR UPDATE SKIP LOCKED
+           )
+           RETURNING id, user_id, recipient,
+             (SELECT display_name FROM users WHERE users.id = email_deliveries.user_id) AS display_name"#,
+    )
+    .bind(user_id)
+    .fetch_optional(db)
+    .await
+    .map_err(|error| format!("claim welcome delivery: {error}"))?;
+    let Some(delivery) = delivery else {
+        return Ok(());
+    };
+    let send_result =
+        async {
+            let api_key = std::env::var("RESEND_API_KEY")
+                .ok()
+                .filter(|value| !value.trim().is_empty())
+                .ok_or_else(|| "RESEND_API_KEY is not configured".to_string())?;
+            let from = std::env::var("EMAIL_FROM")
+                .ok()
+                .filter(|value| !value.trim().is_empty())
+                .ok_or_else(|| "EMAIL_FROM is not configured".to_string())?;
+            let app_url = std::env::var("APP_URL")
+                .or_else(|_| std::env::var("FRONTEND_URL"))
+                .unwrap_or_else(|_| "http://localhost:5173".to_string());
+            let html = Handlebars::new().render_template(
+            WELCOME_EMAIL_TEMPLATE,
+            &serde_json::json!({
+                "display_name": delivery.display_name.as_deref().unwrap_or(&delivery.recipient),
+                "app_url": app_url.trim_end_matches('/'),
+            }),
+        ).map_err(|error| format!("render welcome template: {error}"))?;
+            let response: serde_json::Value = reqwest::Client::new()
+                .post("https://api.resend.com/emails")
+                .bearer_auth(api_key)
+                .json(&serde_json::json!({
+                    "from": from,
+                    "to": [delivery.recipient],
+                    "subject": "Welcome to trusin",
+                    "html": html,
+                }))
+                .send()
+                .await
+                .map_err(|error| format!("send welcome email: {error}"))?
+                .error_for_status()
+                .map_err(|error| format!("Resend rejected welcome email: {error}"))?
+                .json()
+                .await
+                .map_err(|error| format!("parse Resend response: {error}"))?;
+            Ok::<_, String>(
+                response
+                    .get("id")
+                    .and_then(|id| id.as_str())
+                    .map(str::to_string),
+            )
+        }
+        .await;
+    match send_result {
+        Ok(provider_message_id) => {
+            sqlx::query("UPDATE email_deliveries SET status = 'sent', provider_message_id = $1, sent_at = NOW(), updated_at = NOW(), last_error = NULL WHERE id = $2")
+                .bind(provider_message_id).bind(delivery.id).execute(db).await
+                .map_err(|error| format!("record welcome delivery: {error}"))?;
+            tracing::info!(user_id = %delivery.user_id, "welcome email sent");
+            Ok(())
+        }
+        Err(error) => {
+            sqlx::query("UPDATE email_deliveries SET status = 'failed', last_error = $1, next_attempt_at = NOW() + INTERVAL '15 minutes', updated_at = NOW() WHERE id = $2")
+                .bind(&error).bind(delivery.id).execute(db).await
+                .map_err(|update_error| format!("record welcome failure: {update_error}"))?;
+            Err(error)
+        }
+    }
 }
 
 fn build_cookie(jwt: &str, cfg: &OAuthConfig) -> (header::HeaderName, header::HeaderValue) {
@@ -926,7 +1343,11 @@ pub async fn create_token(
             "organization:manage".to_string(),
         ]
     });
-    if scopes.is_empty() || scopes.iter().any(|scope| !allowed.contains(&scope.as_str())) {
+    if scopes.is_empty()
+        || scopes
+            .iter()
+            .any(|scope| !allowed.contains(&scope.as_str()))
+    {
         return (StatusCode::BAD_REQUEST, "invalid API key scopes").into_response();
     }
     let token = generate_token();
