@@ -927,8 +927,10 @@ async fn upsert_oauth_user(
     );
     let mut transaction = db.begin().await?;
     let organization_id: Uuid = sqlx::query_scalar(
-        r#"INSERT INTO organizations (name, slug, plan_code, subscription_status, subscriber_name, billing_contact_name, billing_contact_email)
-           VALUES ($1, $2, 'free', 'active', $1, $3, $4) RETURNING id"#,
+        r#"INSERT INTO organizations
+              (name, slug, plan_code, subscription_status, billing_period_start, billing_period_end, subscriber_name, billing_contact_name, billing_contact_email)
+           VALUES ($1, $2, 'pro', 'trialing', NOW(), NOW() + INTERVAL '30 days', $1, $3, $4)
+           RETURNING id"#,
     )
     .bind(workspace_name)
     .bind(slug)

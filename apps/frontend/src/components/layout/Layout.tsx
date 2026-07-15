@@ -11,7 +11,7 @@ const TITLES: Record<string, { title: string; subtitle: string }> = {
   "/metrics": { title: "Metrics", subtitle: "Throughput, success rate & top sources" },
   "/send": { title: "Send", subtitle: "Send a custom webhook" },
   "/platform": { title: "Platform", subtitle: "Hosted tenant control plane" },
-  "/settings": { title: "Settings", subtitle: "Workspace, access, security, and developer controls" },
+  "/settings": { title: "Settings", subtitle: "Workspace, team, and developer tools" },
 };
 
 function titlesFor(pathname: string) {

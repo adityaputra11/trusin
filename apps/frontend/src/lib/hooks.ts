@@ -182,6 +182,8 @@ export function useOrganization() {
     queryKey: ["organization"],
     queryFn: () => api.get<OrganizationSubscription>("/api/organization"),
     refetchInterval: 30_000,
+    staleTime: 30_000,
+    placeholderData: (previous) => previous,
   });
 }
 
