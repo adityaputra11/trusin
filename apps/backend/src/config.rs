@@ -62,7 +62,11 @@ pub async fn get_oauth_status(State(state): State<Arc<AppState>>) -> Json<serde_
         .as_ref()
         .map(|config| config.enabled_providers())
         .unwrap_or_default();
-    Json(serde_json::json!({ "enabled": !providers.is_empty(), "providers": providers }))
+    Json(serde_json::json!({
+        "enabled": !providers.is_empty(),
+        "providers": providers,
+        "captcha_required": state.turnstile.is_some(),
+    }))
 }
 
 /// Probe ngrok's local API (port 4040) for an active public tunnel.

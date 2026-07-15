@@ -22,6 +22,7 @@ use base64::Engine;
 use handlebars::Handlebars;
 use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use sqlx::PgPool;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -50,9 +51,8 @@ pub struct CurrentUser {
 
 /// Cloudflare Turnstile verification.
 ///
-/// `verify` calls the siteverify API; returns false on any network/parsing
-/// error so a misconfigured Turnstile can't lock everyone out — instead, set
-/// `TURNSTILE_SECRET_KEY` to empty/unset to disable verification entirely.
+/// `verify` calls the siteverify API and returns false on any network or
+/// parsing error. When enabled, Turnstile fails closed for browser sign-in.
 pub struct TurnstileConfig {
     pub secret: String,
     pub http: reqwest::Client,
@@ -510,6 +510,11 @@ pub struct OAuthLoginQuery {
     pub invite: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct CaptchaGrantRequest {
+    pub turnstile_token: String,
+}
+
 #[derive(Debug, Serialize, Deserialize, Default)]
 struct OAuthState {
     provider: String,
@@ -526,20 +531,75 @@ pub struct CallbackParams {
 
 pub async fn google_login(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Query(query): Query<OAuthLoginQuery>,
 ) -> Response {
-    oauth_login_for_provider(state, "google", query).await
+    oauth_login_for_provider(state, headers, "google", query).await
 }
 
 pub async fn github_login(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Query(query): Query<OAuthLoginQuery>,
 ) -> Response {
-    oauth_login_for_provider(state, "github", query).await
+    oauth_login_for_provider(state, headers, "github", query).await
+}
+
+/// Verifies a Turnstile token and issues a short-lived, single-use grant for
+/// OAuth. The grant is stored server-side and delivered only through an
+/// HTTP-only cookie, so direct OAuth URLs cannot bypass the captcha.
+pub async fn create_captcha_grant(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(req): Json<CaptchaGrantRequest>,
+) -> Response {
+    let Some(cfg) = state.turnstile.as_ref() else {
+        return Json(serde_json::json!({ "captcha_required": false })).into_response();
+    };
+    let token = req.turnstile_token.trim();
+    if token.is_empty() {
+        return captcha_error(StatusCode::BAD_REQUEST, "captcha_required");
+    }
+    let ip = crate::client_ip_from(&headers)
+        .unwrap_or(std::net::IpAddr::V4(std::net::Ipv4Addr::new(0, 0, 0, 0)));
+    let remoteip = ip.to_string();
+    if !cfg.verify(token, Some(&remoteip)).await {
+        return captcha_error(StatusCode::BAD_REQUEST, "captcha_failed");
+    }
+
+    let grant = generate_oauth_secret();
+    let key = captcha_grant_key(&grant);
+    let mut redis = state.redis.clone();
+    let stored = redis::cmd("SETEX")
+        .arg(key)
+        .arg(300)
+        .arg(remoteip)
+        .query_async::<()>(&mut redis)
+        .await;
+    if let Err(error) = stored {
+        tracing::error!("captcha grant store failed: {error}");
+        return captcha_error(StatusCode::SERVICE_UNAVAILABLE, "captcha_unavailable");
+    }
+
+    let secure = std::env::var("FRONTEND_URL")
+        .or_else(|_| std::env::var("APP_URL"))
+        .map(|url| url.starts_with("https://"))
+        .unwrap_or(false);
+    let cookie = format!(
+        "trusin_captcha={grant}; Path=/api/auth; Max-Age=300; HttpOnly; SameSite=Lax{}",
+        if secure { "; Secure" } else { "" },
+    );
+    let mut response = Json(serde_json::json!({ "captcha_required": true })).into_response();
+    response.headers_mut().insert(
+        header::SET_COOKIE,
+        header::HeaderValue::from_str(&cookie).expect("captcha cookie header"),
+    );
+    response
 }
 
 async fn oauth_login_for_provider(
     state: Arc<AppState>,
+    headers: HeaderMap,
     provider_name: &'static str,
     query: OAuthLoginQuery,
 ) -> Response {
@@ -549,6 +609,9 @@ async fn oauth_login_for_provider(
     let Some(provider) = cfg.provider(provider_name) else {
         return not_configured(provider_name);
     };
+    if let Err(response) = consume_captcha_grant(&state, &headers).await {
+        return response;
+    }
     let state_token = generate_oauth_secret();
     let code_verifier = generate_oauth_secret();
     let stored_state = OAuthState {
@@ -593,8 +656,54 @@ fn generate_oauth_secret() -> String {
     base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes)
 }
 
+fn captcha_grant_key(grant: &str) -> String {
+    format!(
+        "terusin:captcha:grant:{:x}",
+        Sha256::digest(grant.as_bytes())
+    )
+}
+
+fn cookie_value(headers: &HeaderMap, name: &str) -> Option<String> {
+    headers
+        .get(header::COOKIE)
+        .and_then(|value| value.to_str().ok())?
+        .split(';')
+        .find_map(|part| {
+            let (key, value) = part.trim().split_once('=')?;
+            (key == name).then(|| value.to_string())
+        })
+}
+
+async fn consume_captcha_grant(state: &AppState, headers: &HeaderMap) -> Result<(), Response> {
+    if state.turnstile.is_none() {
+        return Ok(());
+    }
+    let Some(grant) = cookie_value(headers, "trusin_captcha") else {
+        return Err(captcha_error(StatusCode::FORBIDDEN, "captcha_required"));
+    };
+    let ip = crate::client_ip_from(headers)
+        .unwrap_or(std::net::IpAddr::V4(std::net::Ipv4Addr::new(0, 0, 0, 0)))
+        .to_string();
+    let mut redis = state.redis.clone();
+    let stored_ip = redis::cmd("GETDEL")
+        .arg(captcha_grant_key(&grant))
+        .query_async::<Option<String>>(&mut redis)
+        .await
+        .map_err(|error| {
+            tracing::error!("captcha grant lookup failed: {error}");
+            captcha_error(StatusCode::SERVICE_UNAVAILABLE, "captcha_unavailable")
+        })?;
+    if stored_ip.as_deref() != Some(ip.as_str()) {
+        return Err(captcha_error(StatusCode::FORBIDDEN, "captcha_required"));
+    }
+    Ok(())
+}
+
+fn captcha_error(status: StatusCode, error: &str) -> Response {
+    (status, Json(serde_json::json!({ "error": error }))).into_response()
+}
+
 fn pkce_challenge(verifier: &str) -> String {
-    use sha2::{Digest, Sha256};
     base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes()))
 }
 

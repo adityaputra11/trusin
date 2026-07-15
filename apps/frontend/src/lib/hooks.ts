@@ -84,6 +84,7 @@ export function useEndpoint() {
 export interface OAuthStatus {
   enabled: boolean;
   providers: string[];
+  captcha_required: boolean;
 }
 
 /** Browser OAuth providers configured by the backend. */

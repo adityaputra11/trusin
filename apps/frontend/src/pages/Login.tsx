@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { AlertCircle, Loader2 } from "lucide-react";
-import { api } from "../lib/api";
+import { ApiError, api } from "../lib/api";
 import { setAuth } from "../lib/auth";
 import { useOAuthStatus } from "../lib/hooks";
 import { Button, Input, Field } from "../components/ui";
@@ -14,6 +14,7 @@ export function Login() {
   const inviteToken = params.get("invite");
   const { data: oauthStatus } = useOAuthStatus();
   const providers = oauthStatus?.providers ?? [];
+  const captchaRequired = oauthStatus?.captcha_required ?? false;
 
   const [user, setUser] = useState("");
   const [password, setPassword] = useState("");
@@ -22,15 +23,19 @@ export function Login() {
     oauthError ? decodeURIComponent(oauthError) : null,
   );
   const [turnstileToken, setTurnstileToken] = useState<string | null>(null);
+  const [captchaError, setCaptchaError] = useState<string | null>(null);
+  const [oauthLoading, setOauthLoading] = useState<"google" | "github" | null>(null);
   const turnstileContainerRef = useRef<HTMLDivElement>(null);
   const turnstileWidgetId = useRef<string | null>(null);
 
-  // Render the Turnstile widget explicitly so we can capture the token via
-  // callback and reset it after each attempt. Skipped entirely when no site
-  // key is configured (local dev / Turnstile disabled).
   useEffect(() => {
+    if (!captchaRequired) return;
     const siteKey = TURNSTILE_SITE_KEY;
-    if (!siteKey || !turnstileContainerRef.current) return;
+    if (!siteKey) {
+      setCaptchaError("Sign-in is temporarily unavailable because captcha is not configured.");
+      return;
+    }
+    if (!turnstileContainerRef.current) return;
 
     const renderWidget = () => {
       if (turnstileWidgetId.current || !window.turnstile || !turnstileContainerRef.current) {
@@ -41,7 +46,18 @@ export function Login() {
         turnstileContainerRef.current,
         {
           sitekey: siteKey,
-          callback: (token: string) => setTurnstileToken(token),
+          callback: (token: string) => {
+            setTurnstileToken(token);
+            setCaptchaError(null);
+          },
+          "expired-callback": () => {
+            setTurnstileToken(null);
+            setCaptchaError("Captcha expired. Please complete it again.");
+          },
+          "error-callback": () => {
+            setTurnstileToken(null);
+            setCaptchaError("Cloudflare captcha could not load. Disable blockers and try again.");
+          },
         },
       );
       return true;
@@ -51,9 +67,17 @@ export function Login() {
     const interval = window.setInterval(() => {
       if (renderWidget()) window.clearInterval(interval);
     }, 100);
+    const timeout = window.setTimeout(() => {
+      if (!turnstileWidgetId.current) {
+        setCaptchaError("Cloudflare captcha could not load. Disable blockers and try again.");
+      }
+    }, 10_000);
 
-    return () => window.clearInterval(interval);
-  }, []);
+    return () => {
+      window.clearInterval(interval);
+      window.clearTimeout(timeout);
+    };
+  }, [captchaRequired]);
 
   const resetTurnstile = () => {
     setTurnstileToken(null);
@@ -66,7 +90,7 @@ export function Login() {
     e.preventDefault();
     setError(null);
     // If captcha is enabled but no token yet, refuse to submit.
-    if (TURNSTILE_SITE_KEY && !turnstileToken) {
+    if (captchaRequired && !turnstileToken) {
       setError("Please complete the captcha before signing in.");
       return;
     }
@@ -108,10 +132,29 @@ export function Login() {
     }
   };
 
-  const oauth = (provider: "google" | "github") => {
+  const oauth = async (provider: "google" | "github") => {
+    if (captchaRequired && !turnstileToken) {
+      setError("Please complete the captcha before continuing.");
+      return;
+    }
+    setError(null);
+    setOauthLoading(provider);
+    try {
+      if (captchaRequired) {
+        await api.post("/api/auth/captcha", { turnstile_token: turnstileToken }, { noAuth: true });
+      }
+    } catch (err) {
+      const code = err instanceof ApiError ? err.code : undefined;
+      setError(code === "captcha_unavailable" ? "Captcha verification is unavailable. Please try again shortly." : "Captcha verification failed. Please try again.");
+      resetTurnstile();
+      setOauthLoading(null);
+      return;
+    }
     const query = inviteToken ? `?invite=${encodeURIComponent(inviteToken)}` : "";
     window.location.assign(`/api/auth/${provider}${query}`);
   };
+
+  const captchaBlocked = captchaRequired && (!TURNSTILE_SITE_KEY || !!captchaError || !turnstileToken);
 
   return (
     <div className="min-h-screen bg-[radial-gradient(circle_at_50%_12%,rgba(74,222,128,.12),transparent_28%),radial-gradient(circle_at_0%_100%,rgba(74,222,128,.05),transparent_32%)] px-5 py-10 sm:flex sm:items-center sm:justify-center">
@@ -126,16 +169,16 @@ export function Login() {
             <span className="text-xl font-semibold tracking-tight text-foreground">trusin</span>
           </div>
           <p className="mb-2 text-xs font-semibold uppercase tracking-[.16em] text-success">Webhook operations</p>
-          <h1 className="text-3xl font-semibold tracking-tight text-foreground">Welcome back</h1>
+          <h1 className="text-3xl font-semibold tracking-tight text-foreground">Sign in or create your workspace</h1>
           <p className="mt-2 max-w-sm text-sm leading-6 text-secondary">
-            Sign in to monitor, route, and recover every webhook delivery.
+            Your first Google or GitHub sign-in creates a free workspace. Invited teammates join the workspace they were invited to.
           </p>
         </div>
 
         {providers.length > 0 && (
           <>
-            {providers.includes("google") && <button onClick={() => oauth("google")} className="mb-2 flex w-full items-center justify-center gap-3 rounded-lg border border-border bg-card px-4 py-3 text-sm font-medium text-foreground transition-base hover:border-border-hover hover:bg-card-secondary"><GoogleIcon />Continue with Google</button>}
-            {providers.includes("github") && <button onClick={() => oauth("github")} className="mb-1 flex w-full items-center justify-center gap-3 rounded-lg border border-border bg-card px-4 py-3 text-sm font-medium text-foreground transition-base hover:border-border-hover hover:bg-card-secondary"><GitHubIcon />Continue with GitHub</button>}
+            {providers.includes("google") && <button disabled={captchaBlocked || oauthLoading !== null} onClick={() => oauth("google")} className="mb-2 flex w-full items-center justify-center gap-3 rounded-lg border border-border bg-card px-4 py-3 text-sm font-medium text-foreground transition-base hover:border-border-hover hover:bg-card-secondary disabled:cursor-not-allowed disabled:opacity-50">{oauthLoading === "google" ? <Loader2 className="h-5 w-5 animate-spin" /> : <GoogleIcon />}Continue with Google</button>}
+            {providers.includes("github") && <button disabled={captchaBlocked || oauthLoading !== null} onClick={() => oauth("github")} className="mb-1 flex w-full items-center justify-center gap-3 rounded-lg border border-border bg-card px-4 py-3 text-sm font-medium text-foreground transition-base hover:border-border-hover hover:bg-card-secondary disabled:cursor-not-allowed disabled:opacity-50">{oauthLoading === "github" ? <Loader2 className="h-5 w-5 animate-spin" /> : <GitHubIcon />}Continue with GitHub</button>}
 
             <div className="my-5 flex items-center gap-3">
               <div className="flex-1 h-px bg-border" />
@@ -174,8 +217,15 @@ export function Login() {
 
           {/* Cloudflare Turnstile widget. Only rendered when a site key is
               configured at build time. */}
-          {TURNSTILE_SITE_KEY && (
+          {captchaRequired && TURNSTILE_SITE_KEY && (
             <div ref={turnstileContainerRef} className="min-h-[65px]" />
+          )}
+
+          {captchaError && (
+            <div className="flex items-start gap-2 text-sm text-danger bg-[rgba(239,68,68,.1)] border border-[rgba(239,68,68,.25)] rounded-md p-3">
+              <AlertCircle className="h-4 w-4 mt-0.5 shrink-0" />
+              <span>{captchaError}</span>
+            </div>
           )}
 
           {error && (
@@ -189,7 +239,7 @@ export function Login() {
             type="submit"
             className="w-full"
             loading={loading}
-            disabled={!!TURNSTILE_SITE_KEY && !turnstileToken}
+            disabled={captchaBlocked}
           >
             {loading ? (
               <>

@@ -12,7 +12,7 @@ The backend accepts three authentication methods in this order:
 
 Read endpoints are available to both `admin` and `viewer` roles. Rule changes, event retry/acknowledge/delete actions, bulk actions, and default-target changes require an admin.
 
-## Google OAuth
+## Browser sign-in and workspace creation
 
 Enable Google sign-in with these environment variables:
 
@@ -30,11 +30,15 @@ RESEND_API_KEY=re_...
 EMAIL_FROM='trusin <noreply@your-terusin.example>'
 ```
 
-Register the same redirect URI in Google Cloud Console. When OAuth is enabled, the login page displays **Continue with Google**. A first Google sign-in creates a `free` workspace and makes that account its admin.
+Register `https://app.your-terusin.example/api/auth/callback/google` in Google Cloud Console and `https://app.your-terusin.example/api/auth/callback/github` in the GitHub OAuth App. When configured, the login page displays the matching provider. A first Google or GitHub sign-in creates a `free` workspace and makes that account its admin; there is no separate password registration flow.
 
 Free workspaces are limited to their owner and cannot invite users. Paid workspaces can invite `admin` or `viewer` users from **Users**. Invitations are delivered by Resend, expire after seven days, and can only be claimed by the Google account with the invited email address. In this version, an account belongs to one workspace only.
 
 The OAuth callback is protected by a short-lived state token in Redis. Session cookies are `HttpOnly` and `SameSite=Lax`; they also become `Secure` when `FRONTEND_URL` uses HTTPS.
+
+## Cloudflare Turnstile
+
+When `TURNSTILE_SECRET_KEY` is set, Turnstile is required before Google, GitHub, or password sign-in can start. Create a Managed widget in Cloudflare Turnstile, allow the dashboard hostname (for example `app.your-terusin.example`), then set the public Site Key in the frontend build as `VITE_TURNSTILE_SITE_KEY` and the matching Secret Key as `TURNSTILE_SECRET_KEY` on the backend. Turnstile does not require moving the domain DNS to Cloudflare.
 
 ## API tokens
 

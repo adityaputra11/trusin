@@ -11,9 +11,12 @@
 | `JWT_SECRET` | - | JWT cookie secret; use a strong production value |
 | `GOOGLE_CLIENT_ID` | - | Google OAuth client ID |
 | `GOOGLE_CLIENT_SECRET` | - | Google OAuth client secret |
+| `GITHUB_CLIENT_ID` | - | GitHub OAuth App client ID |
+| `GITHUB_CLIENT_SECRET` | - | GitHub OAuth App client secret |
 | `APP_URL` | `http://localhost:5173` | Canonical dashboard URL; determines the default OAuth callback |
 | `OAUTH_REDIRECT_URI` | `$APP_URL/api/auth/callback/google` | Optional explicit callback registered in Google |
 | `FRONTEND_URL` | `APP_URL` | Optional dashboard URL after OAuth completes |
+| `TURNSTILE_SECRET_KEY` | - | Enables required Cloudflare Turnstile verification for browser sign-in |
 | `DEFAULT_TARGET_URL` | empty | Fallback target |
 | `ALLOW_PUBLIC_TARGET_OVERRIDE` | `false` | Opt-in legacy `X-Target-Url` on public ingest; still subject to URL policy |
 | `ALLOW_PRIVATE_TARGETS` | `false` | Allows loopback/private targets for local development |
