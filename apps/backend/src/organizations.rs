@@ -194,7 +194,7 @@ fn next_period_start() -> chrono::NaiveDate {
 
 fn canonical_ingest_host() -> String {
     std::env::var("INGEST_CANONICAL_HOST")
-        .unwrap_or_else(|_| "ingest.terusin-dev.my.id".to_string())
+        .unwrap_or_else(|_| "ingest.trusin.my.id".to_string())
         .trim_end_matches('.')
         .to_ascii_lowercase()
 }

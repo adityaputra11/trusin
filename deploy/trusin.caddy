@@ -1,0 +1,19 @@
+trusin.my.id, www.trusin.my.id {
+    root * /var/www/trusin/landing
+    try_files {path} /index.html
+    file_server
+}
+
+docs.trusin.my.id {
+    root * /var/www/trusin/docs
+    try_files {path} {path}/ /index.html
+    file_server
+}
+
+app.trusin.my.id {
+    reverse_proxy 127.0.0.1:3012
+}
+
+api.trusin.my.id, ingest.trusin.my.id {
+    reverse_proxy 127.0.0.1:3011
+}
