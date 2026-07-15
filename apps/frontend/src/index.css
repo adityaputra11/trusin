@@ -61,6 +61,12 @@
     line-height: 1.4;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
+    letter-spacing: -0.006em;
+    background-image:
+      radial-gradient(circle at 80% -10%, rgba(74, 222, 128, 0.055), transparent 28%),
+      linear-gradient(rgba(255,255,255,.012) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255,255,255,.012) 1px, transparent 1px);
+    background-size: auto, 64px 64px, 64px 64px;
   }
 
   /* Scrollbar — slim, dark */
@@ -82,9 +88,11 @@
 
   /* Focus ring */
   :focus-visible {
-    outline: 2px solid var(--success);
-    outline-offset: 2px;
+    outline: 2px solid rgba(74, 222, 128, .8);
+    outline-offset: 3px;
   }
+
+  button, a, input, select, textarea { -webkit-tap-highlight-color: transparent; }
 }
 
 @layer utilities {
@@ -102,6 +110,11 @@
   .card-hover:hover {
     background-color: var(--card-secondary);
     border-color: var(--border-hover);
-    transform: translateY(-2px);
+    transform: translateY(-1px);
+  }
+
+  .enterprise-panel {
+    background: linear-gradient(145deg, rgba(18,23,19,.94), rgba(10,13,11,.94));
+    box-shadow: inset 0 1px rgba(255,255,255,.018), var(--shadow-card);
   }
 }

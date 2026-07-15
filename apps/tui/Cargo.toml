@@ -14,3 +14,6 @@ base64 = "0.22"
 dirs = "5"
 toml = "0.8"
 keyring = "3"
+ratatui = "0.29"
+crossterm = "0.28"
+anyhow.workspace = true

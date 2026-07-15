@@ -42,15 +42,11 @@ async fn main() {
 
     let (user, pass) = (
         std::env::var("AUTH_USERNAME").unwrap_or_else(|_| "admin".to_string()),
-        std::env::var("AUTH_PASSWORD")
-            .unwrap_or_else(|_| "change-me-in-production".to_string()),
+        std::env::var("AUTH_PASSWORD").unwrap_or_else(|_| "change-me-in-production".to_string()),
     );
-    let backend_auth =
-        base64::engine::general_purpose::STANDARD.encode(format!("{user}:{pass}"));
+    let backend_auth = base64::engine::general_purpose::STANDARD.encode(format!("{user}:{pass}"));
 
-    let client = reqwest::Client::builder()
-        .build()
-        .expect("reqwest client");
+    let client = reqwest::Client::builder().build().expect("reqwest client");
 
     let state = Arc::new(AppState {
         backend_url: backend_url.clone(),
@@ -86,8 +82,7 @@ struct ProxyState {
 
 /// Routes that should be forwarded to the backend API. Anything else is
 /// served from the SPA bundle (or 404 → index.html for client routing).
-const API_PREFIXES: &[&str] =
-    &["/events", "/rules", "/config", "/health", "/stats", "/api"];
+const API_PREFIXES: &[&str] = &["/events", "/rules", "/config", "/health", "/stats", "/api"];
 
 fn is_api_path(path: &str) -> bool {
     API_PREFIXES
@@ -103,10 +98,7 @@ async fn static_handler(State(_): State<ProxyState>, req: Request) -> Response {
 }
 
 /// Either forward to the backend (API paths) or serve the SPA.
-async fn proxy_or_spa(
-    State(ps): State<ProxyState>,
-    req: Request,
-) -> Response {
+async fn proxy_or_spa(State(ps): State<ProxyState>, req: Request) -> Response {
     let path = req.uri().path();
 
     // Non-GET/HEAD on root or unknown → could be a webhook ingest POST.
@@ -142,10 +134,8 @@ fn serve_asset(path: &str) -> Response {
                     HeaderValue::from_static("public, max-age=31536000, immutable"),
                 );
             } else {
-                res.headers_mut().insert(
-                    header::CACHE_CONTROL,
-                    HeaderValue::from_static("no-cache"),
-                );
+                res.headers_mut()
+                    .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-cache"));
             }
             res
         }

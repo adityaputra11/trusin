@@ -75,12 +75,11 @@ pub async fn auth_middleware(
         if let Some(cookie) = req.headers().get("Cookie").and_then(|v| v.to_str().ok()) {
             if let Some(token) = extract_session_cookie(cookie) {
                 if let Some(uid) = auth::verify_jwt(&token, &cfg.jwt_secret) {
-                    let user =
-                        sqlx::query_as::<_, User>("SELECT * FROM users WHERE id = $1")
-                            .bind(uid)
-                            .fetch_optional(&state.db)
-                            .await
-                            .map_err(|_| unauth())?;
+                    let user = sqlx::query_as::<_, User>("SELECT * FROM users WHERE id = $1")
+                        .bind(uid)
+                        .fetch_optional(&state.db)
+                        .await
+                        .map_err(|_| unauth())?;
                     if let Some(u) = user {
                         req.extensions_mut().insert(auth::CurrentUser {
                             id: u.id,
@@ -122,13 +121,11 @@ pub async fn auth_middleware(
 
     match creds {
         Some((user, pass)) => {
-            let db_user = sqlx::query_as::<_, User>(
-                "SELECT * FROM users WHERE username = $1",
-            )
-            .bind(&user)
-            .fetch_optional(&state.db)
-            .await
-            .map_err(|_| unauth())?;
+            let db_user = sqlx::query_as::<_, User>("SELECT * FROM users WHERE username = $1")
+                .bind(&user)
+                .fetch_optional(&state.db)
+                .await
+                .map_err(|_| unauth())?;
 
             match db_user {
                 Some(u)

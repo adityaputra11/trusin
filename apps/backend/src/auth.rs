@@ -56,9 +56,7 @@ impl TurnstileConfig {
         }
         Some(Self {
             secret,
-            http: reqwest::Client::builder()
-                .build()
-                .expect("reqwest client"),
+            http: reqwest::Client::builder().build().expect("reqwest client"),
         })
     }
 
@@ -106,9 +104,8 @@ impl OAuthConfig {
         if client_id.is_empty() || client_secret.is_empty() {
             return None;
         }
-        let redirect_uri = std::env::var("OAUTH_REDIRECT_URI").unwrap_or_else(|_| {
-            "http://localhost:5173/api/auth/callback/google".to_string()
-        });
+        let redirect_uri = std::env::var("OAUTH_REDIRECT_URI")
+            .unwrap_or_else(|_| "http://localhost:5173/api/auth/callback/google".to_string());
         let frontend_url =
             std::env::var("FRONTEND_URL").unwrap_or_else(|_| "http://localhost:5173".to_string());
         let jwt_secret = std::env::var("JWT_SECRET").unwrap_or_else(|_| {
@@ -121,9 +118,7 @@ impl OAuthConfig {
             redirect_uri,
             frontend_url,
             jwt_secret,
-            http_client: reqwest::Client::builder()
-                .build()
-                .expect("reqwest client"),
+            http_client: reqwest::Client::builder().build().expect("reqwest client"),
         })
     }
 }
@@ -187,7 +182,7 @@ pub fn generate_token() -> String {
 /// Fast hash is safe here: tokens are 256-bit random, so brute force is
 /// infeasible, and a fast hash enables `WHERE token_hash = $1` lookups.
 pub fn hash_token(token: &str) -> String {
-    use sha2::{Sha256, Digest};
+    use sha2::{Digest, Sha256};
     let mut hasher = Sha256::new();
     hasher.update(token.as_bytes());
     hex_encode(&hasher.finalize())
@@ -267,6 +262,22 @@ pub async fn google_login(State(state): State<Arc<AppState>>) -> Response {
     let Some(cfg) = state.oauth.as_ref() else {
         return not_configured();
     };
+    let oauth_state = generate_oauth_state();
+    let mut redis = state.redis.clone();
+    let stored = redis::cmd("SETEX")
+        .arg(format!("terusin:oauth:state:{oauth_state}"))
+        .arg(600)
+        .arg("1")
+        .query_async::<()>(&mut redis)
+        .await;
+    if let Err(e) = stored {
+        tracing::warn!("oauth state store failed: {e}");
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Could not start Google OAuth login.",
+        )
+            .into_response();
+    }
     let params = [
         ("client_id", cfg.client_id.as_str()),
         ("redirect_uri", cfg.redirect_uri.as_str()),
@@ -274,6 +285,7 @@ pub async fn google_login(State(state): State<Arc<AppState>>) -> Response {
         ("scope", "openid email profile"),
         ("access_type", "online"),
         ("prompt", "consent"),
+        ("state", oauth_state.as_str()),
     ];
     let qs = serde_urlencoded::to_string(&params).unwrap_or_default();
     Redirect::temporary(&format!(
@@ -290,12 +302,20 @@ fn not_configured() -> Response {
         .into_response()
 }
 
+fn generate_oauth_state() -> String {
+    use rand::RngCore;
+    let mut bytes = [0u8; 32];
+    rand::thread_rng().fill_bytes(&mut bytes);
+    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes)
+}
+
 // ── Endpoint: GET /api/auth/callback/google ───────────────────────────────
 
 #[derive(Debug, Deserialize)]
 pub struct CallbackParams {
     pub code: String,
-    // Google may also send `state` and `scope`; we ignore them.
+    pub state: String,
+    // Google may also send `scope`; we ignore it.
 }
 
 pub async fn google_callback(
@@ -305,6 +325,21 @@ pub async fn google_callback(
     let Some(cfg) = state.oauth.as_ref() else {
         return not_configured();
     };
+    let mut redis = state.redis.clone();
+    let key = format!("terusin:oauth:state:{}", params.state);
+    let valid_state: Option<String> = redis::cmd("GET")
+        .arg(&key)
+        .query_async(&mut redis)
+        .await
+        .ok();
+    if valid_state.is_none() {
+        return oauth_error(&cfg, "Google login expired. Please try again.");
+    }
+    let _ = redis::cmd("DEL")
+        .arg(&key)
+        .query_async::<()>(&mut redis)
+        .await;
+
     // 1. Exchange code → access_token (server-side, secret stays here).
     let token_res = cfg
         .http_client
@@ -391,14 +426,23 @@ pub async fn google_callback(
     let (name, value) = build_cookie(&jwt, cfg);
     let mut res = Redirect::temporary(&cfg.frontend_url).into_response();
     res.headers_mut().insert(name, value);
+    crate::audit::record(
+        &state,
+        Some(&CurrentUser {
+            id: user.id,
+            role: user.role.clone(),
+        }),
+        "auth.google_login",
+        "user",
+        Some(user.id.to_string()),
+        serde_json::json!({ "email": user.email }),
+    )
+    .await;
     res
 }
 
 /// Insert-or-update the user row for a Google subject. Returns the user.
-async fn upsert_oauth_user(
-    db: &PgPool,
-    info: &GoogleUserInfo,
-) -> Result<User, sqlx::Error> {
+async fn upsert_oauth_user(db: &PgPool, info: &GoogleUserInfo) -> Result<User, sqlx::Error> {
     // Try to find an existing OAuth user with this provider+subject.
     if let Some(existing) = sqlx::query_as::<_, User>(
         "SELECT * FROM users WHERE oauth_provider = 'google' AND oauth_subject = $1",
@@ -480,19 +524,23 @@ async fn derive_username(db: &PgPool, email: &str) -> Result<String, sqlx::Error
         .filter(|s| !s.is_empty())
         .unwrap_or("user")
         .chars()
-        .map(|c| if c.is_alphanumeric() || c == '_' { c } else { '_' })
+        .map(|c| {
+            if c.is_alphanumeric() || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect::<String>();
     let base = base[..base.len().min(32)].to_string();
 
     let mut candidate = base.clone();
     let mut n = 1;
     loop {
-        let taken = sqlx::query_scalar::<_, i64>(
-            "SELECT COUNT(*) FROM users WHERE username = $1",
-        )
-        .bind(&candidate)
-        .fetch_one(db)
-        .await?;
+        let taken = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM users WHERE username = $1")
+            .bind(&candidate)
+            .fetch_one(db)
+            .await?;
         if taken == 0 {
             return Ok(candidate);
         }
@@ -504,7 +552,7 @@ async fn derive_username(db: &PgPool, email: &str) -> Result<String, sqlx::Error
 fn build_cookie(jwt: &str, cfg: &OAuthConfig) -> (header::HeaderName, header::HeaderValue) {
     // Cookie value must be ASCII-safe; JWT already is.
     let secure = cfg.frontend_url.starts_with("https://");
-    let same_site = if secure { "None" } else { "Lax" };
+    let same_site = "Lax";
     // HttpOnly + SameSite keeps it safe from CSRF/XSS in the common case.
     let value = format!(
         "{}={}; Path=/; Max-Age={}; HttpOnly; SameSite={}{}",
@@ -662,7 +710,21 @@ pub async fn login(
 
     // 2) Verify credentials.
     match verify_password(&state.db, &req.username, &req.password).await {
-        Some(u) => user_json(u).into_response(),
+        Some(u) => {
+            crate::audit::record(
+                &state,
+                Some(&CurrentUser {
+                    id: u.id,
+                    role: u.role.clone(),
+                }),
+                "auth.password_login",
+                "user",
+                Some(u.id.to_string()),
+                serde_json::json!({ "username": u.username }),
+            )
+            .await;
+            user_json(u).into_response()
+        }
         None => (
             StatusCode::UNAUTHORIZED,
             Json(serde_json::json!({"error": "invalid_credentials"})),
@@ -728,11 +790,7 @@ pub async fn create_token(
 ) -> Response {
     let name = body.name.trim();
     if name.is_empty() || name.len() > 120 {
-        return (
-            StatusCode::BAD_REQUEST,
-            "token name must be 1-120 chars",
-        )
-            .into_response();
+        return (StatusCode::BAD_REQUEST, "token name must be 1-120 chars").into_response();
     }
 
     let token = generate_token();
@@ -752,6 +810,16 @@ pub async fn create_token(
         tracing::error!("create_token insert: {e}");
         return StatusCode::INTERNAL_SERVER_ERROR.into_response();
     }
+
+    crate::audit::record(
+        &state,
+        Some(&cu),
+        "token.created",
+        "api_token",
+        Some(id.to_string()),
+        serde_json::json!({ "name": name }),
+    )
+    .await;
 
     Json(serde_json::json!({
         "token": token,           // shown once, never persisted
@@ -805,7 +873,18 @@ pub async fn revoke_token(
     .execute(&state.db)
     .await;
     match res {
-        Ok(r) if r.rows_affected() > 0 => Json(serde_json::json!({"ok": true})).into_response(),
+        Ok(r) if r.rows_affected() > 0 => {
+            crate::audit::record(
+                &state,
+                Some(&cu),
+                "token.revoked",
+                "api_token",
+                Some(id.to_string()),
+                serde_json::json!({}),
+            )
+            .await;
+            Json(serde_json::json!({"ok": true})).into_response()
+        }
         Ok(_) => StatusCode::NOT_FOUND.into_response(),
         Err(e) => {
             tracing::warn!("revoke_token: {e}");
@@ -817,10 +896,7 @@ pub async fn revoke_token(
 /// Resolve a Bearer token to a CurrentUser for the auth middleware. Throttles
 /// `last_used_at` writes via Redis NX. Returns None on miss/revoked/error so
 /// the middleware falls through to the next auth method.
-pub async fn authenticate_bearer(
-    state: &crate::AppState,
-    token: &str,
-) -> Option<CurrentUser> {
+pub async fn authenticate_bearer(state: &crate::AppState, token: &str) -> Option<CurrentUser> {
     // (token_id, user_id, role)
     let row: Option<(Uuid, Uuid, String)> = sqlx::query_as::<_, (Uuid, Uuid, String)>(
         r#"SELECT api_tokens.id, api_tokens.user_id, users.role

@@ -14,9 +14,11 @@ import type {
   EndpointInfo,
   EventQuery,
   ForwardRule,
+  ListAuditResponse,
   ListEventsResponse,
   Metrics,
   UpdateRuleInput,
+  WorkspaceUser,
   WebhookEvent,
 } from "../types/api";
 
@@ -275,6 +277,36 @@ export function useBulkDelete() {
     onSuccess: (data) => {
       qc.invalidateQueries({ queryKey: ["events"] });
       toast.success(`Deleted ${data.deleted} event(s)`);
+    },
+  });
+}
+
+export function useAudit(page = 1, perPage = 25) {
+  return useQuery<ListAuditResponse>({
+    queryKey: ["audit", page, perPage],
+    queryFn: () => api.get<ListAuditResponse>(`/api/audit?page=${page}&per_page=${perPage}`),
+    placeholderData: (prev) => prev,
+    refetchInterval: 30_000,
+  });
+}
+
+export function useUsers() {
+  return useQuery<WorkspaceUser[]>({
+    queryKey: ["users"],
+    queryFn: () => api.get<WorkspaceUser[]>(`/api/users`),
+  });
+}
+
+export function useUpdateUserRole() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, role }: { id: string; role: "admin" | "viewer" }) =>
+      api.patch<WorkspaceUser>(`/api/users/${id}/role`, { role }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["users"] });
+      qc.invalidateQueries({ queryKey: ["audit"] });
+      qc.invalidateQueries({ queryKey: ["me"] });
+      toast.success("User role updated");
     },
   });
 }

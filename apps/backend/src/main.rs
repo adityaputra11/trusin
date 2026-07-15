@@ -6,6 +6,7 @@
 //! `main()` which sets up DB/Redis/state, spawns the delivery workers, and
 //! composes the router. All handler logic lives in the domain modules.
 
+mod audit;
 mod auth;
 mod config;
 mod events;
@@ -15,6 +16,7 @@ mod ratelimit;
 mod rules;
 mod state;
 mod stats;
+mod users;
 mod webhook;
 mod workers;
 
@@ -27,7 +29,7 @@ pub use state::AppState;
 
 use std::sync::Arc;
 
-use axum::routing::{delete, get, post};
+use axum::routing::{delete, get, patch, post};
 use axum::Router;
 use redis::aio::ConnectionManager;
 use sqlx::postgres::PgPoolOptions;
@@ -44,6 +46,7 @@ use crate::ratelimit::build_rate_limiter;
 use crate::rules::{create_rule, delete_rule, list_rules, update_rule};
 use crate::state::{redis_from_env, seed_default_user};
 use crate::stats::metrics;
+use crate::users::{list_users, update_user_role};
 use crate::webhook::{handle_root, handle_webhook};
 use crate::workers::{retry_worker, worker};
 
@@ -65,13 +68,17 @@ fn build_cors_layer() -> tower_http::cors::CorsLayer {
         .collect();
 
     if origins.is_empty() {
-        CorsLayer::new().allow_origin(Any).allow_methods(Any).allow_headers(Any)
+        CorsLayer::new()
+            .allow_origin(Any)
+            .allow_methods(Any)
+            .allow_headers(Any)
     } else {
         CorsLayer::new()
             .allow_origin(origins)
             .allow_methods([
                 axum::http::Method::GET,
                 axum::http::Method::POST,
+                axum::http::Method::PATCH,
                 axum::http::Method::DELETE,
                 axum::http::Method::OPTIONS,
             ])
@@ -108,8 +115,9 @@ async fn main() {
         .await
         .expect("can't connect to db");
 
-    let main_redis =
-        ConnectionManager::new(redis_from_env()).await.expect("can't connect to redis");
+    let main_redis = ConnectionManager::new(redis_from_env())
+        .await
+        .expect("can't connect to redis");
 
     sqlx::migrate!("./migrations").run(&db).await.ok();
     seed_default_user(&db).await;
@@ -180,8 +188,14 @@ async fn main() {
         .route("/rules", get(list_rules).post(create_rule))
         .route("/rules/{id}", delete(delete_rule).patch(update_rule))
         .route("/stats", get(metrics))
+        .route("/api/audit", get(audit::list_audit))
+        .route("/api/users", get(list_users))
+        .route("/api/users/{id}/role", patch(update_user_role))
         // API token management — any authenticated user may mint/scoped keys.
-        .route("/api/auth/tokens", get(auth::list_tokens).post(auth::create_token))
+        .route(
+            "/api/auth/tokens",
+            get(auth::list_tokens).post(auth::create_token),
+        )
         .route("/api/auth/tokens/{id}", delete(auth::revoke_token))
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),

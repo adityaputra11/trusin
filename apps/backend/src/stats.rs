@@ -62,12 +62,11 @@ pub async fn metrics(
         "SELECT date_trunc('{trunc}', created_at) AS bucket, COUNT(*) AS n \
          FROM webhook_events WHERE created_at >= $1 GROUP BY bucket ORDER BY bucket ASC"
     );
-    let series: Vec<(chrono::NaiveDateTime, i64)> =
-        sqlx::query_as(&series_sql)
-            .bind(since)
-            .fetch_all(&state.db)
-            .await
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let series: Vec<(chrono::NaiveDateTime, i64)> = sqlx::query_as(&series_sql)
+        .bind(since)
+        .fetch_all(&state.db)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let series: Vec<Value> = series
         .into_iter()
         .map(|(ts, n)| json!({ "bucket": ts, "count": n }))

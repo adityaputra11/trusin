@@ -9,7 +9,7 @@ export const Card = forwardRef<HTMLDivElement, CardProps>(
     return (
       <div
         ref={ref}
-        className={`bg-card border border-border rounded-lg p-6 shadow-[0_2px_8px_rgba(0,0,0,.25)] ${
+        className={`enterprise-panel bg-card border border-border rounded-lg p-6 ${
           hover ? "card-hover cursor-pointer" : ""
         } ${className}`}
         {...props}
@@ -36,7 +36,7 @@ export function CardHeader({
   return (
     <div className={`flex items-start justify-between mb-4 ${className}`}>
       <div>
-        <h3 className="text-lg font-semibold text-foreground leading-tight">
+        <h3 className="text-base font-semibold tracking-[-.015em] text-foreground leading-tight">
           {title}
         </h3>
         {subtitle && (

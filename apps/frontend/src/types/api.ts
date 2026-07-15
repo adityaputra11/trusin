@@ -109,3 +109,33 @@ export interface Metrics {
   top_sources: MetricsTopItem[];
   top_targets: MetricsTopItem[];
 }
+
+export interface AuditEntry {
+  id: string;
+  actor_user_id: string | null;
+  actor_email: string | null;
+  action: string;
+  resource_type: string;
+  resource_id: string | null;
+  metadata: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface ListAuditResponse {
+  entries: AuditEntry[];
+  total: number;
+  page: number;
+  per_page: number;
+  pages: number;
+}
+
+export interface WorkspaceUser {
+  id: string;
+  username: string | null;
+  email: string | null;
+  display_name: string | null;
+  avatar_url: string | null;
+  oauth_provider: string | null;
+  role: "admin" | "viewer" | string;
+  created_at: string;
+}

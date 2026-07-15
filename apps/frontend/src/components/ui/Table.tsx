@@ -17,7 +17,7 @@ export function Table({ children, className = "", ...props }: TableProps) {
 export function THead({ children }: { children: ReactNode }) {
   return (
     <thead>
-      <tr className="border-b border-border">{children}</tr>
+      <tr className="border-y border-border bg-[rgba(255,255,255,.012)]">{children}</tr>
     </thead>
   );
 }
@@ -29,7 +29,7 @@ export function TH({
 }: ThHTMLAttributes<HTMLTableCellElement>) {
   return (
     <th
-      className={`text-left text-xs font-medium uppercase tracking-wide text-[#9A9A9A] py-3 px-3 ${className}`}
+      className={`text-left text-[10px] font-semibold uppercase tracking-[.1em] text-muted py-3.5 px-4 ${className}`}
       {...props}
     >
       {children}
@@ -54,7 +54,7 @@ export function TR({
     <tr
       onClick={onClick}
       className={`border-b border-border last:border-0 transition-base ${
-        onClick ? "cursor-pointer hover:bg-card-secondary" : "hover:bg-card-secondary"
+        onClick ? "cursor-pointer hover:bg-[rgba(74,222,128,.025)]" : "hover:bg-card-secondary"
       } ${className}`}
     >
       {children}
@@ -68,7 +68,7 @@ export function TD({
   ...props
 }: TdHTMLAttributes<HTMLTableCellElement>) {
   return (
-    <td className={`py-3 px-3 text-sm align-middle ${className}`} {...props}>
+    <td className={`py-3.5 px-4 text-sm align-middle ${className}`} {...props}>
       {children}
     </td>
   );

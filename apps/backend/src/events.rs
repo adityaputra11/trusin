@@ -45,37 +45,51 @@ pub async fn list_events(
     let mut count_sql = "SELECT COUNT(*) FROM webhook_events WHERE 1=1".to_string();
     let mut params: Vec<String> = vec![];
 
-    if let Some(ref s) = q.search { if !s.is_empty() {
-        let like = format!("%{}%", s);
-        let idx = params.len() + 1;
-        sql += &format!(" AND (source ILIKE ${idx} OR target_url ILIKE ${idx} OR body::text ILIKE ${idx})");
-        count_sql += &format!(" AND (source ILIKE ${idx} OR target_url ILIKE ${idx} OR body::text ILIKE ${idx})");
-        params.push(like);
-    }}
-    if let Some(ref s) = q.status { if !s.is_empty() && s != "all" {
-        let idx = params.len() + 1;
-        sql += &format!(" AND status = ${idx}");
-        count_sql += &format!(" AND status = ${idx}");
-        params.push(s.clone());
-    }}
-    if let Some(ref s) = q.source { if !s.is_empty() {
-        let idx = params.len() + 1;
-        sql += &format!(" AND source = ${idx}");
-        count_sql += &format!(" AND source = ${idx}");
-        params.push(s.clone());
-    }}
-    if let Some(ref ts) = q.from { if !ts.is_empty() {
-        let idx = params.len() + 1;
-        sql += &format!(" AND created_at >= ${idx}::timestamp");
-        count_sql += &format!(" AND created_at >= ${idx}::timestamp");
-        params.push(ts.clone());
-    }}
-    if let Some(ref ts) = q.to { if !ts.is_empty() {
-        let idx = params.len() + 1;
-        sql += &format!(" AND created_at < ${idx}::timestamp");
-        count_sql += &format!(" AND created_at < ${idx}::timestamp");
-        params.push(ts.clone());
-    }}
+    if let Some(ref s) = q.search {
+        if !s.is_empty() {
+            let like = format!("%{}%", s);
+            let idx = params.len() + 1;
+            sql += &format!(
+                " AND (source ILIKE ${idx} OR target_url ILIKE ${idx} OR body::text ILIKE ${idx})"
+            );
+            count_sql += &format!(
+                " AND (source ILIKE ${idx} OR target_url ILIKE ${idx} OR body::text ILIKE ${idx})"
+            );
+            params.push(like);
+        }
+    }
+    if let Some(ref s) = q.status {
+        if !s.is_empty() && s != "all" {
+            let idx = params.len() + 1;
+            sql += &format!(" AND status = ${idx}");
+            count_sql += &format!(" AND status = ${idx}");
+            params.push(s.clone());
+        }
+    }
+    if let Some(ref s) = q.source {
+        if !s.is_empty() {
+            let idx = params.len() + 1;
+            sql += &format!(" AND source = ${idx}");
+            count_sql += &format!(" AND source = ${idx}");
+            params.push(s.clone());
+        }
+    }
+    if let Some(ref ts) = q.from {
+        if !ts.is_empty() {
+            let idx = params.len() + 1;
+            sql += &format!(" AND created_at >= ${idx}::timestamp");
+            count_sql += &format!(" AND created_at >= ${idx}::timestamp");
+            params.push(ts.clone());
+        }
+    }
+    if let Some(ref ts) = q.to {
+        if !ts.is_empty() {
+            let idx = params.len() + 1;
+            sql += &format!(" AND created_at < ${idx}::timestamp");
+            count_sql += &format!(" AND created_at < ${idx}::timestamp");
+            params.push(ts.clone());
+        }
+    }
 
     sql += &format!(" ORDER BY created_at DESC LIMIT {per_page} OFFSET {offset}");
 
@@ -86,10 +100,9 @@ pub async fn list_events(
         count_q = count_q.bind(p);
     }
 
-    let (events, total) = tokio::try_join!(
-        query.fetch_all(&state.db),
-        count_q.fetch_one(&state.db),
-    ).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let (events, total) =
+        tokio::try_join!(query.fetch_all(&state.db), count_q.fetch_one(&state.db),)
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     Ok(Json(json!({
         "events": events,
@@ -104,12 +117,11 @@ pub async fn get_event(
     State(state): State<Arc<AppState>>,
     Path(id): Path<Uuid>,
 ) -> Result<Json<WebhookEvent>, StatusCode> {
-    let event =
-        sqlx::query_as::<_, WebhookEvent>("SELECT * FROM webhook_events WHERE id = $1")
-            .bind(id)
-            .fetch_optional(&state.db)
-            .await
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let event = sqlx::query_as::<_, WebhookEvent>("SELECT * FROM webhook_events WHERE id = $1")
+        .bind(id)
+        .fetch_optional(&state.db)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     event.map(Json).ok_or(StatusCode::NOT_FOUND)
 }
 
@@ -132,12 +144,11 @@ pub async fn list_attempts(
 pub async fn list_sources(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<Vec<String>>, StatusCode> {
-    let rows: Vec<(String,)> = sqlx::query_as(
-        "SELECT DISTINCT source FROM webhook_events ORDER BY source ASC",
-    )
-    .fetch_all(&state.db)
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let rows: Vec<(String,)> =
+        sqlx::query_as("SELECT DISTINCT source FROM webhook_events ORDER BY source ASC")
+            .fetch_all(&state.db)
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(rows.into_iter().map(|(s,)| s).collect()))
 }
 
@@ -182,8 +193,7 @@ pub async fn event_stream(State(state): State<Arc<AppState>>) -> Response {
     });
 
     let body = Body::from_stream(
-        tokio_stream::wrappers::ReceiverStream::new(rx)
-            .map(|r| r.map(|s| Bytes::from(s))),
+        tokio_stream::wrappers::ReceiverStream::new(rx).map(|r| r.map(|s| Bytes::from(s))),
     );
     Response::builder()
         .status(StatusCode::OK)
@@ -200,11 +210,10 @@ pub async fn retry_event(
     Path(id): Path<Uuid>,
 ) -> Result<StatusCode, StatusCode> {
     require_admin(&cu)?;
-    let event =
-        sqlx::query_as::<_, WebhookEvent>("SELECT * FROM webhook_events WHERE id = $1")
-            .bind(id)
-            .fetch_optional(&state.db)
-            .await;
+    let event = sqlx::query_as::<_, WebhookEvent>("SELECT * FROM webhook_events WHERE id = $1")
+        .bind(id)
+        .fetch_optional(&state.db)
+        .await;
 
     match event {
         Ok(Some(_)) => {
@@ -215,6 +224,15 @@ pub async fn retry_event(
                 .query_async::<()>(&mut conn)
                 .await
                 .ok();
+            crate::audit::record(
+                &state,
+                Some(&cu),
+                "event.retried",
+                "event",
+                Some(id.to_string()),
+                json!({}),
+            )
+            .await;
             Ok(StatusCode::OK)
         }
         _ => Err(StatusCode::NOT_FOUND),
@@ -227,14 +245,36 @@ pub async fn ack_event(
     Path(id): Path<Uuid>,
 ) -> Result<StatusCode, StatusCode> {
     require_admin(&cu)?;
-    sqlx::query("UPDATE webhook_events SET status = 'delivered', response_status = 200 WHERE id = $1")
-        .bind(id)
-        .execute(&state.db)
+    sqlx::query(
+        "UPDATE webhook_events SET status = 'delivered', response_status = 200 WHERE id = $1",
+    )
+    .bind(id)
+    .execute(&state.db)
+    .await
+    .ok();
+    let mut conn = state.redis.clone();
+    redis::cmd("LREM")
+        .arg(QUEUE_KEY)
+        .arg(0)
+        .arg(id.to_string())
+        .query_async::<()>(&mut conn)
         .await
         .ok();
-    let mut conn = state.redis.clone();
-    redis::cmd("LREM").arg(QUEUE_KEY).arg(0).arg(id.to_string()).query_async::<()>(&mut conn).await.ok();
-    redis::cmd("ZREM").arg(RETRY_KEY).arg(id.to_string()).query_async::<()>(&mut conn).await.ok();
+    redis::cmd("ZREM")
+        .arg(RETRY_KEY)
+        .arg(id.to_string())
+        .query_async::<()>(&mut conn)
+        .await
+        .ok();
+    crate::audit::record(
+        &state,
+        Some(&cu),
+        "event.acked",
+        "event",
+        Some(id.to_string()),
+        json!({ "status": "delivered" }),
+    )
+    .await;
     Ok(StatusCode::OK)
 }
 
@@ -252,8 +292,28 @@ pub async fn delete_event(
     let removed = matches!(res, Ok(r) if r.rows_affected() > 0);
     if removed {
         let mut conn = state.redis.clone();
-        redis::cmd("LREM").arg(QUEUE_KEY).arg(0).arg(id.to_string()).query_async::<()>(&mut conn).await.ok();
-        redis::cmd("ZREM").arg(RETRY_KEY).arg(id.to_string()).query_async::<()>(&mut conn).await.ok();
+        redis::cmd("LREM")
+            .arg(QUEUE_KEY)
+            .arg(0)
+            .arg(id.to_string())
+            .query_async::<()>(&mut conn)
+            .await
+            .ok();
+        redis::cmd("ZREM")
+            .arg(RETRY_KEY)
+            .arg(id.to_string())
+            .query_async::<()>(&mut conn)
+            .await
+            .ok();
+        crate::audit::record(
+            &state,
+            Some(&cu),
+            "event.deleted",
+            "event",
+            Some(id.to_string()),
+            json!({}),
+        )
+        .await;
         Ok(StatusCode::OK)
     } else {
         Err(StatusCode::NOT_FOUND)
@@ -293,7 +353,18 @@ pub async fn bulk_retry(
             .ok();
         enqueued += 1;
     }
-    Ok(Json(json!({ "enqueued": enqueued, "requested": input.ids.len() })))
+    crate::audit::record(
+        &state,
+        Some(&cu),
+        "event.bulk_retried",
+        "event",
+        None,
+        json!({ "requested": input.ids.len(), "enqueued": enqueued }),
+    )
+    .await;
+    Ok(Json(
+        json!({ "enqueued": enqueued, "requested": input.ids.len() }),
+    ))
 }
 
 /// Delete many events at once and scrub them from Redis.
@@ -311,10 +382,32 @@ pub async fn bulk_delete(
             .execute(&state.db)
             .await;
         if matches!(res, Ok(r) if r.rows_affected() > 0) {
-            redis::cmd("LREM").arg(QUEUE_KEY).arg(0).arg(id.to_string()).query_async::<()>(&mut conn).await.ok();
-            redis::cmd("ZREM").arg(RETRY_KEY).arg(id.to_string()).query_async::<()>(&mut conn).await.ok();
+            redis::cmd("LREM")
+                .arg(QUEUE_KEY)
+                .arg(0)
+                .arg(id.to_string())
+                .query_async::<()>(&mut conn)
+                .await
+                .ok();
+            redis::cmd("ZREM")
+                .arg(RETRY_KEY)
+                .arg(id.to_string())
+                .query_async::<()>(&mut conn)
+                .await
+                .ok();
             deleted += 1;
         }
     }
-    Ok(Json(json!({ "deleted": deleted, "requested": input.ids.len() })))
+    crate::audit::record(
+        &state,
+        Some(&cu),
+        "event.bulk_deleted",
+        "event",
+        None,
+        json!({ "requested": input.ids.len(), "deleted": deleted }),
+    )
+    .await;
+    Ok(Json(
+        json!({ "deleted": deleted, "requested": input.ids.len() }),
+    ))
 }

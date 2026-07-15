@@ -13,12 +13,12 @@ interface BadgeProps extends HTMLAttributes<HTMLSpanElement> {
 }
 
 const variants: Record<BadgeVariant, string> = {
-  success: "bg-[rgba(34,197,94,.15)] text-success",
-  warning: "bg-[rgba(245,158,11,.15)] text-warning",
-  danger: "bg-[rgba(239,68,68,.15)] text-danger",
-  info: "bg-[rgba(59,130,246,.15)] text-info",
-  purple: "bg-[rgba(147,51,234,.15)] text-purple",
-  neutral: "bg-[rgba(255,255,255,.06)] text-secondary",
+  success: "bg-[rgba(74,222,128,.09)] text-success border border-[rgba(74,222,128,.18)]",
+  warning: "bg-[rgba(245,158,11,.09)] text-warning border border-[rgba(245,158,11,.18)]",
+  danger: "bg-[rgba(239,68,68,.09)] text-danger border border-[rgba(239,68,68,.18)]",
+  info: "bg-[rgba(59,130,246,.09)] text-info border border-[rgba(59,130,246,.18)]",
+  purple: "bg-[rgba(147,51,234,.09)] text-purple border border-[rgba(147,51,234,.18)]",
+  neutral: "bg-[rgba(255,255,255,.035)] text-secondary border border-border",
 };
 
 export function Badge({
@@ -29,7 +29,7 @@ export function Badge({
 }: BadgeProps) {
   return (
     <span
-      className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${variants[variant]} ${className}`}
+      className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] tracking-wide font-semibold ${variants[variant]} ${className}`}
       {...props}
     >
       {children}

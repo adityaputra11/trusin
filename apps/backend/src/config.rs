@@ -26,12 +26,19 @@ pub async fn set_default_target(
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     require_admin(&cu)?;
     *state.default_target.lock().unwrap() = input.url.clone();
+    crate::audit::record(
+        &state,
+        Some(&cu),
+        "config.default_target_updated",
+        "config",
+        Some("default-target".to_string()),
+        serde_json::json!({ "url": input.url }),
+    )
+    .await;
     Ok(Json(serde_json::json!({"default_target": input.url})))
 }
 
-pub async fn get_default_target(
-    State(state): State<Arc<AppState>>,
-) -> Json<serde_json::Value> {
+pub async fn get_default_target(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
     let t = state.default_target.lock().unwrap().clone();
     Json(serde_json::json!({"default_target": t}))
 }
@@ -71,8 +78,8 @@ async fn get_ngrok_url() -> Option<String> {
 /// live ngrok tunnel if one is running. Replaces the SSR web app's server-side
 /// ngrok probe, which a browser cannot reach directly.
 pub async fn get_endpoint() -> Json<serde_json::Value> {
-    let public_url = std::env::var("PUBLIC_URL")
-        .unwrap_or_else(|_| "https://terusin-dev.my.id".to_string());
+    let public_url =
+        std::env::var("PUBLIC_URL").unwrap_or_else(|_| "https://terusin-dev.my.id".to_string());
     let ngrok = get_ngrok_url().await;
     Json(serde_json::json!({
         "endpoint": public_url,

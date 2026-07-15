@@ -11,9 +11,8 @@ async fn catch_all(req: Request) -> impl IntoResponse {
         .collect();
 
     let body: Value = match axum::body::to_bytes(req.into_body(), 1024 * 1024).await {
-        Ok(b) => serde_json::from_slice(&b).unwrap_or(Value::String(
-            String::from_utf8_lossy(&b).to_string(),
-        )),
+        Ok(b) => serde_json::from_slice(&b)
+            .unwrap_or(Value::String(String::from_utf8_lossy(&b).to_string())),
         Err(_) => Value::Null,
     };
 
@@ -26,7 +25,10 @@ async fn catch_all(req: Request) -> impl IntoResponse {
     }
     println!("─────────────────────────────────────────");
     println!(" Body:");
-    println!("{}", serde_json::to_string_pretty(&body).unwrap_or_default());
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&body).unwrap_or_default()
+    );
     println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
 
     Json(serde_json::json!({"status": "ok"}))

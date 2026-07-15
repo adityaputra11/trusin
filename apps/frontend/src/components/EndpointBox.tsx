@@ -24,12 +24,13 @@ export function EndpointBox() {
   const masked = url ? `${url.slice(0, 24)}${url.length > 24 ? "•".repeat(8) : ""}` : "";
 
   return (
-    <div className="bg-[rgba(34,197,94,.06)] border border-[rgba(34,197,94,.2)] rounded-lg p-4 mb-6 flex items-center gap-3">
-      <div className="h-9 w-9 rounded-md bg-[rgba(34,197,94,.15)] text-success flex items-center justify-center shrink-0">
+    <div className="relative overflow-hidden bg-[linear-gradient(100deg,rgba(74,222,128,.075),rgba(13,17,14,.82)_60%)] border border-[rgba(74,222,128,.18)] rounded-lg p-4 mb-6 flex items-center gap-3 shadow-[inset_0_1px_rgba(255,255,255,.02)]">
+      <div className="absolute inset-y-0 left-0 w-[3px] bg-success" />
+      <div className="h-10 w-10 rounded-md bg-[rgba(74,222,128,.09)] border border-[rgba(74,222,128,.18)] text-success flex items-center justify-center shrink-0">
         <Link2 className="h-5 w-5" />
       </div>
       <div className="flex-1 min-w-0">
-        <p className="text-xs font-medium text-success uppercase tracking-wide mb-1">
+        <p className="text-[10px] font-semibold text-success uppercase tracking-[.12em] mb-1.5">
           {data?.ngrok ? "Live Tunnel" : "Endpoint"}
         </p>
         {isLoading ? (
