@@ -19,8 +19,9 @@ jobs:
       web: ${{ github.event_name == 'workflow_dispatch' || steps.filter.outputs.web == 'true' || steps.filter.outputs.frontend == 'true' || steps.filter.outputs.full == 'true' }}
       landing: ${{ github.event_name == 'workflow_dispatch' || steps.filter.outputs.landing == 'true' || steps.filter.outputs.full == 'true' }}
       docs: ${{ github.event_name == 'workflow_dispatch' || steps.filter.outputs.docs == 'true' || steps.filter.outputs.full == 'true' }}
+      download: ${{ github.event_name == 'workflow_dispatch' || steps.filter.outputs.download == 'true' || steps.filter.outputs.full == 'true' }}
       runtime: ${{ github.event_name == 'workflow_dispatch' || steps.filter.outputs.backend == 'true' || steps.filter.outputs.web == 'true' || steps.filter.outputs.frontend == 'true' || steps.filter.outputs.full == 'true' }}
-      any: ${{ github.event_name == 'workflow_dispatch' || steps.filter.outputs.backend == 'true' || steps.filter.outputs.web == 'true' || steps.filter.outputs.frontend == 'true' || steps.filter.outputs.landing == 'true' || steps.filter.outputs.docs == 'true' || steps.filter.outputs.full == 'true' }}
+      any: ${{ github.event_name == 'workflow_dispatch' || steps.filter.outputs.backend == 'true' || steps.filter.outputs.web == 'true' || steps.filter.outputs.frontend == 'true' || steps.filter.outputs.landing == 'true' || steps.filter.outputs.docs == 'true' || steps.filter.outputs.download == 'true' || steps.filter.outputs.full == 'true' }}
     steps:
       - uses: actions/checkout@v5
         with:
@@ -39,6 +40,8 @@ jobs:
               - 'apps/landing/**'
             docs:
               - 'website/**'
+            download:
+              - 'install.sh'
             full:
               - 'Cargo.toml'
               - 'Cargo.lock'
@@ -112,6 +115,7 @@ jobs:
           WEB_CHANGED: ${{ needs.changes.outputs.web }}
           LANDING_CHANGED: ${{ needs.changes.outputs.landing }}
           DOCS_CHANGED: ${{ needs.changes.outputs.docs }}
+          DOWNLOAD_CHANGED: ${{ needs.changes.outputs.download }}
         run: |
           mkdir -p release/deploy
           cp deploy/install-release.sh release/deploy/
@@ -119,6 +123,7 @@ jobs:
           if [[ "$WEB_CHANGED" == 'true' ]]; then mkdir -p release/bin; cp target/release/web release/bin/; fi
           if [[ "$LANDING_CHANGED" == 'true' ]]; then cp -R apps/landing/dist release/landing; fi
           if [[ "$DOCS_CHANGED" == 'true' ]]; then cp -R website/build release/docs; fi
+          if [[ "$DOWNLOAD_CHANGED" == 'true' ]]; then mkdir -p release/download; cp install.sh release/download/install.sh; chmod 0755 release/download/install.sh; fi
           if [[ "$BACKEND_CHANGED" == 'true' && "$WEB_CHANGED" == 'true' && "$LANDING_CHANGED" == 'true' && "$DOCS_CHANGED" == 'true' ]]; then
             cp deploy/terusin-backend.service deploy/terusin-web.service deploy/trusin.caddy release/deploy/
           fi
@@ -207,8 +212,9 @@ jobs:
             sudo /bin/bash "$stage_dir/trusin-release-$release_id/release/deploy/install-release.sh" "$release_id" "$USER" "$stage_dir/trusin-release-$release_id/release"
             rm -rf "$stage_dir" /tmp/production-upload.tar.gz
 
-            backend_changed='${{ needs.changes.outputs.backend }}'; web_changed='${{ needs.changes.outputs.web }}'; landing_changed='${{ needs.changes.outputs.landing }}'; docs_changed='${{ needs.changes.outputs.docs }}'
+            backend_changed='${{ needs.changes.outputs.backend }}'; web_changed='${{ needs.changes.outputs.web }}'; landing_changed='${{ needs.changes.outputs.landing }}'; docs_changed='${{ needs.changes.outputs.docs }}'; download_changed='${{ needs.changes.outputs.download }}'
             if [[ "$backend_changed" == true ]]; then systemctl is-active --quiet terusin-backend; for attempt in {1..30}; do curl --fail --silent http://127.0.0.1:3011/health >/dev/null && break; sleep 2; done; curl --fail --silent http://127.0.0.1:3011/health; curl --fail --silent --retry 6 --retry-delay 5 https://api.trusin.my.id/health >/dev/null; curl --fail --silent --retry 6 --retry-delay 5 https://ingest.trusin.my.id/health >/dev/null; fi
             if [[ "$web_changed" == true ]]; then systemctl is-active --quiet terusin-web; curl --fail --silent --retry 6 --retry-delay 5 https://app.trusin.my.id/health >/dev/null; fi
             if [[ "$landing_changed" == true ]]; then curl --fail --silent https://trusin.my.id/robots.txt | grep -Fx 'Sitemap: https://trusin.my.id/sitemap.xml'; curl --fail --silent https://trusin.my.id/sitemap.xml | grep -F '<urlset'; curl --fail --silent https://trusin.my.id | grep -F 'https://trusin.my.id/og-image.png'; fi
             if [[ "$docs_changed" == true ]]; then curl --fail --silent https://docs.trusin.my.id/robots.txt | grep -F 'Sitemap:'; curl --fail --silent https://docs.trusin.my.id/sitemap.xml | grep -F '<urlset'; fi
+            if [[ "$download_changed" == true ]]; then curl --fail --silent https://download.trusin.my.id/install.sh | grep -F 'REPO="adityaputra11/terusin"'; fi
