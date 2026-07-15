@@ -5,9 +5,6 @@ on:
     branches: [master]
   workflow_dispatch:
 
-# Least privilege — this workflow only needs to read the repo (the checkout)
-# and never writes back to it. The default GITHUB_TOKEN can otherwise be
-# over-privileged.
 permissions:
   contents: read
 
@@ -15,13 +12,45 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      backend: ${{ github.event_name == 'workflow_dispatch' || steps.filter.outputs.backend == 'true' || steps.filter.outputs.full == 'true' }}
+      web: ${{ github.event_name == 'workflow_dispatch' || steps.filter.outputs.web == 'true' || steps.filter.outputs.frontend == 'true' || steps.filter.outputs.full == 'true' }}
+      landing: ${{ github.event_name == 'workflow_dispatch' || steps.filter.outputs.landing == 'true' || steps.filter.outputs.full == 'true' }}
+      docs: ${{ github.event_name == 'workflow_dispatch' || steps.filter.outputs.docs == 'true' || steps.filter.outputs.full == 'true' }}
+      runtime: ${{ github.event_name == 'workflow_dispatch' || steps.filter.outputs.backend == 'true' || steps.filter.outputs.web == 'true' || steps.filter.outputs.frontend == 'true' || steps.filter.outputs.full == 'true' }}
+      any: ${{ github.event_name == 'workflow_dispatch' || steps.filter.outputs.backend == 'true' || steps.filter.outputs.web == 'true' || steps.filter.outputs.frontend == 'true' || steps.filter.outputs.landing == 'true' || steps.filter.outputs.docs == 'true' || steps.filter.outputs.full == 'true' }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            backend:
+              - 'apps/backend/**'
+            web:
+              - 'apps/web/**'
+            frontend:
+              - 'apps/frontend/**'
+            landing:
+              - 'apps/landing/**'
+            docs:
+              - 'website/**'
+            full:
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - 'deploy/**'
+              - '.github/workflows/deploy.yml'
+
   build:
+    needs: changes
+    if: needs.changes.outputs.any == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-
-      # Build the React frontend first — the `web` binary embeds apps/frontend/dist
-      # via rust-embed at compile time. Without this the cargo build fails.
       - uses: actions/setup-node@v5
         with:
           node-version: '22'
@@ -31,17 +60,15 @@ jobs:
             apps/landing/package-lock.json
             website/package-lock.json
 
-      - name: Build frontend
+      - name: Build dashboard bundle
+        if: needs.changes.outputs.web == 'true'
         working-directory: apps/frontend
         env:
-          # Public Cloudflare Turnstile site key. Optional — when unset, the
-          # captcha widget is not rendered and login submits no token.
           VITE_TURNSTILE_SITE_KEY: ${{ secrets.TURNSTILE_SITE_KEY }}
-        run: |
-          npm ci
-          npm run build
+        run: npm ci && npm run build
 
       - name: Build landing
+        if: needs.changes.outputs.landing == 'true'
         working-directory: apps/landing
         env:
           VITE_APP_URL: https://app.trusin.my.id
@@ -51,21 +78,19 @@ jobs:
           VITE_GOOGLE_SITE_VERIFICATION: ${{ vars.GOOGLE_SITE_VERIFICATION }}
           VITE_BING_SITE_VERIFICATION: ${{ vars.BING_SITE_VERIFICATION }}
           VITE_GA_MEASUREMENT_ID: ${{ vars.GA_MEASUREMENT_ID }}
-        run: |
-          npm ci
-          npm run build
+        run: npm ci && npm run build
 
       - name: Build documentation
+        if: needs.changes.outputs.docs == 'true'
         working-directory: website
         env:
           DOCS_URL: https://docs.trusin.my.id
           LANDING_URL: https://trusin.my.id
           APP_URL: https://app.trusin.my.id
-        run: |
-          npm ci
-          npm run build
+        run: npm ci && npm run build
 
       - uses: actions/cache@v5
+        if: needs.changes.outputs.runtime == 'true'
         with:
           path: |
             ~/.cargo/registry
@@ -73,16 +98,30 @@ jobs:
             target/release
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
-      - run: cargo build --release --bin backend --bin web
+      - name: Build backend
+        if: needs.changes.outputs.backend == 'true'
+        run: cargo build --release --bin backend
 
-      - name: Package production release
+      - name: Build dashboard server
+        if: needs.changes.outputs.web == 'true'
+        run: cargo build --release --bin web
+
+      - name: Package changed components
+        env:
+          BACKEND_CHANGED: ${{ needs.changes.outputs.backend }}
+          WEB_CHANGED: ${{ needs.changes.outputs.web }}
+          LANDING_CHANGED: ${{ needs.changes.outputs.landing }}
+          DOCS_CHANGED: ${{ needs.changes.outputs.docs }}
         run: |
-          mkdir -p release/bin release/landing release/docs release/deploy
-          cp target/release/backend target/release/web release/bin/
-          cp -R apps/landing/dist/. release/landing/
-          cp -R website/build/. release/docs/
-          cp deploy/terusin-backend.service deploy/terusin-web.service \
-            deploy/trusin.caddy deploy/install-release.sh release/deploy/
+          mkdir -p release/deploy
+          cp deploy/install-release.sh release/deploy/
+          if [[ "$BACKEND_CHANGED" == 'true' ]]; then mkdir -p release/bin; cp target/release/backend release/bin/; fi
+          if [[ "$WEB_CHANGED" == 'true' ]]; then mkdir -p release/bin; cp target/release/web release/bin/; fi
+          if [[ "$LANDING_CHANGED" == 'true' ]]; then cp -R apps/landing/dist release/landing; fi
+          if [[ "$DOCS_CHANGED" == 'true' ]]; then cp -R website/build release/docs; fi
+          if [[ "$BACKEND_CHANGED" == 'true' && "$WEB_CHANGED" == 'true' && "$LANDING_CHANGED" == 'true' && "$DOCS_CHANGED" == 'true' ]]; then
+            cp deploy/terusin-backend.service deploy/terusin-web.service deploy/trusin.caddy release/deploy/
+          fi
           tar -czf trusin-release.tar.gz release
 
       - uses: actions/upload-artifact@v5
@@ -92,22 +131,28 @@ jobs:
           retention-days: 1
 
   deploy:
-    needs: build
+    needs: [changes, build]
+    if: needs.changes.outputs.any == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
-
       - uses: actions/download-artifact@v5
         with:
           name: production-release
           path: artifact
 
-      - name: Validate production secrets
+      - name: Validate deployment access
         env:
           SSH_HOST: ${{ secrets.SSH_HOST }}
           SSH_USER: ${{ secrets.SSH_USER }}
           SSH_KEY: ${{ secrets.SSH_KEY }}
+        run: |
+          for name in SSH_HOST SSH_USER SSH_KEY; do test -n "${!name}" || { echo "::error::Missing required repository secret: $name"; exit 1; }; done
+
+      - name: Create runtime configuration
+        if: needs.changes.outputs.runtime == 'true'
+        env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          REDIS_URL: ${{ secrets.REDIS_URL }}
           AUTH_USERNAME: ${{ secrets.AUTH_USERNAME }}
           AUTH_PASSWORD: ${{ secrets.AUTH_PASSWORD }}
           JWT_SECRET: ${{ secrets.JWT_SECRET }}
@@ -118,73 +163,27 @@ jobs:
           RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
           EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
           PLATFORM_ADMIN_TOKEN: ${{ secrets.PLATFORM_ADMIN_TOKEN }}
-        run: |
-          missing=0
-          for name in SSH_HOST SSH_USER SSH_KEY DATABASE_URL AUTH_USERNAME AUTH_PASSWORD JWT_SECRET GOOGLE_CLIENT_ID GOOGLE_CLIENT_SECRET RESEND_API_KEY EMAIL_FROM PLATFORM_ADMIN_TOKEN; do
-            if [ -z "${!name}" ]; then
-              echo "::error::Missing required repository secret: $name"
-              missing=1
-            fi
-          done
-          exit "$missing"
-
-      - name: Create runtime configuration
-        env:
-          DATABASE_URL: ${{ secrets.DATABASE_URL }}
-          REDIS_URL: ${{ secrets.REDIS_URL }}
-          AUTH_USERNAME: ${{ secrets.AUTH_USERNAME }}
-          AUTH_PASSWORD: ${{ secrets.AUTH_PASSWORD }}
-          JWT_SECRET: ${{ secrets.JWT_SECRET }}
-          GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
-          GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
-          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
-          EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
-          PLATFORM_ADMIN_TOKEN: ${{ secrets.PLATFORM_ADMIN_TOKEN }}
           TURNSTILE_SITE_KEY: ${{ secrets.TURNSTILE_SITE_KEY }}
           TURNSTILE_SECRET_KEY: ${{ secrets.TURNSTILE_SECRET_KEY }}
           DEFAULT_SIGNING_SECRET: ${{ secrets.DEFAULT_SIGNING_SECRET }}
         run: |
           mkdir -p upload/trusin-release-${{ github.sha }}
           tar -xzf artifact/trusin-release.tar.gz -C upload/trusin-release-${{ github.sha }}
-          write_env() {
-            local key="$1" value="$2"
-            value="${value//\\/\\\\}"
-            value="${value//\"/\\\"}"
-            value="${value//\$/\\\$}"
-            printf '%s="%s"\n' "$key" "$value"
-          }
+          write_env() { local key="$1" value="$2"; value="${value//\\/\\\\}"; value="${value//\"/\\\"}"; value="${value//\$/\\\$}"; printf '%s="%s"\n' "$key" "$value"; }
           {
-            write_env DATABASE_URL "$DATABASE_URL"
-            write_env REDIS_URL "${REDIS_URL:-redis://127.0.0.1:6379}"
-            write_env PORT 3011
-            write_env BACKEND_URL http://127.0.0.1:3011
-            write_env BACKEND_PORT 3011
-            write_env WEB_PORT 3012
-            write_env PUBLIC_URL https://ingest.trusin.my.id
-            write_env APP_URL https://app.trusin.my.id
-            write_env FRONTEND_URL https://app.trusin.my.id
-            write_env OAUTH_REDIRECT_URI https://app.trusin.my.id/api/auth/callback/google
-            write_env WEB_URL https://app.trusin.my.id
-            write_env HOSTED_MODE true
-            write_env INGEST_CANONICAL_HOST ingest.trusin.my.id
-            write_env AUTH_USERNAME "$AUTH_USERNAME"
-            write_env AUTH_PASSWORD "$AUTH_PASSWORD"
-            write_env JWT_SECRET "$JWT_SECRET"
-            write_env GOOGLE_CLIENT_ID "$GOOGLE_CLIENT_ID"
-            write_env GOOGLE_CLIENT_SECRET "$GOOGLE_CLIENT_SECRET"
-            write_env GITHUB_CLIENT_ID "$GITHUB_CLIENT_ID"
-            write_env GITHUB_CLIENT_SECRET "$GITHUB_CLIENT_SECRET"
-            write_env RESEND_API_KEY "$RESEND_API_KEY"
-            write_env EMAIL_FROM "$EMAIL_FROM"
-            write_env PLATFORM_ADMIN_TOKEN "$PLATFORM_ADMIN_TOKEN"
-            write_env TURNSTILE_SITE_KEY "$TURNSTILE_SITE_KEY"
-            write_env TURNSTILE_SECRET_KEY "$TURNSTILE_SECRET_KEY"
-            write_env DEFAULT_SIGNING_SECRET "$DEFAULT_SIGNING_SECRET"
-            write_env MAX_RETRIES 5
-            write_env WORKER_COUNT 4
+            write_env DATABASE_URL "$DATABASE_URL"; write_env REDIS_URL "${REDIS_URL:-redis://127.0.0.1:6379}"; write_env PORT 3011; write_env BACKEND_URL http://127.0.0.1:3011; write_env BACKEND_PORT 3011; write_env WEB_PORT 3012
+            write_env PUBLIC_URL https://ingest.trusin.my.id; write_env APP_URL https://app.trusin.my.id; write_env FRONTEND_URL https://app.trusin.my.id; write_env OAUTH_REDIRECT_URI https://app.trusin.my.id/api/auth/callback/google; write_env WEB_URL https://app.trusin.my.id; write_env HOSTED_MODE true; write_env INGEST_CANONICAL_HOST ingest.trusin.my.id
+            write_env AUTH_USERNAME "$AUTH_USERNAME"; write_env AUTH_PASSWORD "$AUTH_PASSWORD"; write_env JWT_SECRET "$JWT_SECRET"; write_env GOOGLE_CLIENT_ID "$GOOGLE_CLIENT_ID"; write_env GOOGLE_CLIENT_SECRET "$GOOGLE_CLIENT_SECRET"; write_env GITHUB_CLIENT_ID "$GITHUB_CLIENT_ID"; write_env GITHUB_CLIENT_SECRET "$GITHUB_CLIENT_SECRET"; write_env RESEND_API_KEY "$RESEND_API_KEY"; write_env EMAIL_FROM "$EMAIL_FROM"; write_env PLATFORM_ADMIN_TOKEN "$PLATFORM_ADMIN_TOKEN"; write_env TURNSTILE_SITE_KEY "$TURNSTILE_SITE_KEY"; write_env TURNSTILE_SECRET_KEY "$TURNSTILE_SECRET_KEY"; write_env DEFAULT_SIGNING_SECRET "$DEFAULT_SIGNING_SECRET"; write_env MAX_RETRIES 5; write_env WORKER_COUNT 4
           } > upload/trusin-release-${{ github.sha }}/release/runtime.env
-          tar -czf production-upload.tar.gz -C upload trusin-release-${{ github.sha }}
 
+      - name: Prepare static deployment
+        if: needs.changes.outputs.runtime != 'true'
+        run: |
+          mkdir -p upload/trusin-release-${{ github.sha }}
+          tar -xzf artifact/trusin-release.tar.gz -C upload/trusin-release-${{ github.sha }}
+
+      - name: Upload release
+        run: tar -czf production-upload.tar.gz -C upload trusin-release-${{ github.sha }}
       - uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ secrets.SSH_HOST }}
@@ -193,7 +192,6 @@ jobs:
           port: ${{ secrets.SSH_PORT || '22' }}
           source: production-upload.tar.gz
           target: /tmp
-
       - uses: appleboy/ssh-action@v1.2.0
         with:
           host: ${{ secrets.SSH_HOST }}
@@ -204,35 +202,13 @@ jobs:
             set -euo pipefail
             release_id=${{ github.sha }}
             stage_dir=/tmp/trusin-release-$release_id
-            rm -rf "$stage_dir"
-            mkdir -p "$stage_dir"
+            rm -rf "$stage_dir" && mkdir -p "$stage_dir"
             tar -xzf /tmp/production-upload.tar.gz -C "$stage_dir"
-            sudo /bin/bash "$stage_dir/trusin-release-$release_id/release/deploy/install-release.sh" \
-              "$release_id" "$USER" "$stage_dir/trusin-release-$release_id/release"
+            sudo /bin/bash "$stage_dir/trusin-release-$release_id/release/deploy/install-release.sh" "$release_id" "$USER" "$stage_dir/trusin-release-$release_id/release"
             rm -rf "$stage_dir" /tmp/production-upload.tar.gz
 
-            systemctl is-active --quiet terusin-backend
-            systemctl is-active --quiet terusin-web
-            for attempt in {1..30}; do
-              if curl --fail --silent --show-error http://127.0.0.1:3011/health > /dev/null; then
-                break
-              fi
-              sleep 2
-            done
-            curl --fail --silent --show-error http://127.0.0.1:3011/health
-
-            for url in \
-              https://trusin.my.id \
-              https://docs.trusin.my.id \
-              https://app.trusin.my.id/health \
-              https://api.trusin.my.id/health \
-              https://ingest.trusin.my.id/health; do
-              curl --fail --silent --show-error --retry 6 --retry-delay 5 "$url" > /dev/null
-            done
-
-            test "$(curl --silent --output /dev/null --write-out '%{http_code}' https://api.trusin.my.id/api/auth/me)" = 401
-            curl --fail --silent https://trusin.my.id/robots.txt | grep -Fx 'Sitemap: https://trusin.my.id/sitemap.xml'
-            curl --fail --silent https://trusin.my.id/sitemap.xml | grep -F '<urlset'
-            curl --fail --silent https://docs.trusin.my.id/robots.txt | grep -F 'Sitemap:'
-            curl --fail --silent https://docs.trusin.my.id/sitemap.xml | grep -F '<urlset'
-            curl --fail --silent https://trusin.my.id | grep -F 'https://trusin.my.id/og-image.png'
+            backend_changed='${{ needs.changes.outputs.backend }}'; web_changed='${{ needs.changes.outputs.web }}'; landing_changed='${{ needs.changes.outputs.landing }}'; docs_changed='${{ needs.changes.outputs.docs }}'
+            if [[ "$backend_changed" == true ]]; then systemctl is-active --quiet terusin-backend; for attempt in {1..30}; do curl --fail --silent http://127.0.0.1:3011/health >/dev/null && break; sleep 2; done; curl --fail --silent http://127.0.0.1:3011/health; curl --fail --silent --retry 6 --retry-delay 5 https://api.trusin.my.id/health >/dev/null; curl --fail --silent --retry 6 --retry-delay 5 https://ingest.trusin.my.id/health >/dev/null; fi
+            if [[ "$web_changed" == true ]]; then systemctl is-active --quiet terusin-web; curl --fail --silent --retry 6 --retry-delay 5 https://app.trusin.my.id/health >/dev/null; fi
+            if [[ "$landing_changed" == true ]]; then curl --fail --silent https://trusin.my.id/robots.txt | grep -Fx 'Sitemap: https://trusin.my.id/sitemap.xml'; curl --fail --silent https://trusin.my.id/sitemap.xml | grep -F '<urlset'; curl --fail --silent https://trusin.my.id | grep -F 'https://trusin.my.id/og-image.png'; fi
+            if [[ "$docs_changed" == true ]]; then curl --fail --silent https://docs.trusin.my.id/robots.txt | grep -F 'Sitemap:'; curl --fail --silent https://docs.trusin.my.id/sitemap.xml | grep -F '<urlset'; fi
