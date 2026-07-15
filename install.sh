@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-REPO="adityaputra11/terusin"
+REPO="adityaputra11/trusin"
 VERSION="${TERUSIN_VERSION:-${1:-latest}}"
 INSTALL_DIR="${TERUSIN_INSTALL:-/usr/local/bin}"
 
