@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { ExternalLink, Globe2, KeyRound, Trash2 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
-import { Badge, Button, Card, CardHeader, Input } from "../components/ui";
+import { Badge, Button, Card, CardHeader, ConfirmDialog, Input } from "../components/ui";
 import {
   useCreateDomain,
   useDeleteDomain,
@@ -9,6 +9,7 @@ import {
   useOrganization,
   useVerifyDomain,
 } from "../lib/hooks";
+import { useCanWrite } from "../lib/user-context";
 
 function LimitBar({ label, used, limit }: { label: string; used: number; limit: number | null }) {
   const unlimited = limit === null;
@@ -29,11 +30,13 @@ function LimitBar({ label, used, limit }: { label: string; used: number; limit: 
 export function Organization() {
   const navigate = useNavigate();
   const organization = useOrganization();
-  const domains = useDomains();
+  const canWrite = useCanWrite();
+  const domains = useDomains(canWrite);
   const createDomain = useCreateDomain();
   const verifyDomain = useVerifyDomain();
   const deleteDomain = useDeleteDomain();
   const [hostname, setHostname] = useState("");
+  const [domainPendingRemoval, setDomainPendingRemoval] = useState<string | null>(null);
   const data = organization.data;
 
   const addDomain = async () => {
@@ -73,7 +76,7 @@ export function Organization() {
         </div>
       </Card>
 
-      <Card>
+      {canWrite ? <Card>
         <CardHeader
           title="Ingest domains"
           subtitle="Customer domains only receive webhooks. The dashboard remains on the trusin app domain."
@@ -89,7 +92,7 @@ export function Organization() {
             <div key={domain.id} className="rounded-md border border-border bg-surface p-4">
               <div className="flex flex-wrap items-center gap-2 justify-between">
                 <div className="flex items-center gap-2 min-w-0"><Globe2 className="h-4 w-4 shrink-0 text-success" /><code className="text-sm text-foreground truncate">{domain.hostname}</code><Badge variant={domain.status === "active" ? "success" : domain.status === "failed" ? "danger" : "warning"}>{domain.status}</Badge></div>
-                <div className="flex gap-2"><Button variant="outline" size="sm" onClick={() => verifyDomain.mutate(domain.id)} loading={verifyDomain.isPending}>Verify</Button><Button variant="ghost" size="sm" aria-label={`Remove ${domain.hostname}`} onClick={() => deleteDomain.mutate(domain.id)}><Trash2 className="h-4 w-4 text-danger" /></Button></div>
+                <div className="flex gap-2"><Button variant="outline" size="sm" onClick={() => verifyDomain.mutate(domain.id)} loading={verifyDomain.isPending}>Verify</Button><Button variant="ghost" size="sm" aria-label={`Remove ${domain.hostname}`} onClick={() => setDomainPendingRemoval(domain.id)}><Trash2 className="h-4 w-4 text-danger" /></Button></div>
               </div>
               <div className="mt-3 grid gap-2 text-xs font-mono text-muted">
                 <p>CNAME&nbsp; {domain.hostname} → <span className="text-foreground">{data.ingest_canonical_host}</span></p>
@@ -98,7 +101,24 @@ export function Organization() {
             </div>
           ))}
         </div>
-      </Card>
+      </Card> : <Card>
+        <CardHeader title="Ingest domains" subtitle="Domain controls are available to workspace admins." action={<Globe2 className="h-5 w-5 text-muted" />} />
+        <p className="text-sm text-secondary">You can view workspace usage, but only admins can add, verify, or remove custom ingest domains.</p>
+      </Card>}
+
+      <ConfirmDialog
+        open={domainPendingRemoval !== null}
+        onClose={() => setDomainPendingRemoval(null)}
+        title="Remove ingest domain?"
+        description="This domain will stop accepting webhooks through trusin. You can add it again later, but DNS changes may take time to propagate."
+        confirmLabel="Remove domain"
+        danger
+        loading={deleteDomain.isPending}
+        onConfirm={() => {
+          if (!domainPendingRemoval) return;
+          deleteDomain.mutate(domainPendingRemoval, { onSuccess: () => setDomainPendingRemoval(null) });
+        }}
+      />
 
       <Card>
         <CardHeader title="Organization API keys" subtitle="Keys belong to this organization and carry explicit scopes." action={<KeyRound className="h-5 w-5 text-muted" />} />
