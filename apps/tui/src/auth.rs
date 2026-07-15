@@ -50,7 +50,9 @@ impl Default for Config {
             password: env_or_default("TERUSIN_PASSWORD", "change-me-in-production"),
             backend: env_or_default("TERUSIN_BACKEND", BACKEND),
             web: env_or_default("TERUSIN_WEB", WEB),
-            token: std::env::var("TERUSIN_TOKEN").ok().filter(|t| !t.is_empty()),
+            token: std::env::var("TERUSIN_TOKEN")
+                .ok()
+                .filter(|t| !t.is_empty()),
         }
     }
 }
@@ -100,8 +102,7 @@ fn keychain_get() -> Option<String> {
 }
 
 fn keychain_set(token: &str) -> Result<(), String> {
-    let entry = keyring::Entry::new(KEYRING_SERVICE, KEYRING_ACCOUNT)
-        .map_err(|e| e.to_string())?;
+    let entry = keyring::Entry::new(KEYRING_SERVICE, KEYRING_ACCOUNT).map_err(|e| e.to_string())?;
     entry.set_password(token).map_err(|e| e.to_string())
 }
 
@@ -179,7 +180,9 @@ pub fn ensure_token(cfg: &mut Config) -> bool {
         return true;
     }
     println!(" No API key configured yet.");
-    println!(" On the dashboard: Settings → API Tokens → \"Generate API key\", copy the `ts_…` value.");
+    println!(
+        " On the dashboard: Settings → API Tokens → \"Generate API key\", copy the `ts_…` value."
+    );
     print!(" Paste it here (or Enter to cancel): ");
     io::stdout().flush().ok();
     let mut line = String::new();

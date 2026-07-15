@@ -5,38 +5,38 @@
 
 :root {
   /* Background */
-  --background: #050505;
-  --surface: #0b0b0b;
-  --card: #111111;
-  --card-secondary: #151515;
-  --hover: #1a1a1a;
+  --background: #060807;
+  --surface: #0a0d0b;
+  --card: #0d110e;
+  --card-secondary: #121713;
+  --hover: #151b17;
 
   /* Border */
-  --border: #232323;
-  --border-light: #2e2e2e;
-  --border-hover: #303030;
+  --border: #202722;
+  --border-light: #2b352e;
+  --border-hover: #3b4b40;
 
   /* Typography */
-  --foreground: #ffffff;
-  --foreground-secondary: #b7b7b7;
-  --foreground-muted: #7a7a7a;
+  --foreground: #f4f7f5;
+  --foreground-secondary: #aab5ad;
+  --foreground-muted: #68736b;
 
   /* Semantic */
-  --success: #22c55e;
+  --success: #4ade80;
   --warning: #f59e0b;
   --danger: #ef4444;
   --info: #3b82f6;
   --purple: #9333ea;
 
   /* Radius */
-  --radius-sm: 8px;
-  --radius-md: 12px;
-  --radius-lg: 16px;
-  --radius-xl: 20px;
+  --radius-sm: 6px;
+  --radius-md: 9px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
   --radius-full: 9999px;
 
   /* Shadows — almost none */
-  --shadow-card: 0 2px 8px rgba(0, 0, 0, 0.25);
+  --shadow-card: 0 18px 45px rgba(0, 0, 0, 0.2);
 
   /* Motion */
   --duration: 180ms;

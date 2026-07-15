@@ -34,12 +34,12 @@ export const EventRow = memo(function EventRow({
         )}
       </TD>
       <TD>
-        <code className="text-xs text-secondary font-mono">
+        <code className="text-[11px] text-secondary font-mono border border-border bg-[rgba(255,255,255,.02)] rounded px-1.5 py-1">
           {shortId(event.id)}
         </code>
       </TD>
       <TD>
-        <span className="font-medium text-foreground">{event.source}</span>
+        <span className="font-semibold text-[13px] text-foreground">{event.source}</span>
       </TD>
       <TD>
         <StatusBadge status={event.status} />

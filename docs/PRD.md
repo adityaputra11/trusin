@@ -4,6 +4,8 @@
 > **Status:** Draft
 > **Author:** —
 
+> Roadmap reliability dan security lanjutan: [PRD Production Hardening](./PRD_PRODUCTION_HARDENING.md)
+
 ---
 
 ## 1. Ringkasan Eksekutif

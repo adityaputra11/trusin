@@ -48,7 +48,10 @@ async fn handle_webhook_inner(
     headers: HeaderMap,
     payload: serde_json::Value,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let source = match headers.get("X-Webhook-Source").and_then(|v| v.to_str().ok()) {
+    let source = match headers
+        .get("X-Webhook-Source")
+        .and_then(|v| v.to_str().ok())
+    {
         Some(s) if !s.is_empty() && s != "unknown" => s.to_string(),
         _ => extract_source(&source_path),
     };

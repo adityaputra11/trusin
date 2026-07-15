@@ -1,6 +1,6 @@
 import { memo, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
-import { LogOut } from "lucide-react";
+import { Activity, LogOut } from "lucide-react";
 import { clearAuth } from "../../lib/auth";
 import { api } from "../../lib/api";
 import { useCurrentUser } from "../../lib/user-context";
@@ -38,26 +38,29 @@ export const TopBar = memo(function TopBar({
   }, [navigate]);
 
   return (
-    <header className="h-14 shrink-0 border-b border-border bg-surface flex items-center justify-between px-8">
-      <div className="min-w-0">
-        <h1 className="text-base font-semibold text-foreground leading-tight truncate">
+    <header className="h-[72px] shrink-0 border-b border-border bg-[rgba(10,13,11,.84)] backdrop-blur-xl flex items-center justify-between px-4 sm:px-6 lg:px-8 sticky top-0 z-20">
+      <div className="min-w-0 flex items-center gap-3">
+        <div className="lg:hidden h-9 w-9 rounded-md border border-border bg-card grid place-items-center text-success"><Activity className="h-4 w-4" /></div>
+        <div>
+        <h1 className="text-[15px] font-semibold tracking-[-.015em] text-foreground leading-tight truncate">
           {title}
         </h1>
-        {subtitle && <p className="text-xs text-muted truncate">{subtitle}</p>}
+        {subtitle && <p className="text-[11px] text-muted mt-1 truncate">{subtitle}</p>}
+        </div>
       </div>
       <div className="flex items-center gap-3">
         {actions}
-        <div className="h-6 w-px bg-border" />
-        <div className="flex items-center gap-2 text-sm text-secondary">
+        <div className="h-7 w-px bg-border" />
+        <div className="flex items-center gap-2.5 text-sm text-secondary">
           {avatar ? (
             <img
               src={avatar}
               alt=""
-              className="h-7 w-7 rounded-full object-cover border border-border-light"
+              className="h-8 w-8 rounded-md object-cover border border-border-light"
               referrerPolicy="no-referrer"
             />
           ) : (
-            <div className="h-7 w-7 rounded-full bg-hover flex items-center justify-center text-xs font-semibold uppercase">
+            <div className="h-8 w-8 rounded-md bg-hover border border-border-light flex items-center justify-center text-[10px] font-semibold uppercase text-success">
               {name.slice(0, 2)}
             </div>
           )}
@@ -70,7 +73,7 @@ export const TopBar = memo(function TopBar({
         </div>
         <button
           onClick={logout}
-          className="p-2 rounded-md text-muted hover:text-danger hover:bg-[rgba(239,68,68,.1)] transition-base"
+          className="p-2 rounded-md border border-transparent text-muted hover:text-danger hover:border-[rgba(239,68,68,.2)] hover:bg-[rgba(239,68,68,.07)] transition-base"
           title="Logout"
         >
           <LogOut className="h-[18px] w-[18px]" strokeWidth={1.75} />

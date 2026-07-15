@@ -98,12 +98,17 @@ pub async fn worker(db: sqlx::PgPool, mut redis: ConnectionManager, max_retries:
             .fetch_optional(&db)
             .await;
 
-        let Some(event) = event.unwrap_or(None) else { continue };
+        let Some(event) = event.unwrap_or(None) else {
+            continue;
+        };
 
         if event.target_url.is_empty() {
             tracing::warn!("skip {id}: no target URL");
             sqlx::query("UPDATE webhook_events SET status = 'failed' WHERE id = $1")
-                .bind(id).execute(&db).await.ok();
+                .bind(id)
+                .execute(&db)
+                .await
+                .ok();
             continue;
         }
 
@@ -125,7 +130,13 @@ pub async fn worker(db: sqlx::PgPool, mut redis: ConnectionManager, max_retries:
 
         let already = || async {
             sqlx::query_scalar::<_, String>("SELECT status FROM webhook_events WHERE id = $1")
-                .bind(id).fetch_optional(&db).await.ok().flatten().unwrap_or_default() == "delivered"
+                .bind(id)
+                .fetch_optional(&db)
+                .await
+                .ok()
+                .flatten()
+                .unwrap_or_default()
+                == "delivered"
         };
 
         match res {
@@ -133,7 +144,10 @@ pub async fn worker(db: sqlx::PgPool, mut redis: ConnectionManager, max_retries:
                 let status = r.status().as_u16() as i32;
                 let mut resp_h = serde_json::Map::new();
                 for (k, v) in r.headers() {
-                    resp_h.insert(k.to_string(), serde_json::Value::String(v.to_str().unwrap_or("").to_string()));
+                    resp_h.insert(
+                        k.to_string(),
+                        serde_json::Value::String(v.to_str().unwrap_or("").to_string()),
+                    );
                 }
                 let resp_h = serde_json::Value::Object(resp_h);
                 let resp_b = r.text().await.ok();
@@ -141,9 +155,17 @@ pub async fn worker(db: sqlx::PgPool, mut redis: ConnectionManager, max_retries:
 
                 if status < 300 {
                     record_attempt(
-                        &db, id, attempt_number, "delivered", Some(status),
-                        Some(&resp_h), resp_b_ref, None, duration_ms,
-                    ).await;
+                        &db,
+                        id,
+                        attempt_number,
+                        "delivered",
+                        Some(status),
+                        Some(&resp_h),
+                        resp_b_ref,
+                        None,
+                        duration_ms,
+                    )
+                    .await;
                     sqlx::query(
                         "UPDATE webhook_events SET status = 'delivered', response_status = $1, response_headers = $2, response_body = $3 WHERE id = $4 AND status != 'delivered'",
                     )
@@ -153,9 +175,17 @@ pub async fn worker(db: sqlx::PgPool, mut redis: ConnectionManager, max_retries:
                     forward_to_rules(&db, &event, &client).await;
                 } else {
                     record_attempt(
-                        &db, id, attempt_number, "failed", Some(status),
-                        Some(&resp_h), resp_b_ref, None, duration_ms,
-                    ).await;
+                        &db,
+                        id,
+                        attempt_number,
+                        "failed",
+                        Some(status),
+                        Some(&resp_h),
+                        resp_b_ref,
+                        None,
+                        duration_ms,
+                    )
+                    .await;
                     sqlx::query(
                         "UPDATE webhook_events SET status = 'failed', response_status = $1, response_headers = $2, response_body = $3 WHERE id = $4 AND status != 'delivered'",
                     )
@@ -165,14 +195,24 @@ pub async fn worker(db: sqlx::PgPool, mut redis: ConnectionManager, max_retries:
                 }
             }
             Err(e) => {
-                if already().await { continue; }
+                if already().await {
+                    continue;
+                }
                 let err_msg = e.to_string();
                 let retry_count = event.retry_count + 1;
                 if retry_count > max_retries {
                     record_attempt(
-                        &db, id, attempt_number, "failed", None, None, None,
-                        Some(&err_msg), duration_ms,
-                    ).await;
+                        &db,
+                        id,
+                        attempt_number,
+                        "failed",
+                        None,
+                        None,
+                        None,
+                        Some(&err_msg),
+                        duration_ms,
+                    )
+                    .await;
                     sqlx::query(
                         "UPDATE webhook_events SET status = 'failed', retry_count = $1 WHERE id = $2 AND status != 'delivered'",
                     )
@@ -181,9 +221,17 @@ pub async fn worker(db: sqlx::PgPool, mut redis: ConnectionManager, max_retries:
                     tracing::warn!("failed {id} after {retry_count} attempts");
                 } else {
                     record_attempt(
-                        &db, id, attempt_number, "retrying", None, None, None,
-                        Some(&err_msg), duration_ms,
-                    ).await;
+                        &db,
+                        id,
+                        attempt_number,
+                        "retrying",
+                        None,
+                        None,
+                        None,
+                        Some(&err_msg),
+                        duration_ms,
+                    )
+                    .await;
                     sqlx::query(
                         "UPDATE webhook_events SET status = 'retrying', retry_count = $1 WHERE id = $2 AND status != 'delivered'",
                     )
@@ -192,8 +240,12 @@ pub async fn worker(db: sqlx::PgPool, mut redis: ConnectionManager, max_retries:
                     let delay = 10 * 2u64.pow(retry_count as u32);
                     let retry_at = Utc::now().timestamp() as i64 + delay as i64;
                     redis::cmd("ZADD")
-                        .arg(RETRY_KEY).arg(retry_at).arg(id.to_string())
-                        .query_async::<()>(&mut redis).await.ok();
+                        .arg(RETRY_KEY)
+                        .arg(retry_at)
+                        .arg(id.to_string())
+                        .query_async::<()>(&mut redis)
+                        .await
+                        .ok();
                     info!("queued {id} for retry #{retry_count} in {delay}s");
                 }
             }
@@ -242,7 +294,9 @@ pub async fn retry_worker(db: sqlx::PgPool, mut redis: ConnectionManager) {
                         .fetch_optional(&db)
                         .await;
 
-                let Some(event) = event.unwrap_or(None) else { continue };
+                let Some(event) = event.unwrap_or(None) else {
+                    continue;
+                };
 
                 let body_bytes = serde_json::to_vec(&event.body).unwrap_or_default();
                 let mut req = client
@@ -259,9 +313,19 @@ pub async fn retry_worker(db: sqlx::PgPool, mut redis: ConnectionManager) {
                 let duration_ms = Some(started.elapsed().as_millis() as i32);
                 let attempt_number = event.retry_count + 1;
 
-                let is_delivered = sqlx::query_scalar::<_, String>("SELECT status FROM webhook_events WHERE id = $1")
-                    .bind(id).fetch_optional(&db).await.ok().flatten().unwrap_or_default() == "delivered";
-                if is_delivered { continue; }
+                let is_delivered = sqlx::query_scalar::<_, String>(
+                    "SELECT status FROM webhook_events WHERE id = $1",
+                )
+                .bind(id)
+                .fetch_optional(&db)
+                .await
+                .ok()
+                .flatten()
+                .unwrap_or_default()
+                    == "delivered";
+                if is_delivered {
+                    continue;
+                }
 
                 match res {
                     Ok(r) => {
@@ -269,7 +333,10 @@ pub async fn retry_worker(db: sqlx::PgPool, mut redis: ConnectionManager) {
                         let ok = status < 300;
                         let mut resp_h = serde_json::Map::new();
                         for (k, v) in r.headers() {
-                            resp_h.insert(k.to_string(), serde_json::Value::String(v.to_str().unwrap_or("").to_string()));
+                            resp_h.insert(
+                                k.to_string(),
+                                serde_json::Value::String(v.to_str().unwrap_or("").to_string()),
+                            );
                         }
                         let resp_h = serde_json::Value::Object(resp_h);
                         let resp_b = r.text().await.ok();
@@ -277,9 +344,17 @@ pub async fn retry_worker(db: sqlx::PgPool, mut redis: ConnectionManager) {
 
                         if ok {
                             record_attempt(
-                                &db, id, attempt_number, "delivered", Some(status),
-                                Some(&resp_h), resp_b_ref, None, duration_ms,
-                            ).await;
+                                &db,
+                                id,
+                                attempt_number,
+                                "delivered",
+                                Some(status),
+                                Some(&resp_h),
+                                resp_b_ref,
+                                None,
+                                duration_ms,
+                            )
+                            .await;
                             sqlx::query(
                                 "UPDATE webhook_events SET status = 'delivered', response_status = $1, response_headers = $2, response_body = $3 WHERE id = $4 AND status != 'delivered'",
                             )
@@ -289,9 +364,17 @@ pub async fn retry_worker(db: sqlx::PgPool, mut redis: ConnectionManager) {
                             forward_to_rules(&db, &event, &client).await;
                         } else {
                             record_attempt(
-                                &db, id, attempt_number, "failed", Some(status),
-                                Some(&resp_h), resp_b_ref, None, duration_ms,
-                            ).await;
+                                &db,
+                                id,
+                                attempt_number,
+                                "failed",
+                                Some(status),
+                                Some(&resp_h),
+                                resp_b_ref,
+                                None,
+                                duration_ms,
+                            )
+                            .await;
                             let retry_count = event.retry_count + 1;
                             if retry_count > event.max_retries {
                                 sqlx::query(
@@ -321,9 +404,17 @@ pub async fn retry_worker(db: sqlx::PgPool, mut redis: ConnectionManager) {
                         let retry_count = event.retry_count + 1;
                         if retry_count > event.max_retries {
                             record_attempt(
-                                &db, id, attempt_number, "failed", None, None, None,
-                                Some(&err_msg), duration_ms,
-                            ).await;
+                                &db,
+                                id,
+                                attempt_number,
+                                "failed",
+                                None,
+                                None,
+                                None,
+                                Some(&err_msg),
+                                duration_ms,
+                            )
+                            .await;
                             sqlx::query(
                                 "UPDATE webhook_events SET status = 'failed', retry_count = $1 WHERE id = $2 AND status != 'delivered'",
                             )
@@ -335,9 +426,17 @@ pub async fn retry_worker(db: sqlx::PgPool, mut redis: ConnectionManager) {
                             tracing::warn!("retry failed {id} after {retry_count} attempts");
                         } else {
                             record_attempt(
-                                &db, id, attempt_number, "retrying", None, None, None,
-                                Some(&err_msg), duration_ms,
-                            ).await;
+                                &db,
+                                id,
+                                attempt_number,
+                                "retrying",
+                                None,
+                                None,
+                                None,
+                                Some(&err_msg),
+                                duration_ms,
+                            )
+                            .await;
                             let delay = 10 * 2u64.pow(retry_count as u32);
                             let retry_at = Utc::now().timestamp() as i64 + delay as i64;
                             redis::cmd("ZADD")
@@ -399,17 +498,11 @@ fn build_rule_request(
     req
 }
 
-async fn forward_to_rules(
-    db: &sqlx::PgPool,
-    event: &WebhookEvent,
-    client: &reqwest::Client,
-) {
-    let rules = sqlx::query_as::<_, ForwardRule>(
-        "SELECT * FROM forward_rules WHERE active = true",
-    )
-    .fetch_all(db)
-    .await
-    .unwrap_or_default();
+async fn forward_to_rules(db: &sqlx::PgPool, event: &WebhookEvent, client: &reqwest::Client) {
+    let rules = sqlx::query_as::<_, ForwardRule>("SELECT * FROM forward_rules WHERE active = true")
+        .fetch_all(db)
+        .await
+        .unwrap_or_default();
 
     for rule in rules {
         if !rule_matches(&rule.source_pattern, event).await {

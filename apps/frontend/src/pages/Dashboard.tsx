@@ -95,7 +95,7 @@ const FilterBar = memo(function FilterBar({
   onRefresh: () => void;
 }) {
   return (
-    <div className="flex flex-wrap items-center gap-2 p-3 border-b border-border">
+    <div className="flex flex-wrap items-center gap-2 p-3.5 border-b border-border bg-[rgba(7,10,8,.32)]">
       <div className="flex-1 min-w-[200px] relative">
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted pointer-events-none" />
         <Input
@@ -437,7 +437,7 @@ export function Dashboard() {
   }, [selected, bulkDelete, clearSelection]);
 
   return (
-    <div>
+    <div className="space-y-1">
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div className="flex-1 min-w-0">
           <EndpointBox />
@@ -445,6 +445,10 @@ export function Dashboard() {
         <LiveBadge status={streamStatus} />
       </div>
 
+      <div className="flex items-end justify-between mb-3 mt-1">
+        <div><p className="text-[10px] uppercase tracking-[.13em] text-success font-semibold">Event operations</p><h2 className="text-base font-semibold mt-1 text-foreground">Recent deliveries</h2></div>
+        <p className="hidden sm:block text-[11px] text-muted">Auto-refreshing every 15 seconds</p>
+      </div>
       <Card className="p-0 overflow-hidden">
         <FilterBar
           search={searchInput}

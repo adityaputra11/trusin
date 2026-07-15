@@ -12,6 +12,8 @@ import { Hooks } from "./pages/Hooks";
 import { SendWebhook } from "./pages/SendWebhook";
 import { Metrics } from "./pages/Metrics";
 import { Settings } from "./pages/Settings";
+import { Activity } from "./pages/Activity";
+import { Users } from "./pages/Users";
 import { isLoggedIn } from "./lib/auth";
 import { useMe } from "./lib/hooks";
 import { FullSpinner } from "./components/ui";
@@ -47,6 +49,8 @@ const router = createBrowserRouter([
       { path: "/providers", element: <Providers /> },
       { path: "/hooks", element: <Hooks /> },
       { path: "/metrics", element: <Metrics /> },
+      { path: "/activity", element: <Activity /> },
+      { path: "/users", element: <Users /> },
       { path: "/send", element: <SendWebhook /> },
       { path: "/settings", element: <Settings /> },
     ],

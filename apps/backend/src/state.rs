@@ -64,7 +64,6 @@ pub async fn seed_default_user(db: &sqlx::PgPool) {
 
 /// Build a Redis client from `REDIS_URL` (default `redis://127.0.0.1:6379`).
 pub fn redis_from_env() -> redis::Client {
-    let url =
-        std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1:6379".to_string());
+    let url = std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1:6379".to_string());
     redis::Client::open(url).expect("invalid redis url")
 }

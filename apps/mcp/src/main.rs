@@ -13,8 +13,12 @@ fn auth_header() -> String {
     }
     // Legacy fallback: shared username/password (Basic auth).
     let user = std::env::var("TERUSIN_USER").unwrap_or_else(|_| "admin".to_string());
-    let pass = std::env::var("TERUSIN_PASS").unwrap_or_else(|_| "change-me-in-production".to_string());
-    format!("Basic {}", base64::engine::general_purpose::STANDARD.encode(format!("{user}:{pass}")))
+    let pass =
+        std::env::var("TERUSIN_PASS").unwrap_or_else(|_| "change-me-in-production".to_string());
+    format!(
+        "Basic {}",
+        base64::engine::general_purpose::STANDARD.encode(format!("{user}:{pass}"))
+    )
 }
 
 fn tool_list() -> Vec<Value> {
@@ -32,8 +36,14 @@ fn tool_list() -> Vec<Value> {
 
 fn handle_call(name: &str, args: &Value) -> Value {
     let mut headers = reqwest::header::HeaderMap::new();
-    headers.insert(reqwest::header::AUTHORIZATION, auth_header().parse().unwrap());
-    let client = reqwest::blocking::Client::builder().default_headers(headers).build().unwrap();
+    headers.insert(
+        reqwest::header::AUTHORIZATION,
+        auth_header().parse().unwrap(),
+    );
+    let client = reqwest::blocking::Client::builder()
+        .default_headers(headers)
+        .build()
+        .unwrap();
 
     match name {
         "list_events" => {
@@ -51,15 +61,21 @@ fn handle_call(name: &str, args: &Value) -> Value {
         }
         "retry_event" => {
             let id = args.get("id").and_then(|v| v.as_str()).unwrap_or("");
-            let resp = client.post(format!("{BACKEND_URL}/events/{id}/retry")).send();
+            let resp = client
+                .post(format!("{BACKEND_URL}/events/{id}/retry"))
+                .send();
             json!({"status": resp.map(|r| r.status().as_u16()).unwrap_or(500), "id": id})
         }
         "send_webhook" => {
-            let target_url = args.get("target_url").and_then(|v| v.as_str()).unwrap_or("");
+            let target_url = args
+                .get("target_url")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
             let empty = json!({});
             let body = args.get("body").unwrap_or(&empty);
             let source = args.get("source").and_then(|v| v.as_str()).unwrap_or("mcp");
-            let resp = client.post(BACKEND_URL)
+            let resp = client
+                .post(BACKEND_URL)
                 .header("X-Webhook-Source", source)
                 .header("X-Target-Url", target_url)
                 .json(body)
@@ -69,12 +85,10 @@ fn handle_call(name: &str, args: &Value) -> Value {
                 Err(e) => json!({"error": format!("{e}")}),
             }
         }
-        "health" => {
-            match client.get(format!("{BACKEND_URL}/health")).send() {
-                Ok(r) => r.json::<Value>().unwrap_or_default(),
-                Err(e) => json!({"error": format!("{e}")}),
-            }
-        }
+        "health" => match client.get(format!("{BACKEND_URL}/health")).send() {
+            Ok(r) => r.json::<Value>().unwrap_or_default(),
+            Err(e) => json!({"error": format!("{e}")}),
+        },
         _ => json!({"error": format!("unknown tool: {name}")}),
     }
 }
@@ -98,12 +112,23 @@ fn main() {
         let method = req.get("method").and_then(|v| v.as_str()).unwrap_or("");
 
         let result = match method {
-            "initialize" => json!({"protocolVersion": "2024-11-05", "capabilities": {"tools": {}, "resources": {}}}),
+            "initialize" => json!({
+                "protocolVersion": "2024-11-05",
+                "capabilities": {"tools": {}, "resources": {}},
+                "serverInfo": {"name": "terusin", "version": env!("CARGO_PKG_VERSION")}
+            }),
             "tools/list" => json!({"tools": tool_list()}),
             "tools/call" => {
-                let name = req.get("params").and_then(|p| p.get("name")).and_then(|v| v.as_str()).unwrap_or("");
+                let name = req
+                    .get("params")
+                    .and_then(|p| p.get("name"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
                 let default_args = json!({});
-                let args = req.get("params").and_then(|p| p.get("arguments")).unwrap_or(&default_args);
+                let args = req
+                    .get("params")
+                    .and_then(|p| p.get("arguments"))
+                    .unwrap_or(&default_args);
                 handle_call(name, args)
             }
             _ => json!({"error": {"code": -32603, "message": format!("unknown method: {method}")}}),

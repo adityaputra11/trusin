@@ -108,9 +108,9 @@ export function Login() {
       <div className="w-full max-w-sm">
         <div className="flex flex-col items-center mb-8">
           <img
-            src="/icon-terusin.png"
+            src="/terusin-logo.svg"
             alt="Terusin"
-            className="h-32 w-auto object-contain mb-4"
+            className="h-14 w-auto object-contain mb-5"
           />
           <p className="text-sm text-muted mt-1">Sign in to your webhook relay</p>
         </div>

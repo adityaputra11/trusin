@@ -1,12 +1,13 @@
 <div align="center">
   <h1>Terusin</h1>
   <img width="1254" height="1254" alt="ChatGPT Image Jul 1, 2026, 12_31_44 PM (2)" src="https://github.com/user-attachments/assets/7dd59d64-05a8-4827-b319-97a36e09c3e2" />
-  <p><strong>Terusin</strong> (Indonesian: <em>"forward it"</em>) — self-hosted webhook relay.</p>
+  <p><strong>Terusin</strong> (Indonesian: <em>"forward it"</em>) — self-hosted enterprise webhook delivery infrastructure.</p>
   <p>Receive webhooks from any provider (Midtrans, Stripe, Resend, GitHub, etc.)<br>
   and forward them to your local services or any HTTP endpoint.</p>
   <p>Built with Rust. Powered by Redis queue & Postgres.<br>
   3,990 req/s throughput. Zero errors.</p>
   <p>
+    <a href="website/docs/intro.md">Documentation</a> ·
     <a href="ARCHITECTURE.md">Architecture</a> ·
     <a href="LICENSE">Apache 2.0</a> ·
     <a href="https://github.com/adityaputra11/terusin">GitHub</a>
@@ -18,9 +19,10 @@
 - **Dynamic routing** — path `/midtrans/webhook` → source `midtrans`, `/stripe/webhook` → source `stripe`, no config
 - **Redis queue** — reliable delivery with `BRPOP`/`ZADD` retry
 - **Exponential backoff** — `10s × 2^attempt`, configurable max retries
-- **Dashboard** — search, filter, pagination, event detail, providers, hooks
-- **CLI** — `terusin forward --port 3000`, `terusin events`, `terusin retry`
-- **Auth** — Basic auth, users seeded from env vars
+- **Dashboard** — operations console with search, filters, metrics, audit activity, users, tokens, providers, hooks
+- **CLI/TUI** — `terusin interactive`, `terusin forward --port 3000`, `terusin events`, `terusin retry`
+- **Auth** — Google OAuth sessions, Bearer API tokens, RBAC admin/viewer, Basic auth fallback
+- **Audit trail** — login, token, user role, rule, event, bulk action, and config changes
 - **Self-hosted** — Docker Compose, or bare metal with Postgres + Redis
 - **ngrok optional** — auto-starts tunnel when backend is remote
 - **MCP server** — AI agent integration via stdio JSON-RPC
@@ -60,6 +62,7 @@ alias terusin='cargo run --bin terusin --'
 
 terusin login              # save credentials
 terusin status             # check forwarding state
+terusin interactive        # full-screen terminal dashboard
 terusin forward --port 3000   # forward webhooks to localhost:3000
 terusin events -l 10       # list recent events
 terusin retry <uuid>       # retry failed delivery
@@ -113,10 +116,22 @@ Add providers with target URLs via dashboard or `terusin` CLI. Webhooks are forw
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for full details.
 
+## Documentation
+
+The Docusaurus documentation site lives in [`website/`](website/):
+
+```sh
+cd website
+npm install
+npm start
+```
+
+Run the reproducible end-to-end smoke test with `./scripts/e2e-smoke.sh`.
+
 ## Stack
 
 - **Backend:** Rust, Axum, SQLx (Postgres), redis-rs
-- **Dashboard:** Rust, Axum, Tailwind CSS (SSR)
+- **Dashboard:** React, Vite, TypeScript; embedded and proxied by Rust/Axum
 - **CLI:** Rust, Clap, reqwest
 - **MCP:** Rust, Stdio JSON-RPC
 - **Infra:** Postgres, Redis, Docker

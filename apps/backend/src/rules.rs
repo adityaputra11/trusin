@@ -16,12 +16,11 @@ use crate::state::AppState;
 pub async fn list_rules(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<Vec<ForwardRule>>, StatusCode> {
-    let rules = sqlx::query_as::<_, ForwardRule>(
-        "SELECT * FROM forward_rules ORDER BY created_at ASC",
-    )
-    .fetch_all(&state.db)
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let rules =
+        sqlx::query_as::<_, ForwardRule>("SELECT * FROM forward_rules ORDER BY created_at ASC")
+            .fetch_all(&state.db)
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(rules))
 }
 
@@ -73,6 +72,16 @@ pub async fn create_rule(
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
+    crate::audit::record(
+        &state,
+        Some(&cu),
+        "rule.created",
+        "rule",
+        Some(id.to_string()),
+        serde_json::json!({ "name": rule.name, "source_pattern": rule.source_pattern }),
+    )
+    .await;
+
     Ok(Json(rule))
 }
 
@@ -88,6 +97,15 @@ pub async fn delete_rule(
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     if res.rows_affected() > 0 {
+        crate::audit::record(
+            &state,
+            Some(&cu),
+            "rule.deleted",
+            "rule",
+            Some(id.to_string()),
+            serde_json::json!({}),
+        )
+        .await;
         Ok(StatusCode::OK)
     } else {
         Err(StatusCode::NOT_FOUND)
@@ -115,13 +133,12 @@ pub async fn update_rule(
     require_admin(&cu)?;
     // Coalesce: read current row, apply overrides, write back. Simpler than
     // building a dynamic UPDATE with a variable column list.
-    let current =
-        sqlx::query_as::<_, ForwardRule>("SELECT * FROM forward_rules WHERE id = $1")
-            .bind(id)
-            .fetch_optional(&state.db)
-            .await
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-            .ok_or(StatusCode::NOT_FOUND)?;
+    let current = sqlx::query_as::<_, ForwardRule>("SELECT * FROM forward_rules WHERE id = $1")
+        .bind(id)
+        .fetch_optional(&state.db)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
 
     let name = input.name.unwrap_or(current.name);
     let source_pattern = input.source_pattern.unwrap_or(current.source_pattern);
@@ -152,6 +169,16 @@ pub async fn update_rule(
         tracing::error!("update rule: {e}");
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
+
+    crate::audit::record(
+        &state,
+        Some(&cu),
+        "rule.updated",
+        "rule",
+        Some(id.to_string()),
+        serde_json::json!({ "name": rule.name, "active": rule.active }),
+    )
+    .await;
 
     Ok(Json(rule))
 }
