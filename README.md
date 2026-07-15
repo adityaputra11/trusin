@@ -10,7 +10,7 @@
     <a href="website/docs/intro.md">Documentation</a> ·
     <a href="ARCHITECTURE.md">Architecture</a> ·
     <a href="LICENSE">Apache 2.0</a> ·
-    <a href="https://github.com/adityaputra11/terusin">GitHub</a>
+    <a href="https://github.com/adityaputra11/trusin">GitHub</a>
   </p>
 </div>
 
@@ -20,7 +20,7 @@
 - **Redis queue** — reliable delivery with `BRPOP`/`ZADD` retry
 - **Exponential backoff** — `10s × 2^attempt`, configurable max retries
 - **Dashboard** — operations console with search, filters, metrics, audit activity, users, tokens, providers, hooks
-- **CLI/TUI** — `terusin interactive`, `terusin forward --port 3000`, `terusin events`, `terusin retry`
+- **CLI/TUI** — `trusin interactive`, `trusin forward --port 3000`, `trusin events`, `trusin retry`
 - **Auth** — Google OAuth sessions, Bearer API tokens, RBAC admin/viewer, Basic auth fallback
 - **Audit trail** — login, token, user role, rule, event, bulk action, and config changes
 - **Self-hosted** — Docker Compose, or bare metal with Postgres + Redis
@@ -61,7 +61,7 @@ Install the latest CLI release on macOS or Linux:
 
 ```sh
 curl -fsSL https://download.trusin.my.id/install.sh | sh
-terusin set-token ts_your_token
+trusin set-token ts_your_token
 ```
 
 The installer automatically selects the correct Apple Silicon, Intel, x86_64,
@@ -73,14 +73,14 @@ use `TERUSIN_INSTALL=$HOME/.local/bin` in the same position to install without
 Build from source instead:
 
 ```sh
-alias terusin='cargo run --bin terusin --'
+alias trusin='cargo run --bin trusin --'
 
-terusin login              # save credentials
-terusin status             # check forwarding state
-terusin interactive        # full-screen terminal dashboard
-terusin forward --port 3000   # forward webhooks to localhost:3000
-terusin events -l 10       # list recent events
-terusin retry <uuid>       # retry failed delivery
+trusin login              # save credentials
+trusin status             # check forwarding state
+trusin interactive        # full-screen terminal dashboard
+trusin forward --port 3000   # forward webhooks to localhost:3000
+trusin events -l 10       # list recent events
+trusin retry <uuid>       # retry failed delivery
 ```
 
 ## Providers
@@ -92,17 +92,17 @@ https://your-host.com/stripe/webhook      → source = "stripe"
 https://your-host.com/github/webhook      → source = "github"
 ```
 
-Add providers with target URLs via dashboard or `terusin` CLI. Webhooks are forwarded automatically.
+Add providers with target URLs via dashboard or `trusin` CLI. Webhooks are forwarded automatically.
 
 ## MCP for AI agents
 
 ```json
 {
   "mcpServers": {
-    "terusin": {
+    "trusin": {
       "command": "cargo",
       "args": ["run", "--bin", "mcp"],
-      "dir": "/path/to/terusin",
+      "dir": "/path/to/trusin",
       "env": {
         "TERUSIN_URL": "https://api.trusin.my.id",
         "TERUSIN_TOKEN": "ts_..."

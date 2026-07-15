@@ -3,6 +3,10 @@ name = "mcp"
 version.workspace = true
 edition.workspace = true
 
+[[bin]]
+name = "trusin-mcp"
+path = "src/main.rs"
+
 [dependencies]
 tokio.workspace = true
 serde.workspace = true

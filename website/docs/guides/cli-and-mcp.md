@@ -12,7 +12,7 @@ curl -fsSL https://download.trusin.my.id/install.sh | sh
 ```
 
 The installer downloads the matching GitHub Release asset, verifies its SHA-256
-checksum, and installs `terusin` to `/usr/local/bin`. It prompts for `sudo` only
+checksum, and installs `trusin` to `/usr/local/bin`. It prompts for `sudo` only
 when that directory is not writable.
 
 Install a specific release or use a writable directory without `sudo`:
@@ -26,8 +26,8 @@ After installation, create an API token in **Settings → Developer → API Toke
 and connect the device:
 
 ```bash
-terusin set-token ts_your_token
-terusin status
+trusin set-token ts_your_token
+trusin status
 ```
 
 If the command is not found after a custom installation, add that directory to
@@ -37,19 +37,19 @@ build the CLI from source.
 ### Build from source
 
 ```bash
-cargo build --release --bin terusin
-./target/release/terusin set-token ts_your_token
-./target/release/terusin status
-./target/release/terusin events -l 10
-./target/release/terusin forward --port 3000
-./target/release/terusin interactive
+cargo build --release --bin trusin
+./target/release/trusin set-token ts_your_token
+./target/release/trusin status
+./target/release/trusin events -l 10
+./target/release/trusin forward --port 3000
+./target/release/trusin interactive
 ```
 
 `forward` points the default target at a local service and can start ngrok when the backend is remote. Tokens are stored in the OS keychain when available.
 
 ## Interactive TUI
 
-`terusin interactive` opens a full-screen terminal dashboard for operators:
+`trusin interactive` opens a full-screen terminal dashboard for operators:
 
 - **Overview**: concise health, queue depth, success rate, backend, and auth mode.
 - **Events**: recent events, local search with `/`, details with `Enter`, retry with `x`.
@@ -61,18 +61,25 @@ Primary shortcuts: `1-5` changes tabs, `r` refreshes, `/` searches, `c` clears s
 
 ## MCP server
 
-Build the binary and configure the AI client with environment variables instead of placing tokens in command arguments.
+The installer bundles the MCP sidecar. Save your API token once, then configure
+your AI client to launch `trusin mcp`; the CLI passes its saved token and backend
+configuration to the stdio server without storing credentials in the client config.
+
+```bash
+trusin set-token ts_your_token
+```
 
 ```json
 {
   "mcpServers": {
-    "terusin": {
-      "command": "/absolute/path/to/target/release/mcp",
-      "env": {
-        "TERUSIN_URL": "https://your-terusin.example",
-        "TERUSIN_TOKEN": "ts_your_token"
-      }
+    "trusin": {
+      "command": "trusin",
+      "args": ["mcp"]
     }
   }
 }
 ```
+
+For a custom sidecar location, set `TRUSIN_MCP_PATH` before launching
+`trusin mcp`. Direct executions of `trusin-mcp` continue to accept
+`TERUSIN_URL` and `TERUSIN_TOKEN`.

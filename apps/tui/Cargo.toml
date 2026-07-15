@@ -3,12 +3,16 @@ name = "terusin"
 version.workspace = true
 edition.workspace = true
 
+[[bin]]
+name = "trusin"
+path = "src/main.rs"
+
 [dependencies]
 tokio.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 reqwest.workspace = true
-clap = { version = "4", features = ["derive"] }
+clap = { version = "4", features = ["derive", "env"] }
 open = "5"
 base64 = "0.22"
 dirs = "5"

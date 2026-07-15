@@ -45,7 +45,7 @@ When `TURNSTILE_SECRET_KEY` is set, Turnstile is required before Google, GitHub,
 Create a token from **Settings → API Tokens**. The plaintext token is displayed only once; the server stores a SHA-256 hash. Tokens are organization-scoped and carry explicit scopes: `events:read`, `webhooks:send`, `rules:read`, `rules:write`, or `organization:manage`.
 
 ```bash
-terusin set-token ts_your_token
+trusin set-token ts_your_token
 # or
 export TERUSIN_TOKEN=ts_your_token
 ```

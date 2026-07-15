@@ -217,4 +217,4 @@ jobs:
             if [[ "$web_changed" == true ]]; then systemctl is-active --quiet terusin-web; curl --fail --silent --retry 6 --retry-delay 5 https://app.trusin.my.id/health >/dev/null; fi
             if [[ "$landing_changed" == true ]]; then curl --fail --silent https://trusin.my.id/robots.txt | grep -Fx 'Sitemap: https://trusin.my.id/sitemap.xml'; curl --fail --silent https://trusin.my.id/sitemap.xml | grep -F '<urlset'; curl --fail --silent https://trusin.my.id | grep -F 'https://trusin.my.id/og-image.png'; fi
             if [[ "$docs_changed" == true ]]; then curl --fail --silent https://docs.trusin.my.id/robots.txt | grep -F 'Sitemap:'; curl --fail --silent https://docs.trusin.my.id/sitemap.xml | grep -F '<urlset'; fi
-            if [[ "$download_changed" == true ]]; then curl --fail --silent https://download.trusin.my.id/install.sh | grep -F 'REPO="adityaputra11/terusin"'; fi
+            if [[ "$download_changed" == true ]]; then curl --fail --silent https://download.trusin.my.id/install.sh | grep -F 'REPO="adityaputra11/trusin"'; fi

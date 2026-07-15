@@ -1,4 +1,4 @@
-// Credential & config handling for the `terusin` CLI.
+// Credential & config handling for the `trusin` CLI.
 //
 // Token precedence (highest → lowest):
 //   1. `TERUSIN_TOKEN` env var (folded into Config by load_config)
@@ -19,7 +19,8 @@ const WEB: &str = "http://localhost:3012";
 
 // OS keychain entry name under which the API token is stored (preferred over
 // the plaintext config file). Falls back gracefully on platforms without one.
-const KEYRING_SERVICE: &str = "terusin";
+const KEYRING_SERVICE: &str = "trusin";
+const LEGACY_KEYRING_SERVICE: &str = "terusin";
 const KEYRING_ACCOUNT: &str = "default";
 
 fn env_or_default(key: &str, fallback: &str) -> String {
@@ -33,7 +34,7 @@ pub struct Config {
     pub backend: String,
     #[serde(default = "default_web")]
     pub web: String,
-    /// Cached API token (set via `terusin set-token`). The OS keychain is the
+    /// Cached API token (set via `trusin set-token`). The OS keychain is the
     /// preferred store; this is a fallback for headless/CI environments.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub token: Option<String>,
@@ -59,8 +60,15 @@ impl Default for Config {
 
 pub fn config_path() -> PathBuf {
     let mut p = dirs::config_dir().unwrap_or_else(|| PathBuf::from("."));
-    p.push("terusin");
+    p.push("trusin");
     std::fs::create_dir_all(&p).ok();
+    p.push("config.toml");
+    p
+}
+
+fn legacy_config_path() -> PathBuf {
+    let mut p = dirs::config_dir().unwrap_or_else(|| PathBuf::from("."));
+    p.push("terusin");
     p.push("config.toml");
     p
 }
@@ -68,6 +76,8 @@ pub fn config_path() -> PathBuf {
 pub fn load_config() -> Config {
     let path = config_path();
     let mut c: Config = if let Ok(s) = std::fs::read_to_string(&path) {
+        toml::from_str(&s).unwrap_or_default()
+    } else if let Ok(s) = std::fs::read_to_string(legacy_config_path()) {
         toml::from_str(&s).unwrap_or_default()
     } else {
         Config::default()
@@ -99,6 +109,12 @@ fn keychain_get() -> Option<String> {
         .ok()
         .and_then(|e| e.get_password().ok())
         .filter(|t| !t.is_empty())
+        .or_else(|| {
+            keyring::Entry::new(LEGACY_KEYRING_SERVICE, KEYRING_ACCOUNT)
+                .ok()
+                .and_then(|e| e.get_password().ok())
+                .filter(|t| !t.is_empty())
+        })
 }
 
 fn keychain_set(token: &str) -> Result<(), String> {
@@ -107,8 +123,10 @@ fn keychain_set(token: &str) -> Result<(), String> {
 }
 
 pub fn keychain_delete() {
-    if let Ok(entry) = keyring::Entry::new(KEYRING_SERVICE, KEYRING_ACCOUNT) {
-        let _ = entry.delete_credential();
+    for service in [KEYRING_SERVICE, LEGACY_KEYRING_SERVICE] {
+        if let Ok(entry) = keyring::Entry::new(service, KEYRING_ACCOUNT) {
+            let _ = entry.delete_credential();
+        }
     }
 }
 
@@ -151,7 +169,7 @@ pub fn store_token(cfg: &mut Config, token: &str) -> &'static str {
 }
 
 /// Build a reqwest client that authenticates every request. Prefers a Bearer
-/// API token (from `set-token`); falls back to HTTP Basic (legacy `terusin login`).
+/// API token (from `set-token`); falls back to HTTP Basic (legacy `trusin login`).
 pub fn auth_client(cfg: &Config) -> Client {
     let mut headers = reqwest::header::HeaderMap::new();
     if let Some(token) = resolve_token(cfg) {
@@ -192,8 +210,8 @@ pub fn ensure_token(cfg: &mut Config) -> bool {
         return false;
     }
     if !token.starts_with("ts_") || token.len() < 10 {
-        eprintln!(" That doesn't look like a Terusin API key (expected `ts_…`).");
-        eprintln!(" Run `terusin set-token` to set one.");
+        eprintln!(" That doesn't look like a trusin API key (expected `ts_…`).");
+        eprintln!(" Run `trusin set-token` to set one.");
         return false;
     }
     let where_ = store_token(cfg, &token);

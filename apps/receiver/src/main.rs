@@ -47,7 +47,7 @@ async fn main() {
 
     let addr = format!("0.0.0.0:{port}");
     println!(" Receiver listening on http://localhost:{port}");
-    println!(" Arahin Terusin ke: terusin forward --port {port}");
+    println!(" Arahin trusin ke: trusin forward --port {port}");
 
     let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
     axum::serve(listener, app).await.unwrap();
