@@ -19,6 +19,7 @@ use axum::{
     Json,
 };
 use base64::Engine;
+use handlebars::Handlebars;
 use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation};
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
@@ -26,6 +27,8 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::{AppState, User};
+
+const WELCOME_EMAIL_TEMPLATE: &str = include_str!("../templates/welcome.hbs");
 
 /// The authenticated principal, made available to handlers via the axum
 /// `Extension<CurrentUser>` extractor. Inserted by `auth_middleware` after any
@@ -434,19 +437,20 @@ pub async fn google_callback(
     }
 
     // 3. Upsert user row.
-    let user = match upsert_oauth_user(&state.db, &user_info, oauth_state.invite_token.as_deref()).await {
-        Ok(u) => u,
-        Err(sqlx::Error::RowNotFound) => {
-            return oauth_error(
+    let (user, created) =
+        match upsert_oauth_user(&state.db, &user_info, oauth_state.invite_token.as_deref()).await {
+            Ok(result) => result,
+            Err(sqlx::Error::RowNotFound) => {
+                return oauth_error(
                 &cfg,
                 "This invitation is invalid, expired, or belongs to a different Google account.",
             );
-        }
-        Err(e) => {
-            tracing::error!("upsert oauth user: {e}");
-            return oauth_error(&cfg, "Could not save your account.");
-        }
-    };
+            }
+            Err(e) => {
+                tracing::error!("upsert oauth user: {e}");
+                return oauth_error(&cfg, "Could not save your account.");
+            }
+        };
 
     // 4. Issue JWT + set cookie + redirect to SPA.
     let jwt = match issue_jwt(&user.id, &cfg.jwt_secret) {
@@ -475,6 +479,27 @@ pub async fn google_callback(
         serde_json::json!({ "email": user.email }),
     )
     .await;
+    if created {
+        if let Err(error) = send_welcome_email(&user, &cfg.frontend_url).await {
+            tracing::warn!(user_id = %user.id, "welcome email was not sent: {error}");
+        } else {
+            crate::audit::record(
+                &state,
+                Some(&CurrentUser {
+                    id: user.id,
+                    organization_id: user.organization_id,
+                    role: user.role.clone(),
+                    scopes: vec![],
+                    is_platform_operator: user.is_platform_operator,
+                }),
+                "auth.welcome_email_sent",
+                "user",
+                Some(user.id.to_string()),
+                serde_json::json!({ "email": user.email }),
+            )
+            .await;
+        }
+    }
     if oauth_state.invite_token.is_some() {
         crate::audit::record(
             &state,
@@ -500,7 +525,7 @@ async fn upsert_oauth_user(
     db: &PgPool,
     info: &GoogleUserInfo,
     invite_token: Option<&str>,
-) -> Result<User, sqlx::Error> {
+) -> Result<(User, bool), sqlx::Error> {
     let invite = match invite_token {
         Some(token) => crate::invites::invite_for_token(db, token, &info.email).await?,
         None => None,
@@ -538,14 +563,15 @@ async fn upsert_oauth_user(
         return sqlx::query_as::<_, User>("SELECT * FROM users WHERE id = $1")
             .bind(existing.id)
             .fetch_one(db)
-            .await;
+            .await
+            .map(|user| (user, false));
     }
 
     // Also avoid duplicate email: link an existing email-matched account.
     if let Some(existing) = sqlx::query_as::<_, User>("SELECT * FROM users WHERE email = $1")
         .bind(&info.email)
         .fetch_optional(db)
-    .await?
+        .await?
     {
         if let Some((_, _, organization_id)) = invite.as_ref() {
             if existing.organization_id != *organization_id {
@@ -573,7 +599,8 @@ async fn upsert_oauth_user(
         return sqlx::query_as::<_, User>("SELECT * FROM users WHERE id = $1")
             .bind(existing.id)
             .fetch_one(db)
-            .await;
+            .await
+            .map(|user| (user, false));
     }
 
     if let Some((invite_id, role, organization_id)) = invite {
@@ -602,7 +629,7 @@ async fn upsert_oauth_user(
             return Err(sqlx::Error::RowNotFound);
         }
         transaction.commit().await?;
-        return Ok(user);
+        return Ok((user, true));
     }
 
     let display_name = info.name.as_deref().unwrap_or(&info.email).trim();
@@ -613,9 +640,23 @@ async fn upsert_oauth_user(
         .next()
         .unwrap_or("workspace")
         .chars()
-        .map(|character| if character.is_ascii_alphanumeric() { character.to_ascii_lowercase() } else { '-' })
+        .map(|character| {
+            if character.is_ascii_alphanumeric() {
+                character.to_ascii_lowercase()
+            } else {
+                '-'
+            }
+        })
         .collect();
-    let slug = format!("{}-{}", base_slug.trim_matches('-').chars().take(60).collect::<String>(), Uuid::new_v4().simple());
+    let slug = format!(
+        "{}-{}",
+        base_slug
+            .trim_matches('-')
+            .chars()
+            .take(60)
+            .collect::<String>(),
+        Uuid::new_v4().simple()
+    );
     let mut transaction = db.begin().await?;
     let organization_id: Uuid = sqlx::query_scalar(
         r#"INSERT INTO organizations (name, slug, plan_code, subscription_status, subscriber_name, billing_contact_name, billing_contact_email)
@@ -640,7 +681,48 @@ async fn upsert_oauth_user(
     .fetch_one(&mut *transaction)
     .await?;
     transaction.commit().await?;
-    Ok(user)
+    Ok((user, true))
+}
+
+async fn send_welcome_email(user: &User, app_url: &str) -> Result<(), String> {
+    let api_key = std::env::var("RESEND_API_KEY")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| "RESEND_API_KEY is not configured".to_string())?;
+    let from = std::env::var("EMAIL_FROM")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| "EMAIL_FROM is not configured".to_string())?;
+    let email = user
+        .email
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| "new Google user has no email address".to_string())?;
+    let display_name = user.display_name.as_deref().unwrap_or(email);
+    let html = Handlebars::new()
+        .render_template(
+            WELCOME_EMAIL_TEMPLATE,
+            &serde_json::json!({
+                "display_name": display_name,
+                "app_url": app_url.trim_end_matches('/'),
+            }),
+        )
+        .map_err(|error| format!("render welcome template: {error}"))?;
+    reqwest::Client::new()
+        .post("https://api.resend.com/emails")
+        .bearer_auth(api_key)
+        .json(&serde_json::json!({
+            "from": from,
+            "to": [email],
+            "subject": "Welcome to trusin",
+            "html": html,
+        }))
+        .send()
+        .await
+        .map_err(|error| format!("send welcome email: {error}"))?
+        .error_for_status()
+        .map_err(|error| format!("Resend rejected welcome email: {error}"))?;
+    Ok(())
 }
 
 fn build_cookie(jwt: &str, cfg: &OAuthConfig) -> (header::HeaderName, header::HeaderValue) {
@@ -926,7 +1008,11 @@ pub async fn create_token(
             "organization:manage".to_string(),
         ]
     });
-    if scopes.is_empty() || scopes.iter().any(|scope| !allowed.contains(&scope.as_str())) {
+    if scopes.is_empty()
+        || scopes
+            .iter()
+            .any(|scope| !allowed.contains(&scope.as_str()))
+    {
         return (StatusCode::BAD_REQUEST, "invalid API key scopes").into_response();
     }
     let token = generate_token();
