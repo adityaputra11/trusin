@@ -301,7 +301,7 @@ pub async fn current_organization(
 
     let period = period_start();
     let used: i64 = sqlx::query_scalar(
-        "SELECT COALESCE(events_accepted, 0) FROM organization_usage WHERE organization_id = $1 AND period_start = $2",
+        "SELECT COALESCE(events_accepted, 0)::BIGINT FROM organization_usage WHERE organization_id = $1 AND period_start = $2",
     )
     .bind(cu.organization_id)
     .bind(period)
@@ -416,7 +416,7 @@ pub async fn consume_event_quota(
            ON CONFLICT (organization_id, period_start)
            DO UPDATE SET events_accepted = organization_usage.events_accepted + 1
            WHERE organization_usage.events_accepted < $3
-           RETURNING events_accepted"#,
+           RETURNING events_accepted::BIGINT"#,
     )
     .bind(organization_id)
     .bind(period)

@@ -24,7 +24,10 @@ function Arrow() {
 function Logo() {
   return (
     <a className="logo" href="#top" aria-label="trusin home">
-      <img className="logo-mark" src="/icon-trusin.png" alt="" />
+      <picture>
+        <source srcSet="/icon-trusin.webp" type="image/webp" />
+        <img className="logo-mark" src="/icon-trusin-128.png" width="30" height="30" alt="" />
+      </picture>
       <span>trusin</span>
       <i aria-hidden="true" />
     </a>
@@ -134,7 +137,7 @@ function App() {
                 <a className="button button-primary" href={managedCta.href}>{managedCta.label} <Arrow /></a>
                 <a className="button button-secondary" href={`${config.docsUrl}/docs/intro`}>Self-host trusin <span aria-hidden="true">→</span></a>
               </div>
-              <div className="hero-proof"><span><i /> Open source</span><span>Apache 2.0</span><span>Built in Rust</span></div>
+              <div className="hero-proof"><span><i /> Open source</span><span>Apache 2.0</span><span className="rust-badge"><b aria-hidden="true">⚙</b> Powered by Rust</span></div>
             </div>
             <ConsolePreview />
           </div>

@@ -47,7 +47,17 @@ export function Organization() {
   };
 
   if (organization.isLoading) return <p className="text-sm text-muted">Loading organization…</p>;
-  if (!data) return <p className="text-sm text-danger">Could not load organization details.</p>;
+  if (!data) {
+    return (
+      <Card className="max-w-xl">
+        <CardHeader
+          title="Organization details are unavailable"
+          subtitle="We could not load your workspace details. Please try again."
+          action={<Button size="sm" variant="outline" onClick={() => organization.refetch()}>Retry</Button>}
+        />
+      </Card>
+    );
+  }
 
   const { usage, limits } = data;
   return (

@@ -1,6 +1,5 @@
 // React Query hooks for the backend API.
 
-import { useEffect, useState } from "react";
 import {
   useMutation,
   useQuery,
@@ -84,11 +83,10 @@ export function useEndpoint() {
 
 export interface OAuthStatus {
   enabled: boolean;
+  providers: string[];
 }
 
-/** Whether the backend has Google OAuth configured. The login page uses this
- * to decide whether to render the "Continue with Google" button — hides the
- * button entirely when OAuth is disabled so users never hit a 503. */
+/** Browser OAuth providers configured by the backend. */
 export function useOAuthStatus() {
   return useQuery<OAuthStatus>({
     queryKey: ["oauth-status"],
@@ -482,40 +480,4 @@ export function useRevokeInvite() {
       toast.success("Invitation revoked");
     },
   });
-}
-
-export type EventStreamStatus = "connected" | "reconnecting" | "idle";
-
-/**
- * Subscribe to the live SSE event stream and invalidate the events query when
- * a new event arrives, so the dashboard table refreshes without polling.
- * Returns the connection status so the UI can surface "Live" vs
- * "Reconnecting…". Pass `enabled=false` to pause.
- */
-export function useEventStream(enabled: boolean): EventStreamStatus {
-  const qc = useQueryClient();
-  const [status, setStatus] = useState<EventStreamStatus>("idle");
-  useEffect(() => {
-    if (!enabled) return;
-    const es = new EventSource("/events/stream");
-    setStatus("reconnecting");
-    const onEvent = () => {
-      // Invalidate all events queries (any filter/page).
-      qc.invalidateQueries({ queryKey: ["events"] });
-    };
-    const onOpen = () => setStatus("connected");
-    es.addEventListener("open", onOpen);
-    es.addEventListener("event", onEvent);
-    es.onerror = () => {
-      // EventSource auto-reconnects; flip the indicator until it recovers.
-      setStatus("reconnecting");
-    };
-    return () => {
-      es.removeEventListener("open", onOpen);
-      es.removeEventListener("event", onEvent);
-      es.close();
-      setStatus("idle");
-    };
-  }, [enabled, qc]);
-  return status;
 }

@@ -134,8 +134,8 @@ async fn main() {
     seed_default_user(&db).await;
 
     let oauth = auth::OAuthConfig::from_env().map(Arc::new);
-    if oauth.is_some() {
-        info!("google oauth enabled (redirect_uri will be set per env)");
+    if let Some(config) = oauth.as_ref() {
+        info!(providers = ?config.enabled_providers(), "browser oauth enabled");
     } else {
         info!("google oauth disabled (set GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET to enable)");
     }
@@ -173,6 +173,7 @@ async fn main() {
     let r_redis = ConnectionManager::new(redis_from_env()).await.unwrap();
     tokio::spawn(retry_worker(db, r_redis));
     tokio::spawn(retention_worker(state.db.clone()));
+    tokio::spawn(auth::welcome_email_worker(state.db.clone()));
 
     let public = Router::new()
         .route("/config/endpoint", get(get_endpoint))
@@ -180,6 +181,8 @@ async fn main() {
         // OAuth endpoints (callback must be reachable cross-origin via redirect).
         .route("/api/auth/google", get(auth::google_login))
         .route("/api/auth/callback/google", get(auth::google_callback))
+        .route("/api/auth/github", get(auth::github_login))
+        .route("/api/auth/callback/github", get(auth::github_callback))
         .route("/api/auth/me", get(auth::me))
         .route("/api/auth/login", post(auth::login))
         .route("/api/auth/logout", post(auth::logout));
