@@ -2,6 +2,16 @@ www.trusin.my.id {
     redir https://trusin.my.id{uri} permanent
 }
 
+download.trusin.my.id {
+    root * /var/www/trusin/download
+    @installer path /install.sh
+    header @installer {
+        Cache-Control "no-cache"
+        Content-Type "text/x-shellscript; charset=utf-8"
+    }
+    file_server
+}
+
 trusin.my.id {
     root * /var/www/trusin/landing
     @hashed_assets path_regexp hashed_assets ^/assets/.+\.(?:css|js)$

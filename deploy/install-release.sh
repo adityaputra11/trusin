@@ -36,7 +36,7 @@ if [ -f "$stage_dir/runtime.env" ]; then
   install -m 0600 -o terusin -g terusin "$stage_dir/runtime.env" /etc/trusin/trusin.env
 fi
 
-for site in landing docs; do
+for site in landing docs download; do
   if [ -d "$stage_dir/$site" ]; then
     install -d -o root -g root -m 0755 "/var/www/trusin/$site"
     rm -rf "/var/www/trusin/$site"/*

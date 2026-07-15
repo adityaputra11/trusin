@@ -57,6 +57,21 @@ open http://localhost:3012
 
 ## CLI
 
+Install the latest CLI release on macOS or Linux:
+
+```sh
+curl -fsSL https://download.trusin.my.id/install.sh | sh
+terusin set-token ts_your_token
+```
+
+The installer automatically selects the correct Apple Silicon, Intel, x86_64,
+or ARM64 binary and verifies its SHA-256 checksum. To pin a release, run
+`curl -fsSL https://download.trusin.my.id/install.sh | TERUSIN_VERSION=v0.1.0 sh`;
+use `TERUSIN_INSTALL=$HOME/.local/bin` in the same position to install without
+`sudo`.
+
+Build from source instead:
+
 ```sh
 alias terusin='cargo run --bin terusin --'
 

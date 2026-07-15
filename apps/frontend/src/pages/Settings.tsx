@@ -344,6 +344,29 @@ function GeneralTab() {
   );
 }
 
+function CliInstallCard() {
+  const installCommand = "curl -fsSL https://download.trusin.my.id/install.sh | sh";
+
+  return (
+    <Card>
+      <CardHeader title="Install the CLI" subtitle="Use trusin from your terminal or local development environment" action={<Badge variant="purple">macOS + Linux</Badge>} />
+      <div className="space-y-4">
+        <CodeBlock code={installCommand} />
+        <p className="text-sm text-secondary">
+          Supports Apple Silicon and Intel Macs, plus x86_64 and ARM64 Linux. The installer verifies the release checksum before installing to <code className="text-xs text-foreground font-mono">/usr/local/bin</code>.
+        </p>
+        <div className="grid gap-2 text-xs text-muted sm:grid-cols-2">
+          <p>Pin a release: <code className="text-foreground font-mono break-all">curl … | TERUSIN_VERSION=vX.Y.Z sh</code></p>
+          <p>Choose a directory: <code className="text-foreground font-mono break-all">curl … | TERUSIN_INSTALL=~/.local/bin sh</code></p>
+        </div>
+        <p className="text-sm text-secondary">
+          Create an API token below, then connect this device with <code className="text-xs text-foreground font-mono">terusin set-token ts_…</code>.
+        </p>
+      </div>
+    </Card>
+  );
+}
+
 function McpTab() {
   const [client, setClient] = useState<ClientKey>("claude");
   const [binaryPath, setBinaryPath] = useState("/usr/local/bin/terusin-mcp");
@@ -504,6 +527,7 @@ function DeveloperSettings() {
   return (
     <div className="space-y-6">
       <GeneralTab />
+      <CliInstallCard />
       <DevicesAndTokens />
       <McpTab />
     </div>
