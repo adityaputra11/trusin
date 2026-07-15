@@ -1,10 +1,11 @@
 import { useState, type FormEvent } from "react";
 import { useCanWrite } from "../lib/user-context";
-import { Settings2, Plus, Pencil, Trash2 } from "lucide-react";
+import { Check, Copy, Link2, Plus, Pencil, Settings2, Trash2 } from "lucide-react";
 import {
   useRules,
   useCreateRule,
   useDeleteRule,
+  useEndpoint,
   useUpdateRule,
 } from "../lib/hooks";
 import {
@@ -70,9 +71,15 @@ function headersToText(h: Record<string, string> | null | undefined): string {
     .join("\n");
 }
 
+function webhookUrl(endpoint: string | undefined, source: string): string {
+  if (!endpoint || !source.trim()) return "";
+  return `${endpoint.replace(/\/$/, "")}/${encodeURIComponent(source.trim())}`;
+}
+
 export function Providers() {
   const canWrite = useCanWrite();
   const { data: rules, isLoading } = useRules();
+  const { data: endpoint } = useEndpoint();
   const createRule = useCreateRule();
   const updateRule = useUpdateRule();
   const deleteRule = useDeleteRule();
@@ -82,6 +89,7 @@ export function Providers() {
   const [form, setForm] = useState<FormState>(EMPTY);
   const [error, setError] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<ForwardRule | null>(null);
+  const [copiedProviderId, setCopiedProviderId] = useState<string | null>(null);
 
   // Providers = named source mappings, exclude the seeded catch-all "Default".
   const providers = (rules ?? []).filter((r) => r.rule_kind === "provider");
@@ -144,6 +152,18 @@ export function Providers() {
 
   const saving = createRule.isPending || updateRule.isPending;
 
+  const copyWebhookUrl = async (provider: ForwardRule) => {
+    const url = webhookUrl(endpoint?.endpoint, provider.source_pattern);
+    if (!url) return;
+    try {
+      await navigator.clipboard.writeText(url);
+      setCopiedProviderId(provider.id);
+      window.setTimeout(() => setCopiedProviderId(null), 1500);
+    } catch {
+      setCopiedProviderId(null);
+    }
+  };
+
   return (
     <Card className="p-0 overflow-hidden">
       <div className="flex items-center justify-between p-4 border-b border-border">
@@ -176,6 +196,7 @@ export function Providers() {
           <THead>
             <TH>Name</TH>
             <TH>Source</TH>
+            <TH>Webhook URL</TH>
             <TH>Method</TH>
             <TH>Target URL</TH>
             <TH>Status</TH>
@@ -193,6 +214,23 @@ export function Providers() {
                   <code className="text-xs text-secondary font-mono">
                     {rule.source_pattern}
                   </code>
+                </TD>
+                <TD>
+                  <div className="flex items-center gap-1 max-w-[280px]">
+                    <code className="text-xs text-muted font-mono truncate">
+                      {webhookUrl(endpoint?.endpoint, rule.source_pattern) || "Loading…"}
+                    </code>
+                    <button
+                      type="button"
+                      onClick={() => copyWebhookUrl(rule)}
+                      disabled={!endpoint?.endpoint}
+                      className="p-1.5 rounded-md text-muted hover:text-foreground hover:bg-hover disabled:cursor-not-allowed shrink-0"
+                      title="Copy webhook URL"
+                      aria-label={`Copy ${rule.name} webhook URL`}
+                    >
+                      {copiedProviderId === rule.id ? <Check className="h-3.5 w-3.5 text-success" /> : <Copy className="h-3.5 w-3.5" />}
+                    </button>
+                  </div>
                 </TD>
                 <TD>
                   <code className="text-xs text-secondary font-mono">
@@ -290,6 +328,15 @@ export function Providers() {
               placeholder={form.name || "source-name"}
             />
           </Field>
+          <div className="rounded-md border border-border bg-surface-2 p-3">
+            <div className="flex items-center gap-2 text-xs font-medium text-secondary">
+              <Link2 className="h-3.5 w-3.5 text-success" />
+              Webhook endpoint to paste in your provider
+            </div>
+            <code className="mt-2 block truncate text-xs text-foreground font-mono">
+              {webhookUrl(endpoint?.endpoint, form.source_pattern || form.name) || "Enter a provider name to generate the endpoint"}
+            </code>
+          </div>
           <Field label="Target URL" htmlFor="target">
             <Input
               id="target"
