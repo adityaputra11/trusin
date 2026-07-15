@@ -302,13 +302,13 @@ fn draw(frame: &mut ratatui::Frame, app: &App) {
         ])
         .split(frame.area());
 
-    let titles = ["Overview", "Events", "Rules", "Config", "Tokens"]
+    let titles = ["Overview", "Events", "Rules", "Settings", "Tokens"]
         .into_iter()
         .map(Line::from)
         .collect::<Vec<_>>();
     let tabs = Tabs::new(titles)
         .select(app.tab.index())
-        .block(Block::default().title("Terusin").borders(Borders::ALL))
+        .block(Block::default().title("trusin").borders(Borders::ALL))
         .style(Style::default().fg(Color::Gray))
         .highlight_style(
             Style::default()
