@@ -1,8 +1,13 @@
 import { useMemo, useState } from "react";
+import { useNavigate, useParams } from "react-router-dom";
 import {
   Activity,
+  Building2,
+  Code2,
   Copy,
   Check,
+  ChevronRight,
+  LockKeyhole,
   Terminal,
   Plug,
   Server,
@@ -11,6 +16,8 @@ import {
   Plus,
   KeyRound,
   AlertTriangle,
+  ShieldCheck,
+  Users,
 } from "lucide-react";
 import { Card, CardHeader, Badge, Button, Input, Modal } from "../components/ui";
 import {
@@ -19,8 +26,11 @@ import {
   useCreateToken,
   useRevokeToken,
 } from "../lib/hooks";
-import { useCurrentUser } from "../lib/user-context";
+import { useCanWrite, useCurrentUser } from "../lib/user-context";
 import { formatRelative } from "../lib/format";
+import { Activity as ActivityPage } from "./Activity";
+import { Organization } from "./Organization";
+import { Users as UsersPage } from "./Users";
 
 // The MCP server is a stdio process — its tools are static and known.
 const MCP_TOOLS = [
@@ -274,14 +284,6 @@ function DevicesAndTokens() {
   );
 }
 
-type SettingsTab = "general" | "tokens" | "mcp";
-
-const TABS: { key: SettingsTab; label: string; icon: string }[] = [
-  { key: "general", label: "General", icon: "\u2699\uFE0F" },
-  { key: "tokens", label: "API Tokens", icon: "\uD83D\uDD11" },
-  { key: "mcp", label: "MCP Server", icon: "\uD83E\uDD16" },
-];
-
 function GeneralTab() {
   const health = useHealth();
   const user = useCurrentUser();
@@ -402,29 +404,113 @@ function McpTab() {
 }
 
 export function Settings() {
-  const [tab, setTab] = useState<SettingsTab>("general");
+  const navigate = useNavigate();
+  const { section } = useParams();
+  const canWrite = useCanWrite();
+  const activeSection = isSettingsSection(section) ? section : "workspace";
 
   return (
-    <div className="max-w-3xl space-y-6">
-      <div className="flex gap-1 bg-surface border border-border rounded-lg p-1 w-fit">
-        {TABS.map((t) => (
-          <button
-            key={t.key}
-            onClick={() => setTab(t.key)}
-            className={`flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-base ${
-              tab === t.key
-                ? "bg-hover text-foreground shadow-sm"
-                : "text-muted hover:text-foreground"
-            }`}
-          >
-            <span>{t.icon}</span> {t.label}
-          </button>
-        ))}
+    <div className="mx-auto max-w-6xl">
+      <div className="mb-7 flex flex-col gap-2 border-b border-border pb-6 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <p className="text-[10px] font-semibold tracking-[.16em] text-success uppercase">Workspace administration</p>
+          <h2 className="mt-2 text-2xl font-semibold tracking-tight text-foreground">Settings</h2>
+          <p className="mt-1 max-w-2xl text-sm text-secondary">Manage your workspace, access controls, security records, and developer integrations.</p>
+        </div>
+        <div className="flex items-center gap-2 rounded-md border border-border bg-card px-3 py-2 text-xs text-muted">
+          <LockKeyhole className="h-3.5 w-3.5 text-success" />
+          {canWrite ? "Workspace administrator" : "Read-only workspace access"}
+        </div>
       </div>
 
-      {tab === "general" && <GeneralTab />}
-      {tab === "tokens" && <DevicesAndTokens />}
-      {tab === "mcp" && <McpTab />}
+      <div className="grid gap-6 lg:grid-cols-[220px_minmax(0,1fr)]">
+        <SettingsNavigation activeSection={activeSection} canWrite={canWrite} onSelect={(next) => navigate(`/settings/${next}`)} />
+        <section className="min-w-0">
+          <SettingsSectionHeader section={activeSection} />
+          {activeSection === "workspace" && <Organization />}
+          {activeSection === "access" && (canWrite ? <UsersPage /> : <RestrictedAccess />)}
+          {activeSection === "security" && <ActivityPage />}
+          {activeSection === "developer" && <DeveloperSettings />}
+        </section>
+      </div>
+    </div>
+  );
+}
+
+type SettingsSection = "workspace" | "access" | "security" | "developer";
+
+const SETTINGS_SECTIONS: {
+  key: SettingsSection;
+  label: string;
+  description: string;
+  icon: typeof Building2;
+  adminOnly?: boolean;
+}[] = [
+  { key: "workspace", label: "Workspace", description: "Organization, plan, usage, and domains", icon: Building2 },
+  { key: "access", label: "Access", description: "Members, roles, and invitations", icon: Users, adminOnly: true },
+  { key: "security", label: "Security", description: "Audit trail and operational history", icon: ShieldCheck },
+  { key: "developer", label: "Developer", description: "API tokens, MCP, and connectivity", icon: Code2 },
+];
+
+function isSettingsSection(value: string | undefined): value is SettingsSection {
+  return SETTINGS_SECTIONS.some((section) => section.key === value);
+}
+
+function SettingsNavigation({ activeSection, canWrite, onSelect }: { activeSection: SettingsSection; canWrite: boolean; onSelect: (section: SettingsSection) => void }) {
+  return (
+    <nav aria-label="Settings sections" className="h-fit rounded-lg border border-border bg-card p-2 lg:sticky lg:top-6">
+      <div className="hidden lg:block px-3 pb-2 pt-2 text-[10px] font-semibold uppercase tracking-[.14em] text-muted">Configuration</div>
+      <div className="flex gap-1 overflow-x-auto lg:flex-col">
+        {SETTINGS_SECTIONS.map((section) => {
+          const Icon = section.icon;
+          const active = activeSection === section.key;
+          return (
+            <button
+              key={section.key}
+              type="button"
+              onClick={() => onSelect(section.key)}
+              className={`group flex min-w-[148px] items-center gap-3 rounded-md px-3 py-2.5 text-left transition-base lg:min-w-0 ${active ? "bg-[linear-gradient(90deg,rgba(74,222,128,.12),rgba(74,222,128,.03))] text-foreground shadow-[inset_2px_0_0_#4ade80]" : "text-secondary hover:bg-hover hover:text-foreground"}`}
+            >
+              <Icon className={`h-4 w-4 shrink-0 ${active ? "text-success" : "text-muted group-hover:text-success"}`} />
+              <span className="min-w-0 flex-1">
+                <span className="block text-sm font-medium">{section.label}</span>
+                <span className="mt-0.5 hidden text-[11px] leading-4 text-muted lg:block">{section.description}</span>
+              </span>
+              {section.adminOnly && !canWrite ? <LockKeyhole className="h-3.5 w-3.5 text-muted" /> : <ChevronRight className={`h-3.5 w-3.5 ${active ? "text-success" : "text-muted opacity-0 group-hover:opacity-100"}`} />}
+            </button>
+          );
+        })}
+      </div>
+    </nav>
+  );
+}
+
+function SettingsSectionHeader({ section }: { section: SettingsSection }) {
+  const current = SETTINGS_SECTIONS.find((item) => item.key === section)!;
+  const Icon = current.icon;
+  return (
+    <div className="mb-5 flex items-center gap-3">
+      <div className="grid h-10 w-10 place-items-center rounded-md border border-[rgba(74,222,128,.2)] bg-[rgba(74,222,128,.07)]"><Icon className="h-5 w-5 text-success" /></div>
+      <div><h3 className="text-lg font-semibold text-foreground">{current.label}</h3><p className="text-sm text-muted">{current.description}</p></div>
+    </div>
+  );
+}
+
+function RestrictedAccess() {
+  return (
+    <Card>
+      <CardHeader title="Access controls" subtitle="Members, roles, and invitations are managed by workspace administrators." action={<LockKeyhole className="h-5 w-5 text-muted" />} />
+      <div className="rounded-md border border-border bg-surface p-4 text-sm text-secondary">Your viewer role can inspect workspace activity and use personal developer credentials, but it cannot change membership or send invitations.</div>
+    </Card>
+  );
+}
+
+function DeveloperSettings() {
+  return (
+    <div className="space-y-6">
+      <GeneralTab />
+      <DevicesAndTokens />
+      <McpTab />
     </div>
   );
 }

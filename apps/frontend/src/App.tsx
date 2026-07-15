@@ -12,9 +12,6 @@ import { Hooks } from "./pages/Hooks";
 import { SendWebhook } from "./pages/SendWebhook";
 import { Metrics } from "./pages/Metrics";
 import { Settings } from "./pages/Settings";
-import { Activity } from "./pages/Activity";
-import { Users } from "./pages/Users";
-import { Organization } from "./pages/Organization";
 import { Platform } from "./pages/Platform";
 import { isLoggedIn } from "./lib/auth";
 import { useMe } from "./lib/hooks";
@@ -58,12 +55,13 @@ const router = createBrowserRouter([
       { path: "/providers", element: <Providers /> },
       { path: "/hooks", element: <Hooks /> },
       { path: "/metrics", element: <Metrics /> },
-      { path: "/activity", element: <Activity /> },
-      { path: "/users", element: <Users /> },
-      { path: "/organization", element: <Organization /> },
+      { path: "/activity", element: <Navigate to="/settings/security" replace /> },
+      { path: "/users", element: <Navigate to="/settings/access" replace /> },
+      { path: "/organization", element: <Navigate to="/settings/workspace" replace /> },
       { path: "/platform", element: <PlatformProtected /> },
       { path: "/send", element: <SendWebhook /> },
-      { path: "/settings", element: <Settings /> },
+      { path: "/settings", element: <Navigate to="/settings/workspace" replace /> },
+      { path: "/settings/:section", element: <Settings /> },
     ],
   },
   { path: "*", element: <Navigate to="/" replace /> },

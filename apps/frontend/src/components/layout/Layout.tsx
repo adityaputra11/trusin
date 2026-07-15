@@ -10,14 +10,16 @@ const TITLES: Record<string, { title: string; subtitle: string }> = {
   "/hooks": { title: "Hooks", subtitle: "Optional provider follow-up deliveries" },
   "/metrics": { title: "Metrics", subtitle: "Throughput, success rate & top sources" },
   "/send": { title: "Send", subtitle: "Send a custom webhook" },
-  "/organization": { title: "Organization", subtitle: "Plan, domains, and API-key entitlements" },
   "/platform": { title: "Platform", subtitle: "Hosted tenant control plane" },
-  "/settings": { title: "Settings", subtitle: "MCP setup & system status" },
+  "/settings": { title: "Settings", subtitle: "Workspace, access, security, and developer controls" },
 };
 
 function titlesFor(pathname: string) {
   if (pathname.startsWith("/event/")) {
     return { title: "Event Detail", subtitle: "Webhook event" };
+  }
+  if (pathname.startsWith("/settings")) {
+    return TITLES["/settings"];
   }
   return TITLES[pathname] ?? { title: "trusin", subtitle: "" };
 }

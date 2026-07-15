@@ -7,9 +7,6 @@ import {
   Settings2,
   BarChart3,
   Settings,
-  ShieldCheck,
-  Users,
-  Building2,
   type LucideIcon,
 } from "lucide-react";
 import { useCanWrite } from "../../lib/user-context";
@@ -27,9 +24,6 @@ const NAV_ITEMS: NavItem[] = [
   { to: "/providers", label: "Providers", icon: Settings2 },
   { to: "/hooks", label: "Hooks", icon: Webhook },
   { to: "/metrics", label: "Metrics", icon: BarChart3 },
-  { to: "/activity", label: "Activity", icon: ShieldCheck },
-  { to: "/users", label: "Users", icon: Users, adminOnly: true },
-  { to: "/organization", label: "Organization", icon: Building2, adminOnly: true },
   { to: "/send", label: "Send", icon: Send, adminOnly: true },
   { to: "/settings", label: "Settings", icon: Settings },
 ];

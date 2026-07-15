@@ -186,10 +186,11 @@ export function useOrganization() {
   });
 }
 
-export function useDomains() {
+export function useDomains(enabled = true) {
   return useQuery<OrganizationDomain[]>({
     queryKey: ["domains"],
     queryFn: () => api.get<OrganizationDomain[]>("/api/domains"),
+    enabled,
   });
 }
 
