@@ -68,12 +68,13 @@ const MCP_TOOLS = [
   },
 ] as const;
 
-type ClientKey = "claude" | "cursor" | "vscode";
+type ClientKey = "claude" | "cursor" | "vscode" | "opencode";
 
 const CLIENTS: { key: ClientKey; label: string; file: string }[] = [
   { key: "claude", label: "Claude Desktop", file: "claude_desktop_config.json" },
   { key: "cursor", label: "Cursor", file: ".cursor/mcp.json" },
   { key: "vscode", label: "VS Code (Copilot)", file: "settings.json" },
+  { key: "opencode", label: "OpenCode", file: "opencode.json" },
 ];
 
 function buildSnippet(client: ClientKey): string {
@@ -90,6 +91,22 @@ function buildSnippet(client: ClientKey): string {
         {
           "chat.mcp.discovery.enabled": true,
           "mcp.servers": { trusin: server },
+        },
+        null,
+        2,
+      );
+    case "opencode":
+      return JSON.stringify(
+        {
+          $schema: "https://opencode.ai/config.json",
+          mcp: {
+            trusin: {
+              type: "local",
+              command: ["/usr/local/bin/trusin", "mcp"],
+              enabled: true,
+              timeout: 10000,
+            },
+          },
         },
         null,
         2,

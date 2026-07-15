@@ -97,6 +97,29 @@ trusin set-token ts_your_token
 }
 ```
 
+### OpenCode
+
+OpenCode uses an `mcp` object rather than `mcpServers`. Add this to
+`~/.config/opencode/opencode.json` (or your project `opencode.json`), then restart OpenCode:
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "trusin": {
+      "type": "local",
+      "command": ["/usr/local/bin/trusin", "mcp"],
+      "enabled": true,
+      "timeout": 10000
+    }
+  }
+}
+```
+
+Run `trusin set-token ts_...` before launching OpenCode. The wrapper reads the saved
+token from your OS keychain, so the token does not need to be stored in OpenCode's config.
+Use `opencode mcp list` to confirm that the server is connected.
+
 For a custom sidecar location, set `TRUSIN_MCP_PATH` before launching
 `trusin mcp`. Direct executions of `trusin-mcp` continue to accept
 `TERUSIN_URL` and `TERUSIN_TOKEN`.

@@ -12,6 +12,8 @@ use std::path::PathBuf;
 
 const BACKEND: &str = "https://api.trusin.my.id";
 const WEB: &str = "https://app.trusin.my.id";
+const RETIRED_HOSTED_URL: &str = "https://terusin-dev.my.id";
+const RETIRED_DASHBOARD_URL: &str = "https://dashboard.terusin-dev.my.id";
 
 // OS keychain entry name under which the API token is stored (preferred over
 // the plaintext config file). Falls back gracefully on platforms without one.
@@ -82,6 +84,16 @@ pub fn load_config() -> Config {
     } else {
         Config::default()
     };
+    if let Ok(backend) = std::env::var("TERUSIN_BACKEND") {
+        if !backend.trim().is_empty() {
+            c.backend = backend;
+        }
+    }
+    if let Ok(web) = std::env::var("TERUSIN_WEB") {
+        if !web.trim().is_empty() {
+            c.web = web;
+        }
+    }
     // TERUSIN_TOKEN env var wins over the config file's `token` field when set,
     // matching the documented precedence (env → keychain → config).
     if let Ok(t) = std::env::var("TERUSIN_TOKEN") {
@@ -89,7 +101,30 @@ pub fn load_config() -> Config {
             c.token = Some(t);
         }
     }
+    if migrate_retired_hosted_config(&mut c) {
+        save_config(&c);
+    }
     c
+}
+
+fn migrate_retired_hosted_config(config: &mut Config) -> bool {
+    let mut migrated = false;
+    if is_retired_hosted_url(&config.backend) {
+        config.backend = BACKEND.to_string();
+        migrated = true;
+    }
+    if is_retired_hosted_url(&config.web) {
+        config.web = WEB.to_string();
+        migrated = true;
+    }
+    migrated
+}
+
+fn is_retired_hosted_url(url: &str) -> bool {
+    matches!(
+        url.trim_end_matches('/'),
+        RETIRED_HOSTED_URL | RETIRED_DASHBOARD_URL
+    )
 }
 
 pub fn save_config(c: &Config) {
@@ -176,7 +211,11 @@ pub fn auth_client(cfg: &Config) -> Client {
         reqwest::header::AUTHORIZATION,
         format!("Bearer {token}").parse().unwrap(),
     );
-    Client::builder().default_headers(headers).build().unwrap()
+    Client::builder()
+        .default_headers(headers)
+        .timeout(std::time::Duration::from_secs(5))
+        .build()
+        .unwrap()
 }
 
 /// First-run onboarding: ensure the config has a usable token. If none is
@@ -208,4 +247,23 @@ pub fn ensure_token(cfg: &mut Config) -> bool {
     let where_ = store_token(cfg, &token);
     println!(" ✓ API key saved ({where_}).");
     true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn migrates_the_retired_hosted_endpoint() {
+        let mut config = Config {
+            backend: RETIRED_HOSTED_URL.to_string(),
+            web: format!("{RETIRED_DASHBOARD_URL}/"),
+            token: Some("ts_existing_token".to_string()),
+        };
+
+        assert!(migrate_retired_hosted_config(&mut config));
+        assert_eq!(config.backend, BACKEND);
+        assert_eq!(config.web, WEB);
+        assert_eq!(config.token.as_deref(), Some("ts_existing_token"));
+    }
 }
