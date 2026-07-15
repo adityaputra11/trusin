@@ -199,6 +199,12 @@ jobs:
 
             systemctl is-active --quiet terusin-backend
             systemctl is-active --quiet terusin-web
+            for attempt in {1..30}; do
+              if curl --fail --silent --show-error http://127.0.0.1:3011/health > /dev/null; then
+                break
+              fi
+              sleep 2
+            done
             curl --fail --silent --show-error http://127.0.0.1:3011/health
 
             for url in \
