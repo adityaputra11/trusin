@@ -45,6 +45,7 @@ struct OrganizationSummary {
     billing_period_start: chrono::DateTime<chrono::Utc>,
     billing_period_end: chrono::DateTime<chrono::Utc>,
     default_target_url: String,
+    ingest_key: String,
     events_accepted: i64,
     domains: i64,
     providers: i64,
@@ -272,33 +273,80 @@ pub async fn default_target_for(
         .ok_or(StatusCode::NOT_FOUND)
 }
 
-/// Resolve public ingest tenancy from the incoming hostname. Local and legacy
-/// canonical hosts retain the migrated default organization.
+/// Resolve public ingest tenancy. Canonical hosted URLs must include the
+/// organization-specific secret key (`/i/{key}/{source}`); custom domains map
+/// directly to a verified organization.
 pub async fn resolve_ingest_organization(
     state: &AppState,
     headers: &HeaderMap,
-) -> Result<Uuid, StatusCode> {
+    source_path: &str,
+) -> Result<(Uuid, String), StatusCode> {
     let host = host_without_port(headers);
-    let is_default_host = host.as_deref().is_none_or(|value| {
-        value == "localhost"
-            || value == "127.0.0.1"
-            || value == canonical_ingest_host()
-            || public_url_host().as_deref() == Some(value)
+    let is_canonical_host = host.as_deref().is_some_and(|value| {
+        value == canonical_ingest_host() || public_url_host().as_deref() == Some(value)
     });
-    if is_default_host {
+    if is_canonical_host {
+        let (ingest_key, source) = parse_canonical_ingest_path(source_path)
+            .ok_or(StatusCode::NOT_FOUND)?;
+        let organization_id = sqlx::query_scalar(
+            "SELECT id FROM organizations WHERE ingest_key = $1",
+        )
+        .bind(ingest_key)
+        .fetch_optional(&state.db)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+        return Ok((organization_id, source.to_string()));
+    }
+
+    let is_local_host = host.as_deref().is_none_or(|value| {
+        value == "localhost" || value == "127.0.0.1"
+    });
+    if is_local_host {
         return default_organization_id(&state.db)
             .await
+            .map(|organization_id| (organization_id, source_path.to_string()))
             .ok_or(StatusCode::SERVICE_UNAVAILABLE);
     }
 
-    sqlx::query_scalar(
+    let organization_id = sqlx::query_scalar(
         "SELECT organization_id FROM organization_domains WHERE hostname = $1 AND status = 'active'",
     )
     .bind(host.unwrap_or_default())
     .fetch_optional(&state.db)
     .await
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-    .ok_or(StatusCode::NOT_FOUND)
+    .ok_or(StatusCode::NOT_FOUND)?;
+    Ok((organization_id, source_path.to_string()))
+}
+
+fn parse_canonical_ingest_path(path: &str) -> Option<(&str, &str)> {
+    let mut segments = path.trim_matches('/').split('/');
+    if segments.next() != Some("i") {
+        return None;
+    }
+    let ingest_key = segments.next()?;
+    let source = segments.next()?;
+    (!ingest_key.is_empty() && !source.is_empty()).then_some((ingest_key, source))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_canonical_ingest_path;
+
+    #[test]
+    fn parses_tenant_scoped_ingest_path() {
+        assert_eq!(
+            parse_canonical_ingest_path("/i/secret-key/resend"),
+            Some(("secret-key", "resend"))
+        );
+    }
+
+    #[test]
+    fn rejects_unscoped_or_incomplete_ingest_paths() {
+        assert_eq!(parse_canonical_ingest_path("/resend"), None);
+        assert_eq!(parse_canonical_ingest_path("/i/secret-key"), None);
+    }
 }
 
 pub async fn current_organization(
@@ -309,7 +357,7 @@ pub async fn current_organization(
     let period = period_start();
     let summary = sqlx::query_as::<_, OrganizationSummary>(
         r#"SELECT o.id, o.name, o.slug, o.plan_code, o.subscription_status,
-                  o.billing_period_start, o.billing_period_end, o.default_target_url,
+                  o.billing_period_start, o.billing_period_end, o.default_target_url, o.ingest_key,
                   COALESCE(u.events_accepted, 0)::BIGINT AS events_accepted,
                   (SELECT COUNT(*) FROM organization_domains d WHERE d.organization_id = o.id AND d.status != 'failed')::BIGINT AS domains,
                   (SELECT COUNT(*) FROM forward_rules r WHERE r.organization_id = o.id AND r.name <> 'Default')::BIGINT AS providers,
@@ -343,6 +391,7 @@ pub async fn current_organization(
         "organization": organization,
         "hosted": hosted_mode(),
         "ingest_canonical_host": canonical_ingest_host(),
+        "ingest_url": format!("{}/i/{}", public_ingest_url(), summary.ingest_key),
         "usage": {
             "period_start": period,
             "period_end": next_period_start(),
@@ -361,6 +410,13 @@ pub async fn current_organization(
             "retention_days": if hosted_mode() && !paid { Some(FREE_RETENTION_DAYS) } else { None },
         }
     })))
+}
+
+fn public_ingest_url() -> String {
+    std::env::var("PUBLIC_URL")
+        .unwrap_or_else(|_| format!("https://{}", canonical_ingest_host()))
+        .trim_end_matches('/')
+        .to_string()
 }
 
 async fn resource_count(

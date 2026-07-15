@@ -1,14 +1,14 @@
 import { useState } from "react";
 import { Copy, Check, Eye, EyeOff, Link2 } from "lucide-react";
-import { useEndpoint } from "../lib/hooks";
+import { useOrganization } from "../lib/hooks";
 import { Button } from "./ui";
 
 export function EndpointBox() {
-  const { data, isLoading } = useEndpoint();
+  const { data, isLoading } = useOrganization();
   const [copied, setCopied] = useState(false);
   const [show, setShow] = useState(false);
 
-  const url = data?.ngrok ?? data?.endpoint ?? "";
+  const url = data?.ingest_url ?? "";
 
   const copy = async () => {
     if (!url) return;
@@ -31,7 +31,7 @@ export function EndpointBox() {
       </div>
       <div className="flex-1 min-w-0">
         <p className="text-[10px] font-semibold text-success uppercase tracking-[.12em] mb-1.5">
-          {data?.ngrok ? "Live Tunnel" : "Endpoint"}
+          Workspace endpoint
         </p>
         {isLoading ? (
           <div className="h-5 w-64 bg-hover rounded animate-pulse" />

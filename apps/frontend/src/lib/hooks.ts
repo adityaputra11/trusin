@@ -10,7 +10,6 @@ import { api } from "./api";
 import type {
   CreateRuleInput,
   DeliveryAttempt,
-  EndpointInfo,
   EventQuery,
   ForwardRule,
   ListAuditResponse,
@@ -70,14 +69,6 @@ export function useAttempts(
     queryFn: () => api.get<DeliveryAttempt[]>(`/events/${eventId}/attempts`),
     enabled: !!eventId,
     refetchInterval: inFlight ? 3000 : false,
-  });
-}
-
-export function useEndpoint() {
-  return useQuery<EndpointInfo>({
-    queryKey: ["endpoint"],
-    queryFn: () => api.get<EndpointInfo>(`/config/endpoint`),
-    refetchInterval: 30_000,
   });
 }
 

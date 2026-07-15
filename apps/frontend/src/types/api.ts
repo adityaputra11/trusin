@@ -88,11 +88,6 @@ export interface EventQuery {
   per_page?: number;
 }
 
-export interface EndpointInfo {
-  endpoint: string;
-  ngrok: string | null;
-}
-
 export interface MetricsBucket {
   bucket: string; // "YYYY-MM-DDTHH:MM:SS"
   count: number;
@@ -178,6 +173,7 @@ export interface OrganizationSubscription {
   };
   hosted: boolean;
   ingest_canonical_host: string;
+  ingest_url: string;
   usage: {
     period_start: string;
     period_end: string;

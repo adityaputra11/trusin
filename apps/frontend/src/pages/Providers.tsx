@@ -5,7 +5,7 @@ import {
   useRules,
   useCreateRule,
   useDeleteRule,
-  useEndpoint,
+  useOrganization,
   useUpdateRule,
 } from "../lib/hooks";
 import {
@@ -79,7 +79,7 @@ function webhookUrl(endpoint: string | undefined, source: string): string {
 export function Providers() {
   const canWrite = useCanWrite();
   const { data: rules, isLoading } = useRules();
-  const { data: endpoint } = useEndpoint();
+  const { data: organization } = useOrganization();
   const createRule = useCreateRule();
   const updateRule = useUpdateRule();
   const deleteRule = useDeleteRule();
@@ -153,7 +153,7 @@ export function Providers() {
   const saving = createRule.isPending || updateRule.isPending;
 
   const copyWebhookUrl = async (provider: ForwardRule) => {
-    const url = webhookUrl(endpoint?.endpoint, provider.source_pattern);
+    const url = webhookUrl(organization?.ingest_url, provider.source_pattern);
     if (!url) return;
     try {
       await navigator.clipboard.writeText(url);
@@ -218,12 +218,12 @@ export function Providers() {
                 <TD>
                   <div className="flex items-center gap-1 max-w-[280px]">
                     <code className="text-xs text-muted font-mono truncate">
-                      {webhookUrl(endpoint?.endpoint, rule.source_pattern) || "Loading…"}
+                      {webhookUrl(organization?.ingest_url, rule.source_pattern) || "Loading…"}
                     </code>
                     <button
                       type="button"
                       onClick={() => copyWebhookUrl(rule)}
-                      disabled={!endpoint?.endpoint}
+                      disabled={!organization?.ingest_url}
                       className="p-1.5 rounded-md text-muted hover:text-foreground hover:bg-hover disabled:cursor-not-allowed shrink-0"
                       title="Copy webhook URL"
                       aria-label={`Copy ${rule.name} webhook URL`}
@@ -334,7 +334,7 @@ export function Providers() {
               Webhook endpoint to paste in your provider
             </div>
             <code className="mt-2 block truncate text-xs text-foreground font-mono">
-              {webhookUrl(endpoint?.endpoint, form.source_pattern || form.name) || "Enter a provider name to generate the endpoint"}
+              {webhookUrl(organization?.ingest_url, form.source_pattern || form.name) || "Enter a provider name to generate the endpoint"}
             </code>
           </div>
           <Field label="Target URL" htmlFor="target">

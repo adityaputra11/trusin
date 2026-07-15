@@ -5,8 +5,9 @@
 | Method | Path | Purpose |
 |---|---|---|
 | GET | `/health` | Health probe |
-| POST | `/` or `/{source}` | Webhook ingest |
-| GET | `/config/endpoint` | Public/ngrok endpoint |
+| POST | `/i/{ingest_key}/{source}` | Hosted canonical webhook ingest (copy the workspace URL from Providers) |
+| POST | `/{source}` | Custom-domain or self-hosted webhook ingest |
+| GET | `/config/endpoint` | Public server endpoint (not a tenant webhook URL) |
 | GET | `/config/oauth` | Google OAuth status |
 | GET | `/api/auth/google` | Redirect to Google OAuth |
 | GET | `/api/auth/callback/google` | Callback Google OAuth |
