@@ -13,6 +13,7 @@ use std::path::PathBuf;
 const BACKEND: &str = "https://api.trusin.my.id";
 const WEB: &str = "https://app.trusin.my.id";
 const RETIRED_HOSTED_URL: &str = "https://terusin-dev.my.id";
+const RETIRED_DASHBOARD_URL: &str = "https://dashboard.terusin-dev.my.id";
 
 // OS keychain entry name under which the API token is stored (preferred over
 // the plaintext config file). Falls back gracefully on platforms without one.
@@ -108,15 +109,22 @@ pub fn load_config() -> Config {
 
 fn migrate_retired_hosted_config(config: &mut Config) -> bool {
     let mut migrated = false;
-    if config.backend == RETIRED_HOSTED_URL {
+    if is_retired_hosted_url(&config.backend) {
         config.backend = BACKEND.to_string();
         migrated = true;
     }
-    if config.web == RETIRED_HOSTED_URL {
+    if is_retired_hosted_url(&config.web) {
         config.web = WEB.to_string();
         migrated = true;
     }
     migrated
+}
+
+fn is_retired_hosted_url(url: &str) -> bool {
+    matches!(
+        url.trim_end_matches('/'),
+        RETIRED_HOSTED_URL | RETIRED_DASHBOARD_URL
+    )
 }
 
 pub fn save_config(c: &Config) {
@@ -249,7 +257,7 @@ mod tests {
     fn migrates_the_retired_hosted_endpoint() {
         let mut config = Config {
             backend: RETIRED_HOSTED_URL.to_string(),
-            web: RETIRED_HOSTED_URL.to_string(),
+            web: format!("{RETIRED_DASHBOARD_URL}/"),
             token: Some("ts_existing_token".to_string()),
         };
 
