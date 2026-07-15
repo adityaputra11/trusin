@@ -159,8 +159,8 @@ export function Login() {
   return (
     <div className="min-h-screen bg-[radial-gradient(circle_at_50%_12%,rgba(74,222,128,.12),transparent_28%),radial-gradient(circle_at_0%_100%,rgba(74,222,128,.05),transparent_32%)] px-5 py-10 sm:flex sm:items-center sm:justify-center">
       <div className="mx-auto w-full max-w-[420px]">
-        <div className="mb-7">
-          <div className="mb-7 flex items-center gap-3">
+        <div className="mb-8">
+          <div className="flex items-center gap-3">
             <img
               src="/icon-trusin.png"
               alt=""
@@ -168,11 +168,6 @@ export function Login() {
             />
             <span className="text-xl font-semibold tracking-tight text-foreground">trusin</span>
           </div>
-          <p className="mb-2 text-xs font-semibold uppercase tracking-[.16em] text-success">Webhook operations</p>
-          <h1 className="text-3xl font-semibold tracking-tight text-foreground">Sign in or create your workspace</h1>
-          <p className="mt-2 max-w-sm text-sm leading-6 text-secondary">
-            Your first Google or GitHub sign-in creates a workspace with a 30-day Pro trial. Invited teammates join the workspace they were invited to.
-          </p>
         </div>
 
         {providers.length > 0 && (
