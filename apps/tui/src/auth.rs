@@ -218,6 +218,22 @@ pub fn auth_client(cfg: &Config) -> Client {
         .unwrap()
 }
 
+/// Authenticated client for long-lived streams such as `trusin dev`.
+/// The stream reconnects automatically before this long timeout is reached.
+pub fn auth_stream_client(cfg: &Config) -> Client {
+    let mut headers = reqwest::header::HeaderMap::new();
+    let token = resolve_token(cfg).expect("authenticated CLI commands require a token");
+    headers.insert(
+        reqwest::header::AUTHORIZATION,
+        format!("Bearer {token}").parse().unwrap(),
+    );
+    Client::builder()
+        .default_headers(headers)
+        .timeout(std::time::Duration::from_secs(24 * 60 * 60))
+        .build()
+        .unwrap()
+}
+
 /// First-run onboarding: ensure the config has a usable token. If none is
 /// found (env/keychain/config all empty), interactively prompt the user to
 /// paste a `ts_…` key from the dashboard. Returns true if a token is usable
