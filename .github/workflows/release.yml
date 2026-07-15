@@ -37,13 +37,14 @@ jobs:
             target
           key: ${{ runner.os }}-${{ runner.arch }}-cargo-cli-${{ hashFiles('**/Cargo.lock') }}
       - name: Build CLI
-        run: cargo build --release --bin trusin
+        run: cargo build --release --bin trusin --bin trusin-mcp
       - name: Package CLI
         shell: bash
         run: |
           mkdir -p dist/package
           cp target/release/trusin dist/package/
-          tar -C dist/package -czf "dist/trusin-${{ matrix.target }}.tar.gz" trusin
+          cp target/release/trusin-mcp dist/package/
+          tar -C dist/package -czf "dist/trusin-${{ matrix.target }}.tar.gz" trusin trusin-mcp
       - uses: actions/upload-artifact@v5
         with:
           name: trusin-${{ matrix.target }}

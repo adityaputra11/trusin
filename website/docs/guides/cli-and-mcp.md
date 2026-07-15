@@ -61,18 +61,25 @@ Primary shortcuts: `1-5` changes tabs, `r` refreshes, `/` searches, `c` clears s
 
 ## MCP server
 
-Build the binary and configure the AI client with environment variables instead of placing tokens in command arguments.
+The installer bundles the MCP sidecar. Save your API token once, then configure
+your AI client to launch `trusin mcp`; the CLI passes its saved token and backend
+configuration to the stdio server without storing credentials in the client config.
+
+```bash
+trusin set-token ts_your_token
+```
 
 ```json
 {
   "mcpServers": {
     "trusin": {
-      "command": "/absolute/path/to/target/release/mcp",
-      "env": {
-        "TERUSIN_URL": "https://your-terusin.example",
-        "TERUSIN_TOKEN": "ts_your_token"
-      }
+      "command": "trusin",
+      "args": ["mcp"]
     }
   }
 }
 ```
+
+For a custom sidecar location, set `TRUSIN_MCP_PATH` before launching
+`trusin mcp`. Direct executions of `trusin-mcp` continue to accept
+`TERUSIN_URL` and `TERUSIN_TOKEN`.

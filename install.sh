@@ -55,7 +55,8 @@ verify_checksum() {
 
 install_binary() {
   binary="$1"
-  destination="$INSTALL_DIR/trusin"
+  name="$2"
+  destination="$INSTALL_DIR/$name"
 
   if mkdir -p "$INSTALL_DIR" 2>/dev/null && install -m 0755 "$binary" "$destination" 2>/dev/null; then
     return
@@ -87,7 +88,14 @@ main() {
   binary="$temp_dir/trusin"
   [ -f "$binary" ] || binary="$temp_dir/terusin"
   [ -f "$binary" ] || fail "release archive does not contain the trusin binary"
-  install_binary "$binary"
+  install_binary "$binary" trusin
+
+  mcp_binary="$temp_dir/trusin-mcp"
+  if [ -f "$mcp_binary" ]; then
+    install_binary "$mcp_binary" trusin-mcp
+  else
+    echo "This legacy release does not include trusin-mcp. Upgrade after the next release to use \`trusin mcp\`."
+  fi
 
   echo "Installed trusin ${VERSION} to ${INSTALL_DIR}/trusin"
   echo "Next: trusin set-token ts_your_token"

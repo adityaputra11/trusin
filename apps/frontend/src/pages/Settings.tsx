@@ -76,13 +76,8 @@ const CLIENTS: { key: ClientKey; label: string; file: string }[] = [
   { key: "vscode", label: "VS Code (Copilot)", file: "settings.json" },
 ];
 
-function buildSnippet(client: ClientKey, binaryPath: string): string {
-  // The MCP binary uses a scoped API token and calls the public backend URL.
-  const env = {
-    TERUSIN_TOKEN: "<ts_... from Settings → Devices & Tokens>",
-    TERUSIN_URL: "https://api.trusin.my.id",
-  };
-  const server = { command: binaryPath, env };
+function buildSnippet(client: ClientKey): string {
+  const server = { command: "trusin", args: ["mcp"] };
   switch (client) {
     case "claude":
       return JSON.stringify({ mcpServers: { trusin: server } }, null, 2);
@@ -324,11 +319,11 @@ function GeneralTab() {
       </Card>
 
       <Card>
-        <CardHeader title="Environment Variables" subtitle="Read by the MCP binary at startup" />
+        <CardHeader title="Environment Variables" subtitle="Optional overrides for local trusin commands" />
         <div className="space-y-2">
           {[
-            { k: "TERUSIN_URL", v: "http://127.0.0.1:3011", desc: "Backend URL. Use https://api.trusin.my.id in production." },
-            { k: "TERUSIN_TOKEN", v: "\u2014", desc: "Required scoped API token. Bearer auth only." },
+            { k: "TERUSIN_URL", v: "http://127.0.0.1:3011", desc: "Backend URL for direct MCP use. trusin mcp uses your saved CLI configuration." },
+            { k: "TERUSIN_TOKEN", v: "\u2014", desc: "Optional token override. Use trusin set-token for normal CLI and MCP setup." },
           ].map((row) => (
             <div key={row.k} className="flex items-start gap-4 py-2 border-b border-border last:border-0">
               <code className="text-xs font-mono text-success w-36 shrink-0">{row.k}</code>
@@ -369,9 +364,7 @@ function CliInstallCard() {
 
 function McpTab() {
   const [client, setClient] = useState<ClientKey>("claude");
-  const [binaryPath, setBinaryPath] = useState("/usr/local/bin/trusin-mcp");
-
-  const snippet = useMemo(() => buildSnippet(client, binaryPath), [client, binaryPath]);
+  const snippet = useMemo(() => buildSnippet(client), [client]);
   const activeClient = CLIENTS.find((c) => c.key === client)!;
 
   return (
@@ -397,13 +390,6 @@ function McpTab() {
           </div>
         </div>
 
-        <div>
-          <label className="text-xs font-medium text-secondary block mb-1.5">
-            Path to MCP binary: <code className="text-foreground">cargo build --release --bin mcp</code>
-          </label>
-          <input value={binaryPath} onChange={(e) => setBinaryPath(e.target.value)} className="w-full bg-surface border border-border rounded-md text-foreground px-4 py-2.5 text-sm font-mono focus:outline-none focus:border-success" spellCheck={false} />
-        </div>
-
         <div className="flex gap-1 bg-surface border border-border rounded-md p-1 w-fit">
           {CLIENTS.map((c) => (
             <button key={c.key} onClick={() => setClient(c.key)} className={`px-3 py-1.5 rounded text-xs font-medium transition-base ${client === c.key ? "bg-hover text-foreground" : "text-muted hover:text-foreground"}`}>{c.label}</button>
@@ -420,8 +406,8 @@ function McpTab() {
         <div className="bg-surface border border-border rounded-md p-4">
           <p className="text-xs font-semibold text-secondary uppercase mb-2 flex items-center gap-1.5"><Plug className="h-3.5 w-3.5" /> Quick start</p>
           <ol className="text-sm text-secondary space-y-1.5 list-decimal list-inside">
-            <li>Build binary: <code className="text-foreground font-mono text-xs">cargo build --release --bin mcp</code></li>
-            <li>Install: <code className="text-foreground font-mono text-xs">cp target/release/mcp {binaryPath}</code></li>
+            <li>Install the CLI above.</li>
+            <li>Save your API token with <code className="text-foreground font-mono text-xs">trusin set-token ts_…</code>.</li>
             <li>Copy snippet into your client's config file.</li>
             <li>Restart the AI client.</li>
           </ol>
@@ -430,7 +416,7 @@ function McpTab() {
         <div className="flex items-center gap-3 text-sm">
           <Activity className="h-4 w-4 text-muted" />
           <span className="text-secondary">Verify:</span>
-          <code className="text-xs font-mono text-foreground bg-surface border border-border rounded px-2 py-1">{`echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' | `}{binaryPath}</code>
+          <code className="text-xs font-mono text-foreground bg-surface border border-border rounded px-2 py-1">echo '{`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}`} ' | trusin mcp</code>
         </div>
       </div>
     </Card>

@@ -11,6 +11,8 @@ use reqwest::Client;
 use serde::Deserialize;
 use std::collections::HashSet;
 use std::io::{self, Write};
+use std::path::PathBuf;
+use std::process::Command;
 
 #[derive(Parser)]
 #[command(name = "trusin", about = "Webhook relay CLI")]
@@ -71,6 +73,12 @@ enum Commands {
     Dashboard,
     /// Launch the interactive terminal dashboard
     Interactive,
+    /// Run the bundled MCP server over stdio for AI clients
+    Mcp {
+        /// Override the bundled trusin-mcp executable path
+        #[arg(long, env = "TRUSIN_MCP_PATH")]
+        binary: Option<PathBuf>,
+    },
     /// Show current config & status
     Status,
 }
@@ -86,6 +94,47 @@ struct Event {
 #[derive(Deserialize)]
 struct FwdConfig {
     default_target: String,
+}
+
+fn bundled_mcp_path(override_path: Option<PathBuf>) -> Result<PathBuf, String> {
+    if let Some(path) = override_path {
+        return Ok(path);
+    }
+    let executable = std::env::current_exe().map_err(|error| error.to_string())?;
+    let directory = executable
+        .parent()
+        .ok_or_else(|| "could not locate the trusin executable directory".to_string())?;
+    Ok(directory.join("trusin-mcp"))
+}
+
+fn run_mcp(cfg: &Config, override_path: Option<PathBuf>) {
+    let Some(token) = resolve_token(cfg) else {
+        eprintln!("No API token configured. Run `trusin set-token ts_...` before starting MCP.");
+        return;
+    };
+    let path = match bundled_mcp_path(override_path) {
+        Ok(path) if path.is_file() => path,
+        Ok(path) => {
+            eprintln!(
+                "Could not find the bundled MCP executable at {}. Reinstall trusin or set TRUSIN_MCP_PATH.",
+                path.display()
+            );
+            return;
+        }
+        Err(error) => {
+            eprintln!("Could not resolve the bundled MCP executable: {error}");
+            return;
+        }
+    };
+    let status = Command::new(path)
+        .env("TERUSIN_TOKEN", token)
+        .env("TERUSIN_URL", &cfg.backend)
+        .status();
+    match status {
+        Ok(status) if status.success() => {}
+        Ok(status) => eprintln!("trusin MCP exited with {status}."),
+        Err(error) => eprintln!("Could not start trusin MCP: {error}"),
+    }
 }
 
 #[tokio::main]
@@ -370,6 +419,7 @@ async fn main() {
                 eprintln!("Interactive TUI error: {e}");
             }
         }
+        Commands::Mcp { binary } => run_mcp(&cfg, binary),
         Commands::Status => {
             let fwd = client
                 .get(format!("{}/config/default-target", cfg.backend))
