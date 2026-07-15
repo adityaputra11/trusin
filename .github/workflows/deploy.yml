@@ -213,8 +213,23 @@ jobs:
             rm -rf "$stage_dir" /tmp/production-upload.tar.gz
 
             backend_changed='${{ needs.changes.outputs.backend }}'; web_changed='${{ needs.changes.outputs.web }}'; landing_changed='${{ needs.changes.outputs.landing }}'; docs_changed='${{ needs.changes.outputs.docs }}'; download_changed='${{ needs.changes.outputs.download }}'
-            if [[ "$backend_changed" == true ]]; then systemctl is-active --quiet terusin-backend; for attempt in {1..30}; do curl --fail --silent http://127.0.0.1:3011/health >/dev/null && break; sleep 2; done; curl --fail --silent http://127.0.0.1:3011/health; curl --fail --silent --retry 6 --retry-delay 5 https://api.trusin.my.id/health >/dev/null; curl --fail --silent --retry 6 --retry-delay 5 https://ingest.trusin.my.id/health >/dev/null; fi
-            if [[ "$web_changed" == true ]]; then systemctl is-active --quiet terusin-web; curl --fail --silent --retry 6 --retry-delay 5 https://app.trusin.my.id/health >/dev/null; fi
+            wait_for_health() {
+              local service="$1" url="$2"
+              for attempt in {1..45}; do
+                if curl --fail --silent --connect-timeout 2 --max-time 5 "$url" >/dev/null; then
+                  return 0
+                fi
+                sleep 2
+              done
+
+              echo "::error::$service did not become healthy at $url"
+              sudo systemctl status "$service" --no-pager --full || true
+              sudo journalctl -u "$service" -n 100 --no-pager || true
+              return 1
+            }
+
+            if [[ "$backend_changed" == true ]]; then wait_for_health terusin-backend http://127.0.0.1:3011/health; curl --fail --silent --retry 6 --retry-delay 5 https://api.trusin.my.id/health >/dev/null; curl --fail --silent --retry 6 --retry-delay 5 https://ingest.trusin.my.id/health >/dev/null; fi
+            if [[ "$web_changed" == true ]]; then wait_for_health terusin-web http://127.0.0.1:3012/health; curl --fail --silent --retry 6 --retry-delay 5 https://app.trusin.my.id/health >/dev/null; fi
             if [[ "$landing_changed" == true ]]; then curl --fail --silent https://trusin.my.id/robots.txt | grep -Fx 'Sitemap: https://trusin.my.id/sitemap.xml'; curl --fail --silent https://trusin.my.id/sitemap.xml | grep -F '<urlset'; curl --fail --silent https://trusin.my.id | grep -F 'https://trusin.my.id/og-image.png'; fi
             if [[ "$docs_changed" == true ]]; then curl --fail --silent https://docs.trusin.my.id/robots.txt | grep -F 'Sitemap:'; curl --fail --silent https://docs.trusin.my.id/sitemap.xml | grep -F '<urlset'; fi
             if [[ "$download_changed" == true ]]; then curl --fail --silent https://download.trusin.my.id/install.sh | grep -F 'REPO="adityaputra11/trusin"'; fi
