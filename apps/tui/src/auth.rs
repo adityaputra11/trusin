@@ -14,8 +14,8 @@ use serde::{Deserialize, Serialize};
 use std::io::{self, Write};
 use std::path::PathBuf;
 
-const BACKEND: &str = "http://127.0.0.1:3011";
-const WEB: &str = "http://localhost:3012";
+const BACKEND: &str = "https://api.trusin.my.id";
+const WEB: &str = "https://app.trusin.my.id";
 
 // OS keychain entry name under which the API token is stored (preferred over
 // the plaintext config file). Falls back gracefully on platforms without one.
