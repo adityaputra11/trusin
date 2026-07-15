@@ -37,17 +37,17 @@ jobs:
             target
           key: ${{ runner.os }}-${{ runner.arch }}-cargo-cli-${{ hashFiles('**/Cargo.lock') }}
       - name: Build CLI
-        run: cargo build --release --bin terusin
+        run: cargo build --release --bin trusin
       - name: Package CLI
         shell: bash
         run: |
           mkdir -p dist/package
-          cp target/release/terusin dist/package/
-          tar -C dist/package -czf "dist/terusin-${{ matrix.target }}.tar.gz" terusin
+          cp target/release/trusin dist/package/
+          tar -C dist/package -czf "dist/trusin-${{ matrix.target }}.tar.gz" trusin
       - uses: actions/upload-artifact@v5
         with:
-          name: terusin-${{ matrix.target }}
-          path: dist/terusin-${{ matrix.target }}.tar.gz
+          name: trusin-${{ matrix.target }}
+          path: dist/trusin-${{ matrix.target }}.tar.gz
           if-no-files-found: error
 
   publish:
@@ -61,11 +61,11 @@ jobs:
           merge-multiple: true
       - name: Generate checksums
         working-directory: dist
-        run: sha256sum terusin-*.tar.gz > SHA256SUMS
+        run: sha256sum trusin-*.tar.gz > SHA256SUMS
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            dist/terusin-*.tar.gz
+            dist/trusin-*.tar.gz
             dist/SHA256SUMS
           generate_release_notes: true

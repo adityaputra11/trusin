@@ -85,16 +85,16 @@ function buildSnippet(client: ClientKey, binaryPath: string): string {
   const server = { command: binaryPath, env };
   switch (client) {
     case "claude":
-      return JSON.stringify({ mcpServers: { terusin: server } }, null, 2);
+      return JSON.stringify({ mcpServers: { trusin: server } }, null, 2);
     case "cursor":
-      return JSON.stringify({ mcpServers: { terusin: server } }, null, 2);
+      return JSON.stringify({ mcpServers: { trusin: server } }, null, 2);
     case "vscode":
       // VS Code Copilot Chat uses chat.mcp.discovery.enabled + a servers map
       // under "mcp.servers" (preview). We document the most common shape.
       return JSON.stringify(
         {
           "chat.mcp.discovery.enabled": true,
-          "mcp.servers": { terusin: server },
+          "mcp.servers": { trusin: server },
         },
         null,
         2,
@@ -233,7 +233,7 @@ function DevicesAndTokens() {
               <CodeBlock code={created} />
             </div>
             <p className="text-xs text-muted text-center">
-              Then run: <code className="text-foreground font-mono">terusin set-token {created.slice(0, 6)}…</code>
+              Then run: <code className="text-foreground font-mono">trusin set-token {created.slice(0, 6)}…</code>
             </p>
           </div>
         )}
@@ -360,7 +360,7 @@ function CliInstallCard() {
           <p>Choose a directory: <code className="text-foreground font-mono break-all">curl … | TERUSIN_INSTALL=~/.local/bin sh</code></p>
         </div>
         <p className="text-sm text-secondary">
-          Create an API token below, then connect this device with <code className="text-xs text-foreground font-mono">terusin set-token ts_…</code>.
+          Create an API token below, then connect this device with <code className="text-xs text-foreground font-mono">trusin set-token ts_…</code>.
         </p>
       </div>
     </Card>
@@ -369,7 +369,7 @@ function CliInstallCard() {
 
 function McpTab() {
   const [client, setClient] = useState<ClientKey>("claude");
-  const [binaryPath, setBinaryPath] = useState("/usr/local/bin/terusin-mcp");
+  const [binaryPath, setBinaryPath] = useState("/usr/local/bin/trusin-mcp");
 
   const snippet = useMemo(() => buildSnippet(client, binaryPath), [client, binaryPath]);
   const activeClient = CLIENTS.find((c) => c.key === client)!;

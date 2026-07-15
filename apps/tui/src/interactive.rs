@@ -498,7 +498,7 @@ fn draw_config(frame: &mut ratatui::Frame, app: &App, area: Rect) {
 fn draw_tokens(frame: &mut ratatui::Frame, app: &App, area: Rect) {
     let lines = vec![
         Line::from("API keys are created in the web dashboard: Settings > API Tokens."),
-        Line::from("Paste one into this machine with: terusin set-token ts_..."),
+        Line::from("Paste one into this machine with: trusin set-token ts_..."),
         Line::from(
             "Precedence: TERUSIN_TOKEN env > OS keychain > config.toml token > Basic fallback.",
         ),

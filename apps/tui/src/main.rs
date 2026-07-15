@@ -13,7 +13,7 @@ use std::collections::HashSet;
 use std::io::{self, Write};
 
 #[derive(Parser)]
-#[command(name = "terusin", about = "Webhook relay CLI")]
+#[command(name = "trusin", about = "Webhook relay CLI")]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -24,7 +24,7 @@ enum Commands {
     /// Save an API key (from the dashboard's Settings → API Tokens page)
     ///
     /// On the dashboard, sign in and generate a `ts_…` API key, then run
-    /// `terusin set-token ts_…` here. The token is stored in the OS keychain
+    /// `trusin set-token ts_…` here. The token is stored in the OS keychain
     /// (preferred), falling back to the config file on headless/CI boxes.
     SetToken {
         /// The `ts_…` API key. If omitted, you'll be prompted to paste it.
@@ -110,12 +110,12 @@ async fn main() {
                 }
             };
             if !token.starts_with("ts_") || token.len() < 10 {
-                eprintln!(" That doesn't look like a Terusin API key (expected `ts_…`).");
+                eprintln!(" That doesn't look like a trusin API key (expected `ts_…`).");
                 return;
             }
             let stored = store_token(&mut c, &token);
             println!(" ✓ API key saved ({stored}).");
-            println!("   Run `terusin events` to verify.");
+            println!("   Run `trusin events` to verify.");
         }
         Commands::Logout => {
             keychain_delete();
@@ -142,7 +142,7 @@ async fn main() {
 
             if user.is_none() || password.is_none() {
                 println!(
-                    " Login to {} (legacy password flow; prefer `terusin set-token`)",
+                    " Login to {} (legacy password flow; prefer `trusin set-token`)",
                     c.backend
                 );
             }

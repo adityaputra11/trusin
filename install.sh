@@ -55,7 +55,7 @@ verify_checksum() {
 
 install_binary() {
   binary="$1"
-  destination="$INSTALL_DIR/terusin"
+  destination="$INSTALL_DIR/trusin"
 
   if mkdir -p "$INSTALL_DIR" 2>/dev/null && install -m 0755 "$binary" "$destination" 2>/dev/null; then
     return
@@ -69,22 +69,28 @@ install_binary() {
 
 main() {
   platform="$(detect_platform)"
-  asset="terusin-${platform}.tar.gz"
+  asset="trusin-${platform}.tar.gz"
   base_url="$(release_base_url)"
   temp_dir="$(mktemp -d)"
   trap 'rm -rf "$temp_dir"' EXIT
 
-  echo "Downloading terusin ${VERSION} (${platform})..."
-  curl --fail --location --silent --show-error "$base_url/$asset" -o "$temp_dir/$asset"
+  echo "Downloading trusin ${VERSION} (${platform})..."
+  if ! curl --fail --location --silent "$base_url/$asset" -o "$temp_dir/$asset"; then
+    asset="terusin-${platform}.tar.gz"
+    echo "Using compatible legacy release asset..."
+    curl --fail --location --silent --show-error "$base_url/$asset" -o "$temp_dir/$asset"
+  fi
   curl --fail --location --silent --show-error "$base_url/SHA256SUMS" -o "$temp_dir/SHA256SUMS"
   verify_checksum "$temp_dir/$asset" "$temp_dir/SHA256SUMS" "$asset"
 
   tar -xzf "$temp_dir/$asset" -C "$temp_dir"
-  [ -f "$temp_dir/terusin" ] || fail "release archive does not contain the terusin binary"
-  install_binary "$temp_dir/terusin"
+  binary="$temp_dir/trusin"
+  [ -f "$binary" ] || binary="$temp_dir/terusin"
+  [ -f "$binary" ] || fail "release archive does not contain the trusin binary"
+  install_binary "$binary"
 
-  echo "Installed terusin ${VERSION} to ${INSTALL_DIR}/terusin"
-  echo "Next: terusin set-token ts_your_token"
+  echo "Installed trusin ${VERSION} to ${INSTALL_DIR}/trusin"
+  echo "Next: trusin set-token ts_your_token"
 }
 
 main
