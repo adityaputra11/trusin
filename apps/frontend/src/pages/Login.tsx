@@ -31,17 +31,30 @@ export function Login() {
   // callback and reset it after each attempt. Skipped entirely when no site
   // key is configured (local dev / Turnstile disabled).
   useEffect(() => {
-    if (!TURNSTILE_SITE_KEY || !turnstileContainerRef.current) return;
-    if (turnstileWidgetId.current) return; // already rendered
-    if (!window.turnstile) return; // script still loading; will retry on next effect
+    const siteKey = TURNSTILE_SITE_KEY;
+    if (!siteKey || !turnstileContainerRef.current) return;
 
-    turnstileWidgetId.current = window.turnstile.render(
-      turnstileContainerRef.current,
-      {
-        sitekey: TURNSTILE_SITE_KEY,
-        callback: (token: string) => setTurnstileToken(token),
-      },
-    );
+    const renderWidget = () => {
+      if (turnstileWidgetId.current || !window.turnstile || !turnstileContainerRef.current) {
+        return Boolean(turnstileWidgetId.current);
+      }
+
+      turnstileWidgetId.current = window.turnstile.render(
+        turnstileContainerRef.current,
+        {
+          sitekey: siteKey,
+          callback: (token: string) => setTurnstileToken(token),
+        },
+      );
+      return true;
+    };
+
+    if (renderWidget()) return;
+    const interval = window.setInterval(() => {
+      if (renderWidget()) window.clearInterval(interval);
+    }, 100);
+
+    return () => window.clearInterval(interval);
   }, []);
 
   const resetTurnstile = () => {
