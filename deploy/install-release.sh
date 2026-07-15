@@ -19,32 +19,50 @@ fi
 
 install -d -o terusin -g terusin -m 0755 /opt/trusin/releases /etc/trusin
 install -d -o root -g root -m 0755 /var/www/trusin
-rm -rf "$release_dir"
-install -d -o terusin -g terusin -m 0755 "$release_dir"
-cp -a "$stage_dir/bin" "$release_dir/"
-chown -R terusin:terusin "$release_dir"
-chmod +x "$release_dir/bin/backend" "$release_dir/bin/web"
 
-install -m 0600 -o terusin -g terusin "$stage_dir/runtime.env" /etc/trusin/trusin.env
+if [ -d "$stage_dir/bin" ]; then
+  rm -rf "$release_dir"
+  install -d -o terusin -g terusin -m 0755 "$release_dir/bin"
+  if [ -d /opt/trusin/current/bin ]; then
+    cp -a /opt/trusin/current/bin/. "$release_dir/bin/"
+  fi
+  cp -a "$stage_dir/bin/." "$release_dir/bin/"
+  chown -R terusin:terusin "$release_dir"
+  chmod +x "$release_dir/bin"/*
+  ln -sfn "$release_dir" /opt/trusin/current
+fi
 
-install -d -o root -g root -m 0755 /var/www/trusin/landing /var/www/trusin/docs
-rm -rf /var/www/trusin/landing/* /var/www/trusin/docs/*
-cp -a "$stage_dir/landing/." /var/www/trusin/landing/
-cp -a "$stage_dir/docs/." /var/www/trusin/docs/
+if [ -f "$stage_dir/runtime.env" ]; then
+  install -m 0600 -o terusin -g terusin "$stage_dir/runtime.env" /etc/trusin/trusin.env
+fi
+
+for site in landing docs; do
+  if [ -d "$stage_dir/$site" ]; then
+    install -d -o root -g root -m 0755 "/var/www/trusin/$site"
+    rm -rf "/var/www/trusin/$site"/*
+    cp -a "$stage_dir/$site/." "/var/www/trusin/$site/"
+  fi
+done
 chown -R root:root /var/www/trusin
 chmod -R a+rX /var/www/trusin
 
-install -m 0644 "$stage_dir/deploy/terusin-backend.service" /etc/systemd/system/terusin-backend.service
-install -m 0644 "$stage_dir/deploy/terusin-web.service" /etc/systemd/system/terusin-web.service
-install -d -o root -g root -m 0755 /etc/caddy/sites-enabled
-install -m 0644 "$stage_dir/deploy/trusin.caddy" /etc/caddy/sites-enabled/trusin.caddy
-if ! grep -Fqx 'import /etc/caddy/sites-enabled/*' /etc/caddy/Caddyfile; then
-  printf '\nimport /etc/caddy/sites-enabled/*\n' >> /etc/caddy/Caddyfile
+if [ -f "$stage_dir/deploy/terusin-backend.service" ]; then
+  install -m 0644 "$stage_dir/deploy/terusin-backend.service" /etc/systemd/system/terusin-backend.service
+  install -m 0644 "$stage_dir/deploy/terusin-web.service" /etc/systemd/system/terusin-web.service
+  install -d -o root -g root -m 0755 /etc/caddy/sites-enabled
+  install -m 0644 "$stage_dir/deploy/trusin.caddy" /etc/caddy/sites-enabled/trusin.caddy
+  if ! grep -Fqx 'import /etc/caddy/sites-enabled/*' /etc/caddy/Caddyfile; then
+    printf '\nimport /etc/caddy/sites-enabled/*\n' >> /etc/caddy/Caddyfile
+  fi
+  caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+  systemctl daemon-reload
+  systemctl enable terusin-backend terusin-web
+  systemctl reload caddy
 fi
 
-ln -sfn "$release_dir" /opt/trusin/current
-caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
-systemctl daemon-reload
-systemctl enable terusin-backend terusin-web
-systemctl restart terusin-backend terusin-web
-systemctl reload caddy
+if [ -f "$stage_dir/bin/backend" ]; then
+  systemctl restart terusin-backend
+fi
+if [ -f "$stage_dir/bin/web" ]; then
+  systemctl restart terusin-web
+fi
