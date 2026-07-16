@@ -106,11 +106,6 @@ fn valid_http_url(value: &str) -> bool {
         .unwrap_or(false)
 }
 
-fn valid_email(value: &str) -> bool {
-    let value = value.trim();
-    value.len() <= 255 && value.contains('@') && !value.starts_with('@') && !value.ends_with('@')
-}
-
 fn destination_target_and_config(
     destination_type: &str,
     target_url: String,
@@ -153,28 +148,6 @@ fn destination_target_and_config(
             Ok((
                 "Telegram".to_string(),
                 serde_json::json!({ "bot_token": bot_token, "chat_id": chat_id }),
-            ))
-        }
-        "email" => {
-            if config.is_empty() {
-                return Ok(("Email".to_string(), serde_json::json!({})));
-            }
-            let recipient = string("recipient").ok_or(StatusCode::BAD_REQUEST)?;
-            if !valid_email(recipient) {
-                return Err(StatusCode::BAD_REQUEST);
-            }
-            let resend_ready = std::env::var("RESEND_API_KEY")
-                .ok()
-                .is_some_and(|value| !value.trim().is_empty())
-                && std::env::var("EMAIL_FROM")
-                    .ok()
-                    .is_some_and(|value| !value.trim().is_empty());
-            if !resend_ready {
-                return Err(StatusCode::SERVICE_UNAVAILABLE);
-            }
-            Ok((
-                recipient.to_string(),
-                serde_json::json!({ "recipient": recipient }),
             ))
         }
         _ => Err(StatusCode::BAD_REQUEST),

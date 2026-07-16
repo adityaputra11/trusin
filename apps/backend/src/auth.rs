@@ -33,6 +33,7 @@ use async_trait::async_trait;
 use crate::{AppState, User};
 
 const WELCOME_EMAIL_TEMPLATE: &str = include_str!("../templates/welcome.hbs");
+const INACTIVE_FOLLOW_UP_EMAIL_TEMPLATE: &str = include_str!("../templates/inactive-follow-up.hbs");
 
 /// The authenticated principal, made available to handlers via the axum
 /// `Extension<CurrentUser>` extractor. Inserted by `auth_middleware` after any
@@ -947,6 +948,13 @@ async fn upsert_oauth_user(
     .bind(&info.email)
     .execute(&mut *transaction)
     .await?;
+    sqlx::query(
+        "INSERT INTO email_deliveries (user_id, kind, recipient, next_attempt_at) VALUES ($1, 'inactive_follow_up', $2, NOW() + INTERVAL '24 hours')",
+    )
+    .bind(user.id)
+    .bind(&info.email)
+    .execute(&mut *transaction)
+    .await?;
     transaction.commit().await?;
     Ok(OAuthUpsert {
         user,
@@ -1061,7 +1069,7 @@ async fn fetch_oauth_upsert(
 }
 
 #[derive(sqlx::FromRow)]
-struct WelcomeDelivery {
+struct EmailDelivery {
     id: Uuid,
     user_id: Uuid,
     recipient: String,
@@ -1076,6 +1084,7 @@ async fn trigger_welcome_delivery(state: &Arc<AppState>, user_id: Uuid) {
 
 pub async fn welcome_email_worker(db: PgPool) {
     loop {
+        skip_active_follow_ups(&db).await;
         let users = sqlx::query_scalar::<_, Uuid>(
             "SELECT user_id FROM email_deliveries WHERE kind = 'welcome' AND ((status IN ('pending', 'failed') AND next_attempt_at <= NOW()) OR (status = 'sending' AND updated_at <= NOW() - INTERVAL '15 minutes')) ORDER BY created_at LIMIT 20",
         )
@@ -1087,25 +1096,93 @@ pub async fn welcome_email_worker(db: PgPool) {
                 tracing::warn!(%user_id, "welcome email worker delivery failed: {error}");
             }
         }
+        let users = sqlx::query_scalar::<_, Uuid>(
+            "SELECT user_id FROM email_deliveries WHERE kind = 'inactive_follow_up' AND ((status IN ('pending', 'failed') AND next_attempt_at <= NOW()) OR (status = 'sending' AND updated_at <= NOW() - INTERVAL '15 minutes')) ORDER BY created_at LIMIT 20",
+        )
+        .fetch_all(&db)
+        .await
+        .unwrap_or_default();
+        for user_id in users {
+            if let Err(error) = deliver_inactive_follow_up_email(&db, user_id).await {
+                tracing::warn!(%user_id, "inactive follow-up email worker delivery failed: {error}");
+            }
+        }
         tokio::time::sleep(std::time::Duration::from_secs(60)).await;
     }
 }
 
+async fn skip_active_follow_ups(db: &PgPool) {
+    if let Err(error) = sqlx::query(
+        r#"UPDATE email_deliveries AS delivery
+           SET status = 'skipped', updated_at = NOW(), last_error = NULL
+           FROM users
+           WHERE delivery.user_id = users.id
+             AND delivery.kind = 'inactive_follow_up'
+             AND delivery.status IN ('pending', 'failed')
+             AND EXISTS (
+               SELECT 1 FROM webhook_events
+               WHERE webhook_events.organization_id = users.organization_id
+             )"#,
+    )
+    .execute(db)
+    .await
+    {
+        tracing::warn!("could not skip inactive follow-up emails for active workspaces: {error}");
+    }
+}
+
 async fn deliver_welcome_email(db: &PgPool, user_id: Uuid) -> Result<(), String> {
-    let delivery = sqlx::query_as::<_, WelcomeDelivery>(
+    deliver_email(
+        db,
+        user_id,
+        "welcome",
+        WELCOME_EMAIL_TEMPLATE,
+        "Welcome to trusin",
+        "welcome",
+    )
+    .await
+}
+
+async fn deliver_inactive_follow_up_email(db: &PgPool, user_id: Uuid) -> Result<(), String> {
+    deliver_email(
+        db,
+        user_id,
+        "inactive_follow_up",
+        INACTIVE_FOLLOW_UP_EMAIL_TEMPLATE,
+        "Ready to send your first webhook?",
+        "inactive follow-up",
+    )
+    .await
+}
+
+async fn deliver_email(
+    db: &PgPool,
+    user_id: Uuid,
+    kind: &str,
+    template: &str,
+    subject: &str,
+    label: &str,
+) -> Result<(), String> {
+    let delivery = sqlx::query_as::<_, EmailDelivery>(
         r#"UPDATE email_deliveries SET status = 'sending', attempts = attempts + 1, updated_at = NOW()
            WHERE id = (
-             SELECT id FROM email_deliveries WHERE user_id = $1 AND kind = 'welcome'
+             SELECT id FROM email_deliveries AS delivery WHERE user_id = $1 AND kind = $2
              AND ((status IN ('pending', 'failed') AND next_attempt_at <= NOW()) OR (status = 'sending' AND updated_at <= NOW() - INTERVAL '15 minutes'))
+             AND ($2 <> 'inactive_follow_up' OR NOT EXISTS (
+               SELECT 1 FROM users
+               JOIN webhook_events ON webhook_events.organization_id = users.organization_id
+               WHERE users.id = delivery.user_id
+             ))
              FOR UPDATE SKIP LOCKED
            )
            RETURNING id, user_id, recipient,
              (SELECT display_name FROM users WHERE users.id = email_deliveries.user_id) AS display_name"#,
     )
     .bind(user_id)
+    .bind(kind)
     .fetch_optional(db)
     .await
-    .map_err(|error| format!("claim welcome delivery: {error}"))?;
+    .map_err(|error| format!("claim {label} delivery: {error}"))?;
     let Some(delivery) = delivery else {
         return Ok(());
     };
@@ -1123,26 +1200,26 @@ async fn deliver_welcome_email(db: &PgPool, user_id: Uuid) -> Result<(), String>
                 .or_else(|_| std::env::var("FRONTEND_URL"))
                 .unwrap_or_else(|_| "http://localhost:5173".to_string());
             let html = Handlebars::new().render_template(
-            WELCOME_EMAIL_TEMPLATE,
+            template,
             &serde_json::json!({
                 "display_name": delivery.display_name.as_deref().unwrap_or(&delivery.recipient),
                 "app_url": app_url.trim_end_matches('/'),
             }),
-        ).map_err(|error| format!("render welcome template: {error}"))?;
+        ).map_err(|error| format!("render {label} template: {error}"))?;
             let response: serde_json::Value = reqwest::Client::new()
                 .post("https://api.resend.com/emails")
                 .bearer_auth(api_key)
                 .json(&serde_json::json!({
                     "from": from,
                     "to": [delivery.recipient],
-                    "subject": "Welcome to trusin",
+                    "subject": subject,
                     "html": html,
                 }))
                 .send()
                 .await
-                .map_err(|error| format!("send welcome email: {error}"))?
+                .map_err(|error| format!("send {label} email: {error}"))?
                 .error_for_status()
-                .map_err(|error| format!("Resend rejected welcome email: {error}"))?
+                .map_err(|error| format!("Resend rejected {label} email: {error}"))?
                 .json()
                 .await
                 .map_err(|error| format!("parse Resend response: {error}"))?;
@@ -1158,14 +1235,14 @@ async fn deliver_welcome_email(db: &PgPool, user_id: Uuid) -> Result<(), String>
         Ok(provider_message_id) => {
             sqlx::query("UPDATE email_deliveries SET status = 'sent', provider_message_id = $1, sent_at = NOW(), updated_at = NOW(), last_error = NULL WHERE id = $2")
                 .bind(provider_message_id).bind(delivery.id).execute(db).await
-                .map_err(|error| format!("record welcome delivery: {error}"))?;
-            tracing::info!(user_id = %delivery.user_id, "welcome email sent");
+                .map_err(|error| format!("record {label} delivery: {error}"))?;
+            tracing::info!(user_id = %delivery.user_id, kind, "email sent");
             Ok(())
         }
         Err(error) => {
             sqlx::query("UPDATE email_deliveries SET status = 'failed', last_error = $1, next_attempt_at = NOW() + INTERVAL '15 minutes', updated_at = NOW() WHERE id = $2")
                 .bind(&error).bind(delivery.id).execute(db).await
-                .map_err(|update_error| format!("record welcome failure: {update_error}"))?;
+                .map_err(|update_error| format!("record {label} failure: {update_error}"))?;
             Err(error)
         }
     }
@@ -1188,6 +1265,28 @@ fn build_cookie(jwt: &str, cfg: &OAuthConfig) -> (header::HeaderName, header::He
         header::SET_COOKIE,
         header::HeaderValue::from_str(&value).expect("cookie value"),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn inactive_follow_up_template_renders_a_branded_call_to_action() {
+        let html = Handlebars::new()
+            .render_template(
+                INACTIVE_FOLLOW_UP_EMAIL_TEMPLATE,
+                &serde_json::json!({
+                    "display_name": "Adit",
+                    "app_url": "https://app.trusin.my.id",
+                }),
+            )
+            .unwrap();
+
+        assert!(html.contains("Ready when you are, Adit."));
+        assert!(html.contains("https://app.trusin.my.id/providers?new=1"));
+        assert!(html.contains("trusin"));
+    }
 }
 
 fn oauth_error(cfg: &OAuthConfig, msg: &str) -> Response {

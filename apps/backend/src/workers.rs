@@ -604,26 +604,6 @@ fn build_rule_request(
                     .post(url)
                     .json(&serde_json::json!({ "chat_id": chat_id, "text": text })))
             }
-            "email" => {
-                let recipient = value("recipient").ok_or("Email recipient is missing")?;
-                let api_key = std::env::var("RESEND_API_KEY")
-                    .ok()
-                    .filter(|value| !value.trim().is_empty())
-                    .ok_or("RESEND_API_KEY is not configured")?;
-                let from = std::env::var("EMAIL_FROM")
-                    .ok()
-                    .filter(|value| !value.trim().is_empty())
-                    .ok_or("EMAIL_FROM is not configured")?;
-                Ok(client
-                    .post("https://api.resend.com/emails")
-                    .bearer_auth(api_key)
-                    .json(&serde_json::json!({
-                        "from": from,
-                        "to": [recipient],
-                        "subject": format!("Terusin webhook {}: {}", delivery_status, event.source),
-                        "text": text,
-                    })))
-            }
             _ => Err("unsupported hook destination".to_string()),
         };
     }

@@ -32,7 +32,7 @@ interface FormState {
   method: string;
   headers_text: string;
   signing_secret: string;
-  destination_type: "webhook" | "slack" | "telegram" | "email";
+  destination_type: "webhook" | "slack" | "telegram";
 }
 
 const METHODS = ["POST", "PUT", "PATCH", "GET", "DELETE"] as const;
@@ -91,7 +91,6 @@ export function Hooks() {
   const hooks = (rules ?? []).filter((rule) => rule.rule_kind === "hook");
   const nativeDestinations = destinations.filter((destination) => destination.enabled);
   const healthByRule = new Map(health.map((item) => [item.rule_id, item]));
-
   const openCreate = () => {
     setEditing(null);
     setForm(EMPTY);
@@ -115,7 +114,7 @@ export function Hooks() {
       method: METHODS.includes(rule.method as (typeof METHODS)[number]) ? rule.method : "POST",
       headers_text: headersToText(rule.headers),
       signing_secret: "",
-      destination_type: rule.destination_type === "slack" || rule.destination_type === "telegram" || rule.destination_type === "email" ? rule.destination_type : "webhook",
+      destination_type: rule.destination_type === "slack" || rule.destination_type === "telegram" ? rule.destination_type : "webhook",
     });
     setError(null);
     setOpen(true);

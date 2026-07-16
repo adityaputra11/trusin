@@ -41,10 +41,6 @@ fn valid_http_url(value: &str) -> bool {
         .unwrap_or(false)
 }
 
-fn valid_email(value: &str) -> bool {
-    value.len() <= 255 && value.contains('@') && !value.starts_with('@') && !value.ends_with('@')
-}
-
 fn normalize_config(
     kind: &str,
     config: serde_json::Value,
@@ -62,21 +58,6 @@ fn normalize_config(
             let chat_id = config_value(config, "chat_id").ok_or(StatusCode::BAD_REQUEST)?;
             Ok(serde_json::json!({ "bot_token": bot_token, "chat_id": chat_id }))
         }
-        "email" => {
-            let recipient = config_value(config, "recipient").ok_or(StatusCode::BAD_REQUEST)?;
-            if !valid_email(recipient) {
-                return Err(StatusCode::BAD_REQUEST);
-            }
-            let resend_ready = std::env::var("RESEND_API_KEY")
-                .ok()
-                .is_some_and(|value| !value.trim().is_empty())
-                && std::env::var("EMAIL_FROM")
-                    .ok()
-                    .is_some_and(|value| !value.trim().is_empty());
-            resend_ready
-                .then_some(serde_json::json!({ "recipient": recipient }))
-                .ok_or(StatusCode::SERVICE_UNAVAILABLE)
-        }
         _ => Err(StatusCode::BAD_REQUEST),
     }
 }
@@ -89,7 +70,9 @@ pub async fn list_destinations(
     let rows = sqlx::query_as::<_, Destination>(
         r#"SELECT d.kind, d.enabled, d.updated_at,
            (SELECT COUNT(*) FROM forward_rules r WHERE r.organization_id = d.organization_id AND r.rule_kind = 'hook' AND r.destination_type = d.kind) AS hooks
-           FROM organization_destinations d WHERE d.organization_id = $1 ORDER BY d.kind"#,
+           FROM organization_destinations d
+           WHERE d.organization_id = $1 AND d.kind IN ('slack', 'telegram')
+           ORDER BY d.kind"#,
     ).bind(cu.organization_id).fetch_all(&state.db).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(rows))
 }
@@ -102,7 +85,7 @@ pub async fn save_destination(
     require_admin(&cu)?;
     require_scope(&cu, "rules:write")?;
     let kind = input.kind.trim().to_ascii_lowercase();
-    if !matches!(kind.as_str(), "slack" | "telegram" | "email") || !input.config.is_object() {
+    if !matches!(kind.as_str(), "slack" | "telegram") || !input.config.is_object() {
         return Err(StatusCode::BAD_REQUEST);
     }
     let retain_existing_config = input
@@ -141,7 +124,7 @@ pub async fn test_destination(
     require_admin(&cu)?;
     require_scope(&cu, "rules:write")?;
     let kind = kind.trim().to_ascii_lowercase();
-    if !matches!(kind.as_str(), "slack" | "telegram" | "email") {
+    if !matches!(kind.as_str(), "slack" | "telegram") {
         return Err(StatusCode::BAD_REQUEST);
     }
     let setting = sqlx::query_as::<_, (serde_json::Value, bool)>(
@@ -172,14 +155,6 @@ pub async fn test_destination(
             client
                 .post(format!("https://api.telegram.org/bot{token}/sendMessage"))
                 .json(&serde_json::json!({ "chat_id": chat_id, "text": text }))
-        }
-        "email" => {
-            let api_key =
-                std::env::var("RESEND_API_KEY").map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
-            let from = std::env::var("EMAIL_FROM").map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
-            let recipient =
-                config_value(config, "recipient").ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
-            client.post("https://api.resend.com/emails").bearer_auth(api_key).json(&serde_json::json!({ "from": from, "to": [recipient], "subject": "Terusin destination test", "text": text }))
         }
         _ => return Err(StatusCode::BAD_REQUEST),
     };
@@ -229,9 +204,9 @@ mod tests {
     }
 
     #[test]
-    fn email_rejects_invalid_recipient_before_environment_lookup() {
+    fn email_destinations_are_not_supported() {
         assert_eq!(
-            normalize_config("email", serde_json::json!({ "recipient": "not-an-email" })),
+            normalize_config("email", serde_json::json!({ "recipient": "alerts@example.com" })),
             Err(StatusCode::BAD_REQUEST)
         );
     }

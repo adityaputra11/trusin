@@ -35,7 +35,7 @@ export interface HookNotificationDelivery {
   id: string;
   event_id: string;
   hook_id: string;
-  destination_type: "slack" | "telegram" | "email" | "webhook" | string;
+  destination_type: "slack" | "telegram" | "webhook" | string;
   status: "delivered" | "failed" | "skipped" | string;
   http_status: number | null;
   error: string | null;
@@ -54,7 +54,7 @@ export interface ForwardRule {
   rule_kind: "provider" | "hook" | string;
   provider_id: string | null;
   trigger_on: "success" | "failure" | string;
-  destination_type: "webhook" | "slack" | "telegram" | "email" | string;
+  destination_type: "webhook" | "slack" | "telegram" | string;
   ingest_hostname: string | null;
   signing_secret?: string | null;
   created_at?: string;
@@ -78,7 +78,7 @@ export interface CreateRuleInput {
   rule_kind?: "provider" | "hook";
   provider_id?: string;
   trigger_on?: "success" | "failure";
-  destination_type?: "webhook" | "slack" | "telegram" | "email";
+  destination_type?: "webhook" | "slack" | "telegram";
   destination_config?: Record<string, string>;
   ingest_hostname?: string;
 }
@@ -93,7 +93,7 @@ export interface UpdateRuleInput {
   active?: boolean;
   trigger_on?: "success" | "failure";
   signing_secret?: string;
-  destination_type?: "webhook" | "slack" | "telegram" | "email";
+  destination_type?: "webhook" | "slack" | "telegram";
   destination_config?: Record<string, string>;
   ingest_hostname?: string;
 }
@@ -222,7 +222,7 @@ export interface OrganizationSubscription {
 }
 
 export interface WorkspaceDestination {
-  kind: "slack" | "telegram" | "email";
+  kind: "slack" | "telegram";
   enabled: boolean;
   updated_at: string;
   hooks: number;
