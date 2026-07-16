@@ -687,6 +687,23 @@ async fn forward_to_rules(
     .unwrap_or_default();
 
     for mut rule in rules {
+        if event.source.eq_ignore_ascii_case("resend") && rule.destination_type == "email" {
+            warn!(
+                hook = %rule.name,
+                "hook skipped: Resend email destinations would create a feedback loop"
+            );
+            record_hook_notification(
+                db,
+                event,
+                &rule,
+                "skipped",
+                None,
+                Some("Email hooks cannot run for Resend events because they create a feedback loop"),
+                0,
+            )
+            .await;
+            continue;
+        }
         if rule.destination_type != "webhook" {
             let setting = sqlx::query_as::<_, (serde_json::Value, bool)>(
                 "SELECT config, enabled FROM organization_destinations WHERE organization_id = $1 AND kind = $2",

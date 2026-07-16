@@ -91,6 +91,8 @@ export function Hooks() {
   const hooks = (rules ?? []).filter((rule) => rule.rule_kind === "hook");
   const nativeDestinations = destinations.filter((destination) => destination.enabled);
   const healthByRule = new Map(health.map((item) => [item.rule_id, item]));
+  const selectedProvider = providers.find((provider) => provider.id === form.provider_id);
+  const resendEmailLoopRisk = selectedProvider?.source_pattern.toLowerCase() === "resend";
 
   const openCreate = () => {
     setEditing(null);
@@ -319,9 +321,14 @@ export function Hooks() {
               onChange={(event) => setForm({ ...form, destination_type: event.target.value as FormState["destination_type"] })}
             >
               <option value="webhook">Webhook</option>
-              {nativeDestinations.map((destination) => <option key={destination.kind} value={destination.kind}>{destination.kind[0].toUpperCase() + destination.kind.slice(1)}</option>)}
+              {nativeDestinations.map((destination) => <option key={destination.kind} value={destination.kind} disabled={destination.kind === "email" && resendEmailLoopRisk}>{destination.kind === "email" && resendEmailLoopRisk ? "Email (unavailable for Resend)" : destination.kind[0].toUpperCase() + destination.kind.slice(1)}</option>)}
             </Select>
           </Field>
+          {resendEmailLoopRisk && form.destination_type === "email" && (
+            <p className="rounded-md border border-warning/30 bg-warning/10 p-3 text-sm text-warning">
+              Email hooks are unavailable for Resend events because sending an email creates another Resend event.
+            </p>
+          )}
           {form.destination_type === "webhook" ? <>
             <Field label="Target URL" htmlFor="hook-target">
               <Input id="hook-target" value={form.target_url} onChange={(e) => setForm({ ...form, target_url: e.target.value })} placeholder="https://example.com/webhook" required />

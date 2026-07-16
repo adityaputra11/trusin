@@ -111,6 +111,10 @@ fn valid_email(value: &str) -> bool {
     value.len() <= 255 && value.contains('@') && !value.starts_with('@') && !value.ends_with('@')
 }
 
+fn is_resend_email_hook(source_pattern: &str, destination_type: &str) -> bool {
+    destination_type == "email" && source_pattern.eq_ignore_ascii_case("resend")
+}
+
 fn destination_target_and_config(
     destination_type: &str,
     target_url: String,
@@ -272,6 +276,9 @@ pub async fn create_rule(
     if rule_kind == "hook" {
         ensure_native_destination_available(&state.db, cu.organization_id, &destination_type)
             .await?;
+        if is_resend_email_hook(&pattern, &destination_type) {
+            return Err(StatusCode::UNPROCESSABLE_ENTITY);
+        }
     }
     let (target_url, destination_config) = destination_target_and_config(
         &destination_type,
@@ -446,6 +453,9 @@ pub async fn update_rule(
     if current.rule_kind == "hook" {
         ensure_native_destination_available(&state.db, cu.organization_id, &destination_type)
             .await?;
+        if is_resend_email_hook(&source_pattern, &destination_type) {
+            return Err(StatusCode::UNPROCESSABLE_ENTITY);
+        }
     }
     let config = input
         .destination_config
@@ -522,4 +532,17 @@ pub async fn update_rule(
     .await;
 
     Ok(Json(rule))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_resend_email_hook;
+
+    #[test]
+    fn blocks_email_hooks_for_resend_sources() {
+        assert!(is_resend_email_hook("resend", "email"));
+        assert!(is_resend_email_hook("ReSeNd", "email"));
+        assert!(!is_resend_email_hook("resend", "webhook"));
+        assert!(!is_resend_email_hook("stripe", "email"));
+    }
 }
