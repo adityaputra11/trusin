@@ -12,6 +12,7 @@ use crate::auth;
 use crate::middleware::{require_admin, require_scope};
 use crate::model::ForwardRule;
 use crate::state::AppState;
+use crate::webhook::validate_target_url;
 
 pub async fn list_rules(
     State(state): State<Arc<AppState>>,
@@ -154,6 +155,26 @@ fn destination_target_and_config(
     }
 }
 
+async fn validate_destination_target(
+    destination_type: &str,
+    target_url: &str,
+    config: &serde_json::Value,
+) -> Result<(), StatusCode> {
+    let value = match destination_type {
+        "webhook" if !target_url.is_empty() => Some(target_url),
+        "slack" => config
+            .get("webhook_url")
+            .and_then(serde_json::Value::as_str),
+        _ => None,
+    };
+    if let Some(value) = value {
+        validate_target_url(value)
+            .await
+            .map_err(|_| StatusCode::BAD_REQUEST)?;
+    }
+    Ok(())
+}
+
 async fn validated_ingest_hostname(
     db: &sqlx::PgPool,
     organization_id: Uuid,
@@ -257,6 +278,7 @@ pub async fn create_rule(
                 .unwrap_or_else(|| serde_json::json!({}))
         },
     )?;
+    validate_destination_target(&destination_type, &target_url, &destination_config).await?;
     let ingest_hostname = if rule_kind == "provider" {
         validated_ingest_hostname(&state.db, cu.organization_id, input.ingest_hostname).await?
     } else if input.ingest_hostname.is_some() {
@@ -433,6 +455,7 @@ pub async fn update_rule(
             config
         },
     )?;
+    validate_destination_target(&destination_type, &target_url, &destination_config).await?;
     let ingest_hostname = if current.rule_kind == "provider" {
         match input.ingest_hostname {
             Some(hostname) => {

@@ -1,8 +1,20 @@
+(security_headers) {
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "DENY"
+        Referrer-Policy "strict-origin-when-cross-origin"
+        Permissions-Policy "camera=(), geolocation=(), microphone=(), payment=(), usb=()"
+    }
+}
+
 www.trusin.my.id {
+    import security_headers
     redir https://trusin.my.id{uri} permanent
 }
 
 download.trusin.my.id {
+    import security_headers
     root * /var/www/trusin/download
     @installer path /install.sh
     header @installer {
@@ -13,6 +25,7 @@ download.trusin.my.id {
 }
 
 trusin.my.id {
+    import security_headers
     root * /var/www/trusin/landing
     @hashed_assets path_regexp hashed_assets ^/assets/.+\.(?:css|js)$
     header @hashed_assets Cache-Control "public, max-age=31536000, immutable"
@@ -31,15 +44,18 @@ trusin.my.id {
 }
 
 docs.trusin.my.id {
+    import security_headers
     root * /var/www/trusin/docs
     try_files {path} {path}/ /index.html
     file_server
 }
 
 app.trusin.my.id {
+    import security_headers
     reverse_proxy 127.0.0.1:3012
 }
 
 api.trusin.my.id, ingest.trusin.my.id {
+    import security_headers
     reverse_proxy 127.0.0.1:3011
 }

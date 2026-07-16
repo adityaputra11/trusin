@@ -10,6 +10,7 @@ use serde::Deserialize;
 use crate::auth;
 use crate::middleware::{require_admin, require_scope};
 use crate::state::AppState;
+use crate::webhook::validate_target_url;
 
 #[derive(Deserialize)]
 pub struct SetTarget {
@@ -25,8 +26,14 @@ pub async fn set_default_target(
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     require_admin(&cu)?;
     require_scope(&cu, "organization:manage")?;
+    let url = input.url.trim().to_string();
+    if !url.is_empty() {
+        validate_target_url(&url)
+            .await
+            .map_err(|_| StatusCode::BAD_REQUEST)?;
+    }
     sqlx::query("UPDATE organizations SET default_target_url = $1 WHERE id = $2")
-        .bind(&input.url)
+        .bind(&url)
         .bind(cu.organization_id)
         .execute(&state.db)
         .await
@@ -37,10 +44,10 @@ pub async fn set_default_target(
         "config.default_target_updated",
         "config",
         Some("default-target".to_string()),
-        serde_json::json!({ "url": input.url }),
+        serde_json::json!({ "url": url }),
     )
     .await;
-    Ok(Json(serde_json::json!({"default_target": input.url})))
+    Ok(Json(serde_json::json!({"default_target": url})))
 }
 
 pub async fn get_default_target(

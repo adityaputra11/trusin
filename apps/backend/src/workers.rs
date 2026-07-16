@@ -10,6 +10,7 @@ use tracing::{info, warn};
 use uuid::Uuid;
 
 use crate::model::{ForwardRule, WebhookEvent};
+use crate::webhook::validate_target_url;
 
 type HmacSha256 = Hmac<Sha256>;
 
@@ -143,6 +144,30 @@ pub async fn worker(db: sqlx::PgPool, mut redis: ConnectionManager, max_retries:
 
         if event.target_url.is_empty() {
             tracing::warn!("skip {id}: no target URL");
+            sqlx::query("UPDATE webhook_events SET status = 'failed' WHERE id = $1")
+                .bind(id)
+                .execute(&db)
+                .await
+                .ok();
+            forward_to_rules(&db, &event, &client, "failure", None).await;
+            continue;
+        }
+
+        if let Err(error) = validate_target_url(&event.target_url).await {
+            let error_message = format!("Target URL rejected: {error}");
+            warn!(event_id = %id, %error, "blocked unsafe delivery target");
+            record_attempt(
+                &db,
+                id,
+                event.retry_count + 1,
+                "failed",
+                None,
+                None,
+                None,
+                Some(&error_message),
+                None,
+            )
+            .await;
             sqlx::query("UPDATE webhook_events SET status = 'failed' WHERE id = $1")
                 .bind(id)
                 .execute(&db)
@@ -368,6 +393,30 @@ pub async fn retry_worker(db: sqlx::PgPool, mut redis: ConnectionManager) {
                 let Some(event) = event.unwrap_or(None) else {
                     continue;
                 };
+
+                if let Err(error) = validate_target_url(&event.target_url).await {
+                    let error_message = format!("Target URL rejected: {error}");
+                    warn!(event_id = %id, %error, "blocked unsafe retry target");
+                    record_attempt(
+                        &db,
+                        id,
+                        event.retry_count + 1,
+                        "failed",
+                        None,
+                        None,
+                        None,
+                        Some(&error_message),
+                        None,
+                    )
+                    .await;
+                    sqlx::query("UPDATE webhook_events SET status = 'failed' WHERE id = $1")
+                        .bind(id)
+                        .execute(&db)
+                        .await
+                        .ok();
+                    forward_to_rules(&db, &event, &client, "failure", None).await;
+                    continue;
+                }
 
                 let body_bytes = serde_json::to_vec(&event.body).unwrap_or_default();
                 let mut req = client
@@ -695,6 +744,30 @@ async fn forward_to_rules(
                 continue;
             };
             rule.destination_config = config;
+        }
+        let notification_target = match rule.destination_type.as_str() {
+            "webhook" => Some(rule.target_url.as_str()),
+            "slack" => rule
+                .destination_config
+                .get("webhook_url")
+                .and_then(serde_json::Value::as_str),
+            _ => None,
+        };
+        if let Some(target) = notification_target {
+            if let Err(error) = validate_target_url(target).await {
+                warn!(hook = %rule.name, %error, "blocked unsafe hook destination");
+                record_hook_notification(
+                    db,
+                    event,
+                    &rule,
+                    "skipped",
+                    None,
+                    Some("Hook destination is not a permitted public URL"),
+                    0,
+                )
+                .await;
+                continue;
+            }
         }
         let delivery_status = if trigger_on == "success" {
             "delivered"
