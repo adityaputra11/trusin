@@ -9,8 +9,17 @@ import {
   Inbox,
   Trash2,
   History,
+  Sparkles,
 } from "lucide-react";
-import { useEvent, useRetryEvent, useDeleteEvent, useAttempts, useHookNotifications } from "../lib/hooks";
+import {
+  useAiStatus,
+  useAttempts,
+  useDeleteEvent,
+  useEvent,
+  useExplainEvent,
+  useHookNotifications,
+  useRetryEvent,
+} from "../lib/hooks";
 import { useCanWrite } from "../lib/user-context";
 import { StatusBadge } from "../components/StatusBadge";
 import {
@@ -22,7 +31,7 @@ import {
   ConfirmDialog,
 } from "../components/ui";
 import { formatDateTime, prettyJson } from "../lib/format";
-import type { EventStatus } from "../types/api";
+import type { AiExplanation, EventStatus } from "../types/api";
 
 function HeadersList({ headers }: { headers: Record<string, string> | null }) {
   if (!headers || Object.keys(headers).length === 0) {
@@ -102,6 +111,8 @@ export function EventDetail() {
   const canWrite = useCanWrite();
   const { data: attempts } = useAttempts(id, ev?.status);
   const { data: notifications } = useHookNotifications(id, ev?.status);
+  const { data: aiStatus } = useAiStatus();
+  const explain = useExplainEvent();
   const [confirmDelete, setConfirmDelete] = useState(false);
 
   if (isLoading) return <FullSpinner label="Loading event…" />;
@@ -127,26 +138,38 @@ export function EventDetail() {
         <Button variant="ghost" size="sm" onClick={() => navigate("/")}>
           <ArrowLeft className="h-4 w-4" /> Back
         </Button>
-        {canWrite && (
         <div className="flex items-center gap-2">
+        {aiStatus?.enabled && (
           <Button
-            variant="success"
+            variant="outline"
             size="sm"
-            onClick={() => retry.mutate(ev.id)}
-            loading={retry.isPending}
+            onClick={() => explain.mutate(ev.id)}
+            loading={explain.isPending}
           >
-            <RotateCw className="h-4 w-4" /> Retry
+            <Sparkles className="h-4 w-4" /> Explain with AI
           </Button>
-          <Button
-            variant="danger"
-            size="sm"
-            loading={deleteEvent.isPending}
-            onClick={() => setConfirmDelete(true)}
-          >
-            <Trash2 className="h-4 w-4" /> Delete
-          </Button>
-        </div>
         )}
+        {canWrite && (
+          <>
+            <Button
+              variant="success"
+              size="sm"
+              onClick={() => retry.mutate(ev.id)}
+              loading={retry.isPending}
+            >
+              <RotateCw className="h-4 w-4" /> Retry
+            </Button>
+            <Button
+              variant="danger"
+              size="sm"
+              loading={deleteEvent.isPending}
+              onClick={() => setConfirmDelete(true)}
+            >
+              <Trash2 className="h-4 w-4" /> Delete
+            </Button>
+          </>
+        )}
+        </div>
       </div>
 
       <Card className="mb-6">
@@ -177,6 +200,13 @@ export function EventDetail() {
           </div>
         </div>
       </Card>
+
+      {explain.data && <AiExplanationCard explanation={explain.data} />}
+      {explain.isError && (
+        <Card className="mb-6 border-danger">
+          <CardHeader title="AI explanation unavailable" subtitle="Please try again shortly." />
+        </Card>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <Card>
@@ -276,6 +306,43 @@ function HookNotificationsTimeline({ notifications }: { notifications: import(".
             {notification.error && <p className="basis-full text-xs text-danger">{notification.error}</p>}
           </div>
         ))}
+      </div>
+    </Card>
+  );
+}
+
+function AiExplanationCard({ explanation }: { explanation: AiExplanation }) {
+  const retryLabel = {
+    safe: "Safe to retry",
+    caution: "Retry with caution",
+    not_recommended: "Retry not recommended",
+  }[explanation.retry_recommendation];
+
+  return (
+    <Card className="mb-6">
+      <CardHeader title="AI explanation" subtitle="Based on redacted event and delivery data" />
+      <div className="space-y-4 text-sm">
+        <div>
+          <p className="text-xs text-muted uppercase mb-1">Summary</p>
+          <p className="text-foreground">{explanation.summary}</p>
+        </div>
+        <div>
+          <p className="text-xs text-muted uppercase mb-1">Likely cause</p>
+          <p className="text-foreground">{explanation.likely_cause}</p>
+        </div>
+        <div>
+          <p className="text-xs text-muted uppercase mb-1">Evidence</p>
+          <ul className="list-disc pl-5 space-y-1 text-secondary">
+            {explanation.evidence.map((item) => <li key={item}>{item}</li>)}
+          </ul>
+        </div>
+        <div>
+          <p className="text-xs text-muted uppercase mb-1">Recommended actions</p>
+          <ul className="list-disc pl-5 space-y-1 text-secondary">
+            {explanation.recommended_actions.map((item) => <li key={item}>{item}</li>)}
+          </ul>
+        </div>
+        <p className="text-xs text-muted">Retry recommendation: <span className="text-foreground font-semibold">{retryLabel}</span></p>
       </div>
     </Card>
   );

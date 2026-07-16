@@ -8,6 +8,8 @@ import {
 import { toast } from "sonner";
 import { api } from "./api";
 import type {
+  AiExplanation,
+  AiStatus,
   CreateRuleInput,
   DeliveryAttempt,
   EventQuery,
@@ -99,6 +101,21 @@ export function useHookNotifications(eventId: string | undefined, eventStatus: s
     queryFn: () => api.get<HookNotificationDelivery[]>(`/events/${eventId}/hook-notifications`),
     enabled: !!eventId,
     refetchInterval: inFlight ? 3000 : false,
+  });
+}
+
+export function useAiStatus() {
+  return useQuery<AiStatus>({
+    queryKey: ["ai-status"],
+    queryFn: () => api.get<AiStatus>("/config/ai"),
+    staleTime: 5 * 60_000,
+  });
+}
+
+export function useExplainEvent() {
+  return useMutation({
+    mutationFn: (id: string) =>
+      api.post<AiExplanation>(`/events/${id}/ai-explanation`),
   });
 }
 
