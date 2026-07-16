@@ -166,7 +166,7 @@ function App() {
 
         <section className="section workflow">
           <div className="container workflow-grid">
-            <div className="workflow-copy"><p className="kicker">ONE CLEAR DELIVERY PATH</p><h2>Receive it. Inspect it.<br /><em>Keep it moving.</em></h2><p>Every event gets a durable history, an observable delivery attempt, and a safe recovery path when a downstream service fails.</p><a className="text-link" href={`${config.docsUrl}/docs/concepts/reliability`}>Explore reliability <span>→</span></a></div>
+            <div className="workflow-copy"><p className="kicker">ONE CLEAR DELIVERY PATH</p><h2>Receive it. Inspect it.<br /><em>Keep it moving.</em></h2><p>Every event gets a durable history, an observable delivery attempt, and a safe recovery path when a downstream service fails.</p><a className="text-link" href="/webhook-relay">What is a webhook relay? <span>→</span></a></div>
             <div className="pipeline-card">
               <div className="pipeline-bar"><span>DELIVERY PIPELINE</span><b>TRUSIN CORE</b></div>
               <div className="pipeline-nodes"><Node label="PROVIDERS" sub="Stripe · GitHub · Any" icon="◆" /><span>→</span><Node label="TRUSIN" sub="Ingest · Queue · Route" icon="T" primary /><span>→</span><Node label="SERVICES" sub="Local · Cloud · Edge" icon="◆" /></div>
