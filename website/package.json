@@ -4,7 +4,8 @@
   "version": "0.1.0",
   "scripts": {
     "start": "docusaurus start",
-    "build": "docusaurus build",
+    "build": "npm run generate:llms && docusaurus build",
+    "generate:llms": "node ../scripts/generate-llms.mjs",
     "serve": "docusaurus serve",
     "clear": "docusaurus clear"
   },
