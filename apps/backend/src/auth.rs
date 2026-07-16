@@ -604,6 +604,11 @@ async fn oauth_login_for_provider(
     provider_name: &'static str,
     query: OAuthLoginQuery,
 ) -> Response {
+    let ip = crate::client_ip_from(&headers)
+        .unwrap_or(std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED));
+    if let Some(response) = crate::check_rate_limit(&state.login_limiter, ip) {
+        return response;
+    }
     let Some(cfg) = state.oauth.as_ref() else {
         return not_configured(provider_name);
     };
@@ -1402,7 +1407,7 @@ pub async fn login(
     headers: HeaderMap,
     Json(req): Json<LoginRequest>,
 ) -> Response {
-    // 0) Per-IP rate limit (5/min) — primary brute-force guard.
+    // 0) Per-IP rate limit (5 attempts per 10 minutes) — primary brute-force guard.
     let ip = crate::client_ip_from(&headers)
         .unwrap_or(std::net::IpAddr::V4(std::net::Ipv4Addr::new(0, 0, 0, 0)));
     if let Some(res) = crate::check_rate_limit(&state.login_limiter, ip) {

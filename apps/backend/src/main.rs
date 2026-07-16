@@ -161,8 +161,10 @@ async fn main() {
         info!("AI explanations enabled");
     }
 
-    // Per-IP rate limiters for the auth endpoints. In-memory (per-process).
-    let login_limiter = build_rate_limiter(60, 5);
+    // Per-IP sign-in limiter. Five attempts may happen immediately, then one
+    // token refills every two minutes (five attempts per ten minutes).
+    // In-memory, per-process; Cloudflare remains the edge-level backstop.
+    let login_limiter = build_rate_limiter(120, 5);
     let me_limiter = build_rate_limiter(60, 30);
     let ai_explain_limit = std::env::var("AI_EXPLAIN_RATE_LIMIT")
         .ok()

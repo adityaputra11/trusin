@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use crate::auth::CurrentUser;
 use crate::middleware::{require_admin, require_scope};
 use crate::state::AppState;
+use crate::webhook::validate_target_url;
 
 #[derive(Serialize, sqlx::FromRow)]
 pub struct Destination {
@@ -108,6 +109,14 @@ pub async fn save_destination(
     } else {
         normalize_config(&kind, input.config)?
     };
+    if let Some(webhook_url) = config
+        .get("webhook_url")
+        .and_then(serde_json::Value::as_str)
+    {
+        validate_target_url(webhook_url)
+            .await
+            .map_err(|_| StatusCode::BAD_REQUEST)?;
+    }
     let row = sqlx::query_as::<_, Destination>(
         r#"INSERT INTO organization_destinations (organization_id, kind, config, enabled) VALUES ($1,$2,$3,$4)
            ON CONFLICT (organization_id, kind) DO UPDATE SET config = CASE WHEN $5 THEN organization_destinations.config ELSE EXCLUDED.config END, enabled = EXCLUDED.enabled, updated_at = NOW()
@@ -138,6 +147,14 @@ pub async fn test_destination(
     .filter(|(_, enabled)| *enabled)
     .ok_or(StatusCode::CONFLICT)?;
     let config = normalize_config(&kind, setting.0)?;
+    if let Some(webhook_url) = config
+        .get("webhook_url")
+        .and_then(serde_json::Value::as_str)
+    {
+        validate_target_url(webhook_url)
+            .await
+            .map_err(|_| StatusCode::BAD_REQUEST)?;
+    }
     let config = config
         .as_object()
         .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
@@ -206,7 +223,10 @@ mod tests {
     #[test]
     fn email_destinations_are_not_supported() {
         assert_eq!(
-            normalize_config("email", serde_json::json!({ "recipient": "alerts@example.com" })),
+            normalize_config(
+                "email",
+                serde_json::json!({ "recipient": "alerts@example.com" })
+            ),
             Err(StatusCode::BAD_REQUEST)
         );
     }
