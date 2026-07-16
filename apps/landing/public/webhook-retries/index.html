@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" /><meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Webhook Retries and Delivery Recovery | trusin</title>
+    <meta name="description" content="Recover retryable webhook delivery failures with exponential backoff, attempt timelines, and manual replay in trusin." />
+    <link rel="canonical" href="https://trusin.my.id/webhook-retries" /><link rel="stylesheet" href="/seo.css" />
+    <meta property="og:title" content="Webhook Retries and Delivery Recovery | trusin" /><meta property="og:description" content="Recover retryable delivery failures with observable retries." /><meta property="og:url" content="https://trusin.my.id/webhook-retries" /><meta property="og:image" content="https://trusin.my.id/og-image.png" />
+  </head>
+  <body><div class="shell"><header><a class="brand" href="/">trusin</a><nav><a href="/webhook-delivery">Delivery</a><a href="/cli">CLI</a><a href="/mcp">MCP</a><a href="/self-hosted">Self-hosted</a><a href="https://docs.trusin.my.id">Docs</a></nav></header><main>
+    <span class="eyebrow">WEBHOOK RETRIES</span><h1>Failures happen. Lost events should not.</h1>
+    <p class="lead">trusin records failed delivery attempts and retries retryable failures with exponential backoff, so your team can see exactly what happened and recover deliberately.</p>
+    <div class="actions"><a class="button primary" href="https://app.trusin.my.id">Inspect deliveries</a><a class="button" href="https://docs.trusin.my.id/docs/learn/webhook-retries">Read retry documentation</a></div>
+    <h2>Retry with context</h2><p>A retry is not just a counter. Every attempt retains the response status, latency, response body, and timestamp. This gives operators the context to distinguish a temporary outage from a payload or configuration issue.</p>
+    <ul><li>Exponential backoff avoids overwhelming an unhealthy target.</li><li>Delivery timelines show every retry in chronological order.</li><li>Manual retry lets an authorized operator replay a failed event after fixing the target.</li></ul>
+    <div class="callout"><strong>Design target endpoints for duplicates.</strong><p>HTTP timeouts can leave delivery status unknown. Use an event identifier or idempotency key so repeated webhook deliveries do not repeat business actions.</p></div>
+    <h2>Continue learning</h2><p>See how <a href="/webhook-delivery">webhook delivery</a> is queued and observed, or run the <a href="/cli">CLI</a> to test delivery against a local target.</p>
+  </main><footer>© trusin · <a href="https://github.com/adityaputra11/terusin">GitHub</a> · <a href="https://docs.trusin.my.id">Documentation</a></footer></div></body>
+</html>

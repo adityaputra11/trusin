@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" /><meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Reliable Webhook Delivery Infrastructure | trusin</title>
+    <meta name="description" content="Receive webhooks, queue delivery, route events to targets, and inspect every delivery attempt with trusin." />
+    <link rel="canonical" href="https://trusin.my.id/webhook-delivery" /><link rel="stylesheet" href="/seo.css" />
+    <meta property="og:title" content="Reliable Webhook Delivery Infrastructure | trusin" /><meta property="og:description" content="Receive, queue, route, and inspect every webhook delivery." /><meta property="og:url" content="https://trusin.my.id/webhook-delivery" /><meta property="og:image" content="https://trusin.my.id/og-image.png" />
+  </head>
+  <body><div class="shell"><header><a class="brand" href="/">trusin</a><nav><a href="/webhook-retries">Retries</a><a href="/cli">CLI</a><a href="/mcp">MCP</a><a href="/self-hosted">Self-hosted</a><a href="https://docs.trusin.my.id">Docs</a></nav></header><main>
+    <span class="eyebrow">WEBHOOK DELIVERY</span><h1>Deliver webhooks with a history you can trust.</h1>
+    <p class="lead">trusin receives provider events, stores them durably, queues delivery to your target, and records each attempt from ingest to response.</p>
+    <div class="actions"><a class="button primary" href="https://app.trusin.my.id">Open trusin</a><a class="button" href="https://docs.trusin.my.id/docs/learn/webhook-delivery">Read the delivery guide</a></div>
+    <h2>One observable delivery path</h2><p>Webhook providers should receive a fast acknowledgement while your downstream service can be delivered to safely and observed independently. trusin separates ingest from outbound delivery so transient failures do not disappear into application logs.</p>
+    <ul><li>Store incoming payloads with their source, headers, and timestamp.</li><li>Route an event to configured targets using provider and hook rules.</li><li>Inspect HTTP response codes, latency, response body, and retry history.</li></ul>
+    <div class="callout"><strong>Built for at-least-once delivery.</strong><p>Make target handlers idempotent: an event can be delivered more than once when a network failure prevents a delivery result from being confirmed.</p></div>
+    <h2>Related guides</h2><p><a href="/webhook-retries">Webhook retries</a> explain recovery behavior. Use the <a href="/cli">trusin CLI</a> to forward events into a local service while developing.</p>
+  </main><footer>© trusin · <a href="https://github.com/adityaputra11/terusin">GitHub</a> · <a href="https://docs.trusin.my.id">Documentation</a></footer></div></body>
+</html>

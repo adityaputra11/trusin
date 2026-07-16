@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" /><meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>trusin CLI for Local Webhook Development</title>
+    <meta name="description" content="Use the trusin CLI to forward webhook events to localhost, inspect deliveries, retry failures, and connect your terminal to trusin." />
+    <link rel="canonical" href="https://trusin.my.id/cli" /><link rel="stylesheet" href="/seo.css" />
+    <meta property="og:title" content="trusin CLI for Local Webhook Development" /><meta property="og:description" content="Forward webhooks to localhost and operate delivery from your terminal." /><meta property="og:url" content="https://trusin.my.id/cli" /><meta property="og:image" content="https://trusin.my.id/og-image.png" />
+  </head>
+  <body><div class="shell"><header><a class="brand" href="/">trusin</a><nav><a href="/webhook-delivery">Delivery</a><a href="/webhook-retries">Retries</a><a href="/mcp">MCP</a><a href="/self-hosted">Self-hosted</a><a href="https://docs.trusin.my.id">Docs</a></nav></header><main>
+    <span class="eyebrow">TRUSIN CLI</span><h1>Bring production webhooks to your local service.</h1>
+    <p class="lead">The trusin CLI connects your API token, streams matching events, and forwards them to a loopback address—without exposing your machine through a public tunnel.</p>
+    <pre><code>curl -fsSL https://download.trusin.my.id/install.sh | sh
+trusin set-token ts_your_token
+trusin listen --source stripe --target http://127.0.0.1:3000</code></pre>
+    <div class="actions"><a class="button primary" href="https://docs.trusin.my.id/docs/guides/cli-and-mcp">Install the CLI</a><a class="button" href="https://app.trusin.my.id/settings/developer">Create an API token</a></div>
+    <h2>What developers can do</h2><ul><li>Forward selected events from trusin to a local loopback service.</li><li>List recent events and retry failed deliveries from the terminal.</li><li>Open the dashboard and manage a token without storing a password.</li></ul>
+    <h2>Next steps</h2><p>Use the <a href="/mcp">MCP server</a> to connect the same delivery context to an AI client, or read the <a href="/webhook-delivery">delivery overview</a> first.</p>
+  </main><footer>© trusin · <a href="https://github.com/adityaputra11/terusin">GitHub</a> · <a href="https://docs.trusin.my.id">Documentation</a></footer></div></body>
+</html>
