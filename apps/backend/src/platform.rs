@@ -34,12 +34,11 @@ pub async fn bootstrap_platform_operator(
     if supplied != Some(expected.as_str()) {
         return Err(StatusCode::UNAUTHORIZED);
     }
-    let existing: bool = sqlx::query_scalar(
-        "SELECT EXISTS(SELECT 1 FROM users WHERE is_platform_operator = TRUE)",
-    )
-    .fetch_one(&state.db)
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let existing: bool =
+        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM users WHERE is_platform_operator = TRUE)")
+            .fetch_one(&state.db)
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     if existing {
         return Err(StatusCode::CONFLICT);
     }
@@ -124,8 +123,14 @@ pub async fn list_platform_organizations(
     require_platform_operator(&cu)?;
     let page = query.page.unwrap_or(1).max(1);
     let per_page = query.per_page.unwrap_or(25).clamp(1, 100);
-    let status = query.status.map(|value| value.trim().to_string()).filter(|value| !value.is_empty());
-    let search = query.search.map(|value| value.trim().to_string()).filter(|value| !value.is_empty());
+    let status = query
+        .status
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    let search = query
+        .search
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
     let period = current_period();
     let filters = r#"($1::text IS NULL OR o.subscription_status = $1)
         AND ($2::text IS NULL OR o.name ILIKE '%' || $2 || '%'
@@ -276,17 +281,36 @@ pub async fn update_platform_subscription(
     .await
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
     .ok_or(StatusCode::NOT_FOUND)?;
-    let subscriber_name = input.subscriber_name.unwrap_or(current.0).trim().to_string();
-    let billing_contact_name = input.billing_contact_name.unwrap_or(current.1).trim().to_string();
-    let billing_contact_email = input.billing_contact_email.unwrap_or(current.2).trim().to_string();
+    let subscriber_name = input
+        .subscriber_name
+        .unwrap_or(current.0)
+        .trim()
+        .to_string();
+    let billing_contact_name = input
+        .billing_contact_name
+        .unwrap_or(current.1)
+        .trim()
+        .to_string();
+    let billing_contact_email = input
+        .billing_contact_email
+        .unwrap_or(current.2)
+        .trim()
+        .to_string();
     let plan_code = input.plan_code.unwrap_or(current.3).trim().to_string();
-    let subscription_status = input.subscription_status.unwrap_or(current.4).trim().to_string();
+    let subscription_status = input
+        .subscription_status
+        .unwrap_or(current.4)
+        .trim()
+        .to_string();
     if subscriber_name.is_empty()
         || subscriber_name.len() > 120
         || billing_contact_name.len() > 120
         || billing_contact_email.len() > 255
         || !matches!(plan_code.as_str(), "free" | "pro")
-        || !matches!(subscription_status.as_str(), "active" | "trialing" | "cancelled")
+        || !matches!(
+            subscription_status.as_str(),
+            "active" | "trialing" | "cancelled"
+        )
     {
         return Err(StatusCode::BAD_REQUEST);
     }
@@ -327,5 +351,8 @@ pub async fn update_platform_subscription(
 }
 
 fn current_period() -> chrono::NaiveDate {
-    Utc::now().date_naive().with_day(1).expect("first day exists")
+    Utc::now()
+        .date_naive()
+        .with_day(1)
+        .expect("first day exists")
 }

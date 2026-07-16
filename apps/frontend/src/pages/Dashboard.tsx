@@ -546,12 +546,12 @@ export function Dashboard() {
   }, [selected, bulkDelete, clearSelection]);
 
   return (
-    <div className="space-y-1">
+    <div className="space-y-5">
       <BetaBanner />
       <SetupChecklist destinationReady={destinationReady} providerReady={providers.length > 0} testReady={events.length > 0} hookReady={hooks.length > 0} canWrite={canWrite} onNavigate={navigate} />
       <EndpointBox />
 
-      <div className="flex items-end justify-between mb-3 mt-1">
+      <div className="flex items-end justify-between">
         <div><p className="text-[10px] uppercase tracking-[.13em] text-success font-semibold">Event operations</p><h2 className="text-base font-semibold mt-1 text-foreground">Recent deliveries</h2></div>
       </div>
       <Card className="p-0 overflow-hidden">

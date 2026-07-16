@@ -198,7 +198,11 @@ async fn handle_webhook_inner(
         target
     } else {
         rule_target
-            .or(crate::organizations::default_target_for(&state.db, organization_id).await.ok())
+            .or(
+                crate::organizations::default_target_for(&state.db, organization_id)
+                    .await
+                    .ok(),
+            )
             .unwrap_or_default()
     };
 
@@ -224,14 +228,10 @@ pub async fn enqueue_event(
     let request_id = Uuid::new_v4();
     let id = Uuid::new_v4();
     let now = Utc::now().naive_utc();
-    let mut transaction = state
-        .db
-        .begin()
-        .await
-        .map_err(|error| {
-            tracing::error!(%request_id, %error, "begin webhook enqueue transaction");
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?;
+    let mut transaction = state.db.begin().await.map_err(|error| {
+        tracing::error!(%request_id, %error, "begin webhook enqueue transaction");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
 
     crate::organizations::consume_event_quota(&mut transaction, organization_id).await?;
 

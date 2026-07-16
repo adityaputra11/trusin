@@ -55,8 +55,12 @@ fn app_url() -> Option<String> {
 }
 
 async fn send_invite_email(email: &str, token: &str, role: &str) -> Result<(), StatusCode> {
-    let api_key = std::env::var("RESEND_API_KEY").ok().filter(|value| !value.trim().is_empty());
-    let from = std::env::var("EMAIL_FROM").ok().filter(|value| !value.trim().is_empty());
+    let api_key = std::env::var("RESEND_API_KEY")
+        .ok()
+        .filter(|value| !value.trim().is_empty());
+    let from = std::env::var("EMAIL_FROM")
+        .ok()
+        .filter(|value| !value.trim().is_empty());
     let app_url = app_url();
     let (Some(api_key), Some(from), Some(app_url)) = (api_key, from, app_url) else {
         return Err(StatusCode::SERVICE_UNAVAILABLE);
@@ -160,7 +164,15 @@ pub async fn create_invite(
             .await;
         return Err(status);
     }
-    crate::audit::record(&state, Some(&cu), "invite.created", "invite", Some(invite.id.to_string()), json!({ "email": email, "role": role })).await;
+    crate::audit::record(
+        &state,
+        Some(&cu),
+        "invite.created",
+        "invite",
+        Some(invite.id.to_string()),
+        json!({ "email": email, "role": role }),
+    )
+    .await;
     Ok(Json(invite))
 }
 
@@ -189,7 +201,15 @@ pub async fn resend_invite(
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
     .ok_or(StatusCode::NOT_FOUND)?;
     send_invite_email(&invite.email, &token, &invite.role).await?;
-    crate::audit::record(&state, Some(&cu), "invite.resent", "invite", Some(id.to_string()), json!({ "email": invite.email })).await;
+    crate::audit::record(
+        &state,
+        Some(&cu),
+        "invite.resent",
+        "invite",
+        Some(id.to_string()),
+        json!({ "email": invite.email }),
+    )
+    .await;
     Ok(Json(invite))
 }
 
@@ -211,11 +231,23 @@ pub async fn revoke_invite(
     if result.rows_affected() == 0 {
         return Err(StatusCode::NOT_FOUND);
     }
-    crate::audit::record(&state, Some(&cu), "invite.revoked", "invite", Some(id.to_string()), json!({})).await;
+    crate::audit::record(
+        &state,
+        Some(&cu),
+        "invite.revoked",
+        "invite",
+        Some(id.to_string()),
+        json!({}),
+    )
+    .await;
     Ok(StatusCode::NO_CONTENT)
 }
 
-pub async fn invite_for_token(db: &sqlx::PgPool, token: &str, email: &str) -> Result<Option<(Uuid, String, Uuid)>, sqlx::Error> {
+pub async fn invite_for_token(
+    db: &sqlx::PgPool,
+    token: &str,
+    email: &str,
+) -> Result<Option<(Uuid, String, Uuid)>, sqlx::Error> {
     let email = email.trim().to_ascii_lowercase();
     sqlx::query_as::<_, (Uuid, String, Uuid)>(
         r#"SELECT id, role, organization_id FROM organization_invites
