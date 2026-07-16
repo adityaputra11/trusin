@@ -129,9 +129,9 @@ function App() {
           <div className="grid" aria-hidden="true" />
           <div className="container hero-content">
             <div className="hero-copy">
-              <p className="eyebrow"><i /> WEBHOOK INFRASTRUCTURE, UNDER YOUR CONTROL</p>
+              <p className="eyebrow"><i /> OPEN-SOURCE WEBHOOK RELAY, UNDER YOUR CONTROL</p>
               <h1>Every webhook.<br /><em>Delivered with certainty.</em></h1>
-              <p className="hero-lead">trusin is the reliable delivery layer between your providers and services—built for teams that need control, visibility, and zero guesswork.</p>
+              <p className="hero-lead">trusin is an open-source webhook relay between your providers and services—built for teams that need control, visibility, and zero guesswork.</p>
               <div className="hero-actions">
                 <a className="button button-primary" href={managedCta.href}>{managedCta.label} <Arrow /></a>
                 <a className="button button-secondary" href={`${config.docsUrl}/docs/intro`}>Self-host trusin <span aria-hidden="true">→</span></a>
@@ -166,7 +166,7 @@ function App() {
 
         <section className="section workflow">
           <div className="container workflow-grid">
-            <div className="workflow-copy"><p className="kicker">ONE CLEAR DELIVERY PATH</p><h2>Receive it. Inspect it.<br /><em>Keep it moving.</em></h2><p>Every event gets a durable history, an observable delivery attempt, and a safe recovery path when a downstream service fails.</p><a className="text-link" href={`${config.docsUrl}/docs/concepts/reliability`}>Explore reliability <span>→</span></a></div>
+            <div className="workflow-copy"><p className="kicker">ONE CLEAR DELIVERY PATH</p><h2>Receive it. Inspect it.<br /><em>Keep it moving.</em></h2><p>Every event gets a durable history, an observable delivery attempt, and a safe recovery path when a downstream service fails.</p><a className="text-link" href="/webhook-relay">What is a webhook relay? <span>→</span></a></div>
             <div className="pipeline-card">
               <div className="pipeline-bar"><span>DELIVERY PIPELINE</span><b>TRUSIN CORE</b></div>
               <div className="pipeline-nodes"><Node label="PROVIDERS" sub="Stripe · GitHub · Any" icon="◆" /><span>→</span><Node label="TRUSIN" sub="Ingest · Queue · Route" icon="T" primary /><span>→</span><Node label="SERVICES" sub="Local · Cloud · Edge" icon="◆" /></div>

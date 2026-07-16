@@ -1,12 +1,13 @@
 <div align="center">
   <h1>trusin</h1>
   <img width="112" height="112" alt="trusin" src="apps/frontend/public/icon-trusin.png" />
-  <p><strong>trusin</strong> (Indonesian: <em>"forward it"</em>) — self-hosted enterprise webhook delivery infrastructure.</p>
+  <p><strong>trusin</strong> — an open-source, self-hosted webhook relay for reliable delivery operations.</p>
   <p>Receive webhooks from any provider (Midtrans, Stripe, Resend, GitHub, etc.)<br>
   and forward them to your local services or any HTTP endpoint.</p>
   <p>Built with Rust. Powered by Redis queue & Postgres.<br>
   3,990 req/s throughput. Zero errors.</p>
   <p>
+    <a href="https://trusin.my.id/webhook-relay">Webhook relay</a> ·
     <a href="website/docs/intro.md">Documentation</a> ·
     <a href="ARCHITECTURE.md">Architecture</a> ·
     <a href="LICENSE">Apache 2.0</a> ·
