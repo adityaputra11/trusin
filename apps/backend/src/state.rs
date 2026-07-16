@@ -43,13 +43,12 @@ pub async fn seed_default_user(db: &sqlx::PgPool) {
             .is_some();
 
         if !exists {
-            let organization_id: Option<Uuid> = sqlx::query_scalar(
-                "SELECT id FROM organizations WHERE slug = 'default'",
-            )
-            .fetch_optional(db)
-            .await
-            .ok()
-            .flatten();
+            let organization_id: Option<Uuid> =
+                sqlx::query_scalar("SELECT id FROM organizations WHERE slug = 'default'")
+                    .fetch_optional(db)
+                    .await
+                    .ok()
+                    .flatten();
             let Some(organization_id) = organization_id else {
                 tracing::warn!("default organization missing; skipping default user seed");
                 return;

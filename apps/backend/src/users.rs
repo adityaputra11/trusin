@@ -66,11 +66,13 @@ pub async fn update_user_role(
         return Err(StatusCode::BAD_REQUEST);
     }
 
-    let admin_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM users WHERE organization_id = $1 AND role = 'admin'")
-        .bind(cu.organization_id)
-        .fetch_one(&state.db)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let admin_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM users WHERE organization_id = $1 AND role = 'admin'",
+    )
+    .bind(cu.organization_id)
+    .fetch_one(&state.db)
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     if cu.id == id && role != "admin" && admin_count <= 1 {
         return Err(StatusCode::CONFLICT);
     }

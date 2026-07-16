@@ -6,8 +6,8 @@ use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::Json;
 use chrono::{Datelike, Utc};
-use hickory_resolver::TokioAsyncResolver;
 use hickory_resolver::proto::rr::RecordType;
+use hickory_resolver::TokioAsyncResolver;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use uuid::Uuid;
@@ -192,7 +192,12 @@ pub async fn provision_organization(
 
 pub fn hosted_mode() -> bool {
     std::env::var("HOSTED_MODE")
-        .map(|value| matches!(value.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes"))
+        .map(|value| {
+            matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes"
+            )
+        })
         .unwrap_or(false)
 }
 
@@ -213,7 +218,8 @@ fn next_period_start() -> chrono::NaiveDate {
     if start.month() == 12 {
         chrono::NaiveDate::from_ymd_opt(start.year() + 1, 1, 1).expect("valid next year")
     } else {
-        chrono::NaiveDate::from_ymd_opt(start.year(), start.month() + 1, 1).expect("valid next month")
+        chrono::NaiveDate::from_ymd_opt(start.year(), start.month() + 1, 1)
+            .expect("valid next month")
     }
 }
 
@@ -225,7 +231,12 @@ fn canonical_ingest_host() -> String {
 }
 
 fn host_without_port(headers: &HeaderMap) -> Option<String> {
-    let raw = headers.get("host")?.to_str().ok()?.trim().to_ascii_lowercase();
+    let raw = headers
+        .get("host")?
+        .to_str()
+        .ok()?
+        .trim()
+        .to_ascii_lowercase();
     let host = raw
         .strip_prefix('[')
         .and_then(|value| value.split(']').next())
@@ -286,22 +297,21 @@ pub async fn resolve_ingest_organization(
         value == canonical_ingest_host() || public_url_host().as_deref() == Some(value)
     });
     if is_canonical_host {
-        let (ingest_key, source) = parse_canonical_ingest_path(source_path)
-            .ok_or(StatusCode::NOT_FOUND)?;
-        let organization_id = sqlx::query_scalar(
-            "SELECT id FROM organizations WHERE ingest_key = $1",
-        )
-        .bind(ingest_key)
-        .fetch_optional(&state.db)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        .ok_or(StatusCode::NOT_FOUND)?;
+        let (ingest_key, source) =
+            parse_canonical_ingest_path(source_path).ok_or(StatusCode::NOT_FOUND)?;
+        let organization_id =
+            sqlx::query_scalar("SELECT id FROM organizations WHERE ingest_key = $1")
+                .bind(ingest_key)
+                .fetch_optional(&state.db)
+                .await
+                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+                .ok_or(StatusCode::NOT_FOUND)?;
         return Ok((organization_id, source.to_string()));
     }
 
-    let is_local_host = host.as_deref().is_none_or(|value| {
-        value == "localhost" || value == "127.0.0.1"
-    });
+    let is_local_host = host
+        .as_deref()
+        .is_none_or(|value| value == "localhost" || value == "127.0.0.1");
     if is_local_host {
         return default_organization_id(&state.db)
             .await
@@ -534,7 +544,9 @@ pub async fn consume_event_quota(
     let Some((plan_code, status, billing_period_end)) = plan else {
         return Err(StatusCode::NOT_FOUND);
     };
-    if plan_code != "free" && (status == "active" || (status == "trialing" && billing_period_end > Utc::now())) {
+    if plan_code != "free"
+        && (status == "active" || (status == "trialing" && billing_period_end > Utc::now()))
+    {
         return Ok(());
     }
     if plan_code == "pro" && status == "trialing" {
@@ -592,7 +604,11 @@ pub async fn create_domain(
     require_admin(&cu)?;
     require_scope(&cu, "organization:manage")?;
     ensure_resource_quota(&state, cu.organization_id, "domains").await?;
-    let hostname = input.hostname.trim().trim_end_matches('.').to_ascii_lowercase();
+    let hostname = input
+        .hostname
+        .trim()
+        .trim_end_matches('.')
+        .to_ascii_lowercase();
     if hostname.is_empty()
         || hostname.len() > 253
         || hostname.contains('/')
@@ -673,7 +689,11 @@ pub async fn verify_domain(
             })
         })
         .unwrap_or(false);
-    let status = if cname_ok && txt_ok { "active" } else { "failed" };
+    let status = if cname_ok && txt_ok {
+        "active"
+    } else {
+        "failed"
+    };
     let updated = sqlx::query_as::<_, OrganizationDomain>(
         r#"UPDATE organization_domains
            SET status = $3, verified_at = CASE WHEN $3 = 'active' THEN NOW() ELSE NULL END
@@ -705,12 +725,13 @@ pub async fn delete_domain(
 ) -> Result<StatusCode, StatusCode> {
     require_admin(&cu)?;
     require_scope(&cu, "organization:manage")?;
-    let result = sqlx::query("DELETE FROM organization_domains WHERE id = $1 AND organization_id = $2")
-        .bind(id)
-        .bind(cu.organization_id)
-        .execute(&state.db)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let result =
+        sqlx::query("DELETE FROM organization_domains WHERE id = $1 AND organization_id = $2")
+            .bind(id)
+            .bind(cu.organization_id)
+            .execute(&state.db)
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     if result.rows_affected() == 0 {
         return Err(StatusCode::NOT_FOUND);
     }

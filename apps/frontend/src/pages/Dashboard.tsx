@@ -85,6 +85,7 @@ function SetupChecklist({
   testReady,
   canWrite,
   onNavigate,
+  onDismiss,
 }: {
   destinationReady: boolean;
   providerReady: boolean;
@@ -92,6 +93,7 @@ function SetupChecklist({
   testReady: boolean;
   canWrite: boolean;
   onNavigate: (to: string) => void;
+  onDismiss: () => void;
 }) {
   if (destinationReady && providerReady && hookReady) return null;
   const steps = [
@@ -102,9 +104,14 @@ function SetupChecklist({
   ];
   return (
     <Card className="border-[rgba(74,222,128,.24)] bg-[rgba(74,222,128,.035)]">
-      <p className="text-[10px] font-semibold uppercase tracking-[.13em] text-success">Quick setup</p>
-      <h2 className="mt-1 text-base font-semibold text-foreground">Finish your notification flow</h2>
-      <p className="mt-1 text-sm text-secondary">Set a workspace destination, connect a provider, then choose where its notifications go.</p>
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <p className="text-[10px] font-semibold uppercase tracking-[.13em] text-success">Quick setup</p>
+          <h2 className="mt-1 text-base font-semibold text-foreground">Finish your notification flow</h2>
+          <p className="mt-1 text-sm text-secondary">Set a workspace destination, connect a provider, then choose where its notifications go.</p>
+        </div>
+        <button type="button" onClick={onDismiss} className="shrink-0 rounded-md px-2 py-1 text-xs text-muted hover:bg-hover hover:text-foreground">Skip for now</button>
+      </div>
       <div className="mt-4 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
         {steps.map((step, index) => (
           <button key={step.label} type="button" disabled={!canWrite || step.complete} onClick={() => onNavigate(step.to)} className="flex items-center gap-2 rounded-md border border-border bg-surface px-3 py-2.5 text-left text-sm transition-base hover:border-border-hover disabled:cursor-default disabled:hover:border-border">
@@ -349,6 +356,7 @@ export function Dashboard() {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [filterModalOpen, setFilterModalOpen] = useState(false);
   const [liveEventId, setLiveEventId] = useState<string | null>(null);
+  const [setupDismissed, setSetupDismissed] = useState(() => localStorage.getItem("trusin.dismissed-setup-checklist") === "1");
 
   useEffect(() => {
     if (searchParams.get("welcome") !== "1") return;
@@ -494,6 +502,10 @@ export function Dashboard() {
   const providers = rules.filter((rule) => rule.rule_kind === "provider");
   const hooks = rules.filter((rule) => rule.rule_kind === "hook");
   const destinationReady = destinations.some((destination) => destination.enabled);
+  const dismissSetup = () => {
+    localStorage.setItem("trusin.dismissed-setup-checklist", "1");
+    setSetupDismissed(true);
+  };
 
   const allVisibleIds = events.map((e) => e.id);
   const allSelected =
@@ -546,12 +558,12 @@ export function Dashboard() {
   }, [selected, bulkDelete, clearSelection]);
 
   return (
-    <div className="space-y-1">
+    <div className="space-y-5">
       <BetaBanner />
-      <SetupChecklist destinationReady={destinationReady} providerReady={providers.length > 0} testReady={events.length > 0} hookReady={hooks.length > 0} canWrite={canWrite} onNavigate={navigate} />
+      {!setupDismissed && <SetupChecklist destinationReady={destinationReady} providerReady={providers.length > 0} testReady={events.length > 0} hookReady={hooks.length > 0} canWrite={canWrite} onNavigate={navigate} onDismiss={dismissSetup} />}
       <EndpointBox />
 
-      <div className="flex items-end justify-between mb-3 mt-1">
+      <div className="flex items-end justify-between">
         <div><p className="text-[10px] uppercase tracking-[.13em] text-success font-semibold">Event operations</p><h2 className="text-base font-semibold mt-1 text-foreground">Recent deliveries</h2></div>
       </div>
       <Card className="p-0 overflow-hidden">

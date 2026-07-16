@@ -115,7 +115,11 @@ pub async fn send_webhook(
             .target_url
             .filter(|value| !value.trim().is_empty())
             .map(|value| value.trim().to_string())
-            .or(crate::organizations::default_target_for(&state.db, cu.organization_id).await.ok())
+            .or(
+                crate::organizations::default_target_for(&state.db, cu.organization_id)
+                    .await
+                    .ok(),
+            )
             .filter(|value| !value.trim().is_empty())
             .ok_or_else(|| {
                 error(

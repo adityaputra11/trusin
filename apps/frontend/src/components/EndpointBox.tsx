@@ -24,7 +24,7 @@ export function EndpointBox() {
   const masked = url ? "••••••••••••••••" : "";
 
   return (
-    <div className="relative overflow-hidden bg-[linear-gradient(100deg,rgba(74,222,128,.075),rgba(13,17,14,.82)_60%)] border border-[rgba(74,222,128,.18)] rounded-lg p-4 mb-6 flex items-center gap-3 shadow-[inset_0_1px_rgba(255,255,255,.02)]">
+    <div className="relative flex items-center gap-3 overflow-hidden rounded-lg border border-[rgba(74,222,128,.18)] bg-[linear-gradient(100deg,rgba(74,222,128,.075),rgba(13,17,14,.82)_60%)] p-4 shadow-[inset_0_1px_rgba(255,255,255,.02)]">
       <div className="absolute inset-y-0 left-0 w-[3px] bg-success" />
       <div className="h-10 w-10 rounded-md bg-[rgba(74,222,128,.09)] border border-[rgba(74,222,128,.18)] text-success flex items-center justify-center shrink-0">
         <Link2 className="h-5 w-5" />
