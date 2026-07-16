@@ -4,7 +4,6 @@ mod audit;
 mod auth;
 mod config;
 mod destinations;
-mod digests;
 mod events;
 mod invites;
 mod middleware;
@@ -39,7 +38,6 @@ use crate::config::{
     get_default_target, get_endpoint, get_oauth_status, health, set_default_target,
 };
 use crate::destinations::{list_destinations, save_destination, test_destination};
-use crate::digests::{get_weekly_digest, update_weekly_digest, weekly_digest_worker};
 use crate::events::{
     ack_event, bulk_delete, bulk_retry, delete_event, event_stream, get_event, list_attempts,
     list_events, list_hook_notifications, list_sources, retry_event,
@@ -178,7 +176,6 @@ async fn main() {
     tokio::spawn(retry_worker(db, r_redis));
     tokio::spawn(retention_worker(state.db.clone()));
     tokio::spawn(auth::welcome_email_worker(state.db.clone()));
-    tokio::spawn(weekly_digest_worker(state.db.clone()));
 
     let public = Router::new()
         .route("/config/endpoint", get(get_endpoint))
@@ -227,10 +224,6 @@ async fn main() {
             get(list_destinations).post(save_destination),
         )
         .route("/api/destinations/{kind}/test", post(test_destination))
-        .route(
-            "/api/digests/weekly",
-            get(get_weekly_digest).post(update_weekly_digest),
-        )
         .route("/api/platform/overview", get(platform_overview))
         .route(
             "/api/platform/organizations",

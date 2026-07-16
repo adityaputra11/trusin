@@ -25,8 +25,6 @@ import {
   useDestinations,
   useSaveDestination,
   useTestDestination,
-  useWeeklyDigest,
-  useUpdateWeeklyDigest,
 } from "../lib/hooks";
 import type { WorkspaceDestination } from "../types/api";
 import { useCanWrite, useCurrentUser } from "../lib/user-context";
@@ -463,23 +461,20 @@ const SETTINGS_SECTIONS: {
   { key: "workspace", label: "Workspace", description: "Plan, usage, domains, and activity", icon: Building2 },
   { key: "access", label: "Team", description: "Members, roles, and invitations", icon: Users, adminOnly: true },
   { key: "developer", label: "Developer", description: "API tokens, MCP, and relay health", icon: Code2 },
-  { key: "destinations", label: "Destinations", description: "Slack, Telegram, and email alerts", icon: Plug, adminOnly: true },
+  { key: "destinations", label: "Destinations", description: "Slack and Telegram alerts", icon: Plug, adminOnly: true },
   { key: "activity", label: "Activity", description: "Workspace audit history", icon: Activity },
 ];
 
-type DestinationKind = "slack" | "telegram" | "email";
+type DestinationKind = "slack" | "telegram";
 
 const DESTINATION_DETAILS: Record<DestinationKind, { title: string; description: string }> = {
   slack: { title: "Slack", description: "Post hook notifications through a Slack incoming webhook." },
   telegram: { title: "Telegram", description: "Post hook notifications with your bot to one chat." },
-  email: { title: "Email", description: "Send hook notifications using the workspace Resend configuration." },
 };
 
 function DestinationCard({ kind, destination }: { kind: DestinationKind; destination?: WorkspaceDestination }) {
   const save = useSaveDestination();
   const test = useTestDestination();
-  const digest = useWeeklyDigest();
-  const updateDigest = useUpdateWeeklyDigest();
   const [primary, setPrimary] = useState("");
   const [chatId, setChatId] = useState("");
   const detail = DESTINATION_DETAILS[kind];
@@ -487,9 +482,7 @@ function DestinationCard({ kind, destination }: { kind: DestinationKind; destina
   const hasNewConfig = kind === "telegram" ? Boolean(primary.trim() && chatId.trim()) : Boolean(primary.trim());
   const config: Record<string, string> = kind === "slack"
     ? { webhook_url: primary.trim() }
-    : kind === "telegram"
-      ? { bot_token: primary.trim(), chat_id: chatId.trim() }
-      : { recipient: primary.trim() };
+    : { bot_token: primary.trim(), chat_id: chatId.trim() };
   const saveConfig = (enabled: boolean) => {
     save.mutate({ kind, enabled, config: hasNewConfig ? config : {} });
   };
@@ -509,14 +502,7 @@ function DestinationCard({ kind, destination }: { kind: DestinationKind; destina
           </>
         )}
         {kind === "slack" && <Input type="password" value={primary} onChange={(event) => setPrimary(event.target.value)} placeholder="Slack incoming webhook URL" autoComplete="new-password" />}
-        {kind === "email" && <Input type="email" value={primary} onChange={(event) => setPrimary(event.target.value)} placeholder="alerts@example.com" autoComplete="email" />}
         <p className="text-xs text-muted">Credentials are stored privately and are never shown again. {destination ? `${destination.hooks} dependent hook${destination.hooks === 1 ? "" : "s"}.` : ""}</p>
-        {kind === "email" && destination?.enabled && (
-          <label className="flex items-start gap-2 rounded-md border border-border bg-surface p-3 text-xs text-secondary">
-            <input type="checkbox" checked={digest.data?.enabled ?? false} disabled={updateDigest.isPending} onChange={(event) => updateDigest.mutate(event.target.checked)} className="mt-0.5 accent-success" />
-            <span><span className="font-medium text-foreground">Weekly reliability digest</span><br />A 7-day delivery summary is sent to this email destination.</span>
-          </label>
-        )}
         <div className="flex flex-wrap gap-2">
           <Button size="sm" loading={save.isPending} disabled={!isConfigured && !hasNewConfig} onClick={() => saveConfig(true)}>{destination?.enabled ? "Save changes" : "Save & enable"}</Button>
           {destination?.enabled && <Button size="sm" variant="outline" loading={save.isPending} onClick={() => saveConfig(false)}>Disable</Button>}
@@ -535,7 +521,7 @@ function DestinationsSettings() {
         <h2 className="text-xl font-semibold text-foreground">Destinations</h2>
         <p className="mt-1 text-sm text-secondary">Configure workspace channels once, then select an enabled channel from each Hook.</p>
       </div>
-      <div className="grid gap-4 xl:grid-cols-3">
+      <div className="grid gap-4 xl:grid-cols-2">
         {(Object.keys(DESTINATION_DETAILS) as DestinationKind[]).map((kind) => <DestinationCard key={kind} kind={kind} destination={data.find((item) => item.kind === kind)} />)}
       </div>
     </div>

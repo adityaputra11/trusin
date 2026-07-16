@@ -27,7 +27,6 @@ import type {
   WorkspaceDestination,
   HookNotificationDelivery,
   RuleHealth,
-  WeeklyDigestSettings,
 } from "../types/api";
 
 function buildEventsQuery(q: EventQuery): string {
@@ -49,26 +48,14 @@ export function useDestinations() {
 
 export function useSaveDestination() {
   const qc = useQueryClient();
-  return useMutation({ mutationFn: (input: { kind: "slack" | "telegram" | "email"; enabled: boolean; config: Record<string, string> }) => api.post<WorkspaceDestination>("/api/destinations", input), onSuccess: () => qc.invalidateQueries({ queryKey: ["destinations"] }) });
+  return useMutation({ mutationFn: (input: { kind: "slack" | "telegram"; enabled: boolean; config: Record<string, string> }) => api.post<WorkspaceDestination>("/api/destinations", input), onSuccess: () => qc.invalidateQueries({ queryKey: ["destinations"] }) });
 }
 
 export function useTestDestination() {
   return useMutation({
-    mutationFn: (kind: "slack" | "telegram" | "email") => api.post<void>(`/api/destinations/${kind}/test`),
+    mutationFn: (kind: "slack" | "telegram") => api.post<void>(`/api/destinations/${kind}/test`),
     onSuccess: () => toast.success("Test notification sent"),
     onError: () => toast.error("Could not send the test notification"),
-  });
-}
-
-export function useWeeklyDigest() {
-  return useQuery<WeeklyDigestSettings>({ queryKey: ["weekly-digest"], queryFn: () => api.get("/api/digests/weekly") });
-}
-
-export function useUpdateWeeklyDigest() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (enabled: boolean) => api.post<WeeklyDigestSettings>("/api/digests/weekly", { enabled }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["weekly-digest"] }),
   });
 }
 

@@ -7,7 +7,7 @@ const COMMANDS = [
   { label: "Add provider", hint: "Configure a source", to: "/providers?new=1", icon: Plus },
   { label: "Add hook", hint: "Configure a notification", to: "/hooks?new=1", icon: Webhook },
   { label: "Send test webhook", hint: "Verify a provider", to: "/send", icon: Send },
-  { label: "Open destinations", hint: "Slack, Telegram, email", to: "/settings/destinations", icon: Bell },
+  { label: "Open destinations", hint: "Slack and Telegram", to: "/settings/destinations", icon: Bell },
   { label: "Open settings", hint: "Workspace controls", to: "/settings/workspace", icon: Settings2 },
 ] as const;
 

@@ -604,26 +604,6 @@ fn build_rule_request(
                     .post(url)
                     .json(&serde_json::json!({ "chat_id": chat_id, "text": text })))
             }
-            "email" => {
-                let recipient = value("recipient").ok_or("Email recipient is missing")?;
-                let api_key = std::env::var("RESEND_API_KEY")
-                    .ok()
-                    .filter(|value| !value.trim().is_empty())
-                    .ok_or("RESEND_API_KEY is not configured")?;
-                let from = std::env::var("EMAIL_FROM")
-                    .ok()
-                    .filter(|value| !value.trim().is_empty())
-                    .ok_or("EMAIL_FROM is not configured")?;
-                Ok(client
-                    .post("https://api.resend.com/emails")
-                    .bearer_auth(api_key)
-                    .json(&serde_json::json!({
-                        "from": from,
-                        "to": [recipient],
-                        "subject": format!("Terusin webhook {}: {}", delivery_status, event.source),
-                        "text": text,
-                    })))
-            }
             _ => Err("unsupported hook destination".to_string()),
         };
     }
@@ -687,23 +667,6 @@ async fn forward_to_rules(
     .unwrap_or_default();
 
     for mut rule in rules {
-        if event.source.eq_ignore_ascii_case("resend") && rule.destination_type == "email" {
-            warn!(
-                hook = %rule.name,
-                "hook skipped: Resend email destinations would create a feedback loop"
-            );
-            record_hook_notification(
-                db,
-                event,
-                &rule,
-                "skipped",
-                None,
-                Some("Email hooks cannot run for Resend events because they create a feedback loop"),
-                0,
-            )
-            .await;
-            continue;
-        }
         if rule.destination_type != "webhook" {
             let setting = sqlx::query_as::<_, (serde_json::Value, bool)>(
                 "SELECT config, enabled FROM organization_destinations WHERE organization_id = $1 AND kind = $2",

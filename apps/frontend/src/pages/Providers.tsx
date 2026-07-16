@@ -43,7 +43,7 @@ interface FormState {
   headers_text: string; // newline-separated "Key: value" lines, edited as text
   signing_secret: string;
   ingest_hostname: string;
-  failure_destination: "" | "slack" | "telegram" | "email";
+  failure_destination: "" | "slack" | "telegram";
 }
 
 const EMPTY: FormState = {
