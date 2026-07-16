@@ -31,6 +31,18 @@ export interface DeliveryAttempt {
   created_at: string;
 }
 
+export interface HookNotificationDelivery {
+  id: string;
+  event_id: string;
+  hook_id: string;
+  destination_type: "slack" | "telegram" | "email" | "webhook" | string;
+  status: "delivered" | "failed" | "skipped" | string;
+  http_status: number | null;
+  error: string | null;
+  attempts: number;
+  created_at: string;
+}
+
 export interface ForwardRule {
   id: string;
   name: string;
@@ -46,6 +58,14 @@ export interface ForwardRule {
   ingest_hostname: string | null;
   signing_secret?: string | null;
   created_at?: string;
+}
+
+export interface RuleHealth {
+  rule_id: string;
+  received_24h: number;
+  delivered_24h: number;
+  failed_24h: number;
+  last_activity_at: string | null;
 }
 
 export interface CreateRuleInput {
@@ -199,6 +219,18 @@ export interface OrganizationSubscription {
     users: number | null;
     retention_days: number | null;
   };
+}
+
+export interface WorkspaceDestination {
+  kind: "slack" | "telegram" | "email";
+  enabled: boolean;
+  updated_at: string;
+  hooks: number;
+}
+
+export interface WeeklyDigestSettings {
+  enabled: boolean;
+  last_sent_at: string | null;
 }
 
 export interface PlatformOverview {

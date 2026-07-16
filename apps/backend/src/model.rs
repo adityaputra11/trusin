@@ -65,6 +65,20 @@ pub struct DeliveryAttempt {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct HookNotificationDelivery {
+    pub id: Uuid,
+    pub organization_id: Uuid,
+    pub event_id: Uuid,
+    pub hook_id: Uuid,
+    pub destination_type: String,
+    pub status: String,
+    pub http_status: Option<i32>,
+    pub error: Option<String>,
+    pub attempts: i32,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct User {
     pub id: Uuid,
     pub organization_id: Uuid,

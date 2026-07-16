@@ -15,7 +15,7 @@ use uuid::Uuid;
 
 use crate::auth;
 use crate::middleware::{require_admin, require_scope};
-use crate::model::{DeliveryAttempt, WebhookEvent};
+use crate::model::{DeliveryAttempt, HookNotificationDelivery, WebhookEvent};
 use crate::state::AppState;
 use crate::workers::{QUEUE_KEY, RETRY_KEY};
 
@@ -48,7 +48,8 @@ pub async fn list_events(
     let offset = (page - 1) * per_page;
 
     let mut sql = "SELECT * FROM webhook_events WHERE organization_id = $1".to_string();
-    let mut count_sql = "SELECT COUNT(*) FROM webhook_events WHERE organization_id = $1".to_string();
+    let mut count_sql =
+        "SELECT COUNT(*) FROM webhook_events WHERE organization_id = $1".to_string();
     let mut params: Vec<String> = vec![];
 
     if let Some(ref s) = q.search {
@@ -127,12 +128,14 @@ pub async fn get_event(
     Path(id): Path<Uuid>,
 ) -> Result<Json<WebhookEvent>, StatusCode> {
     require_scope(&cu, "events:read")?;
-    let event = sqlx::query_as::<_, WebhookEvent>("SELECT * FROM webhook_events WHERE id = $1 AND organization_id = $2")
-        .bind(id)
-        .bind(cu.organization_id)
-        .fetch_optional(&state.db)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let event = sqlx::query_as::<_, WebhookEvent>(
+        "SELECT * FROM webhook_events WHERE id = $1 AND organization_id = $2",
+    )
+    .bind(id)
+    .bind(cu.organization_id)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     event.map(Json).ok_or(StatusCode::NOT_FOUND)
 }
 
@@ -154,18 +157,38 @@ pub async fn list_attempts(
     Ok(Json(rows))
 }
 
+/// Final Hook notification outcomes are intentionally separate from the main
+/// provider forwarding timeline so operators can diagnose each path clearly.
+pub async fn list_hook_notifications(
+    State(state): State<Arc<AppState>>,
+    axum::Extension(cu): axum::Extension<auth::CurrentUser>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<Vec<HookNotificationDelivery>>, StatusCode> {
+    require_scope(&cu, "events:read")?;
+    let rows = sqlx::query_as::<_, HookNotificationDelivery>(
+        "SELECT * FROM hook_notification_deliveries WHERE event_id = $1 AND organization_id = $2 ORDER BY created_at ASC, id ASC",
+    )
+    .bind(id)
+    .bind(cu.organization_id)
+    .fetch_all(&state.db)
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(rows))
+}
+
 /// Distinct sources (for the dashboard source filter dropdown).
 pub async fn list_sources(
     State(state): State<Arc<AppState>>,
     axum::Extension(cu): axum::Extension<auth::CurrentUser>,
 ) -> Result<Json<Vec<String>>, StatusCode> {
     require_scope(&cu, "events:read")?;
-    let rows: Vec<(String,)> =
-        sqlx::query_as("SELECT DISTINCT source FROM webhook_events WHERE organization_id = $1 ORDER BY source ASC")
-            .bind(cu.organization_id)
-            .fetch_all(&state.db)
-            .await
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let rows: Vec<(String,)> = sqlx::query_as(
+        "SELECT DISTINCT source FROM webhook_events WHERE organization_id = $1 ORDER BY source ASC",
+    )
+    .bind(cu.organization_id)
+    .fetch_all(&state.db)
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(rows.into_iter().map(|(s,)| s).collect()))
 }
 
@@ -248,11 +271,13 @@ pub async fn retry_event(
 ) -> Result<StatusCode, StatusCode> {
     require_admin(&cu)?;
     require_scope(&cu, "organization:manage")?;
-    let event = sqlx::query_as::<_, WebhookEvent>("SELECT * FROM webhook_events WHERE id = $1 AND organization_id = $2")
-        .bind(id)
-        .bind(cu.organization_id)
-        .fetch_optional(&state.db)
-        .await;
+    let event = sqlx::query_as::<_, WebhookEvent>(
+        "SELECT * FROM webhook_events WHERE id = $1 AND organization_id = $2",
+    )
+    .bind(id)
+    .bind(cu.organization_id)
+    .fetch_optional(&state.db)
+    .await;
 
     match event {
         Ok(Some(_)) => {

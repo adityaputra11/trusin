@@ -10,7 +10,7 @@ import {
   Trash2,
   History,
 } from "lucide-react";
-import { useEvent, useRetryEvent, useDeleteEvent, useAttempts } from "../lib/hooks";
+import { useEvent, useRetryEvent, useDeleteEvent, useAttempts, useHookNotifications } from "../lib/hooks";
 import { useCanWrite } from "../lib/user-context";
 import { StatusBadge } from "../components/StatusBadge";
 import {
@@ -40,6 +40,50 @@ function HeadersList({ headers }: { headers: Record<string, string> | null }) {
   );
 }
 
+function PayloadSummary({ body }: { body: unknown }) {
+  if (!body || typeof body !== "object" || Array.isArray(body)) return null;
+  const root = body as Record<string, unknown>;
+  const data = root.data && typeof root.data === "object" && !Array.isArray(root.data)
+    ? root.data as Record<string, unknown>
+    : {};
+  const value = (...keys: string[]) => {
+    for (const key of keys) {
+      const candidate = root[key] ?? data[key];
+      if (typeof candidate === "string" || typeof candidate === "number" || typeof candidate === "boolean") return String(candidate);
+    }
+    return null;
+  };
+  const customer = root.customer ?? data.customer;
+  const customerLabel = customer && typeof customer === "object" && !Array.isArray(customer)
+    ? valueFromCustomer(customer as Record<string, unknown>)
+    : value("customer_email", "email");
+  const fields = [
+    ["Event", value("event", "type", "event_type")],
+    ["Status", value("status", "state")],
+    ["Amount", value("amount", "total", "value")],
+    ["Currency", value("currency")],
+    ["Customer", customerLabel],
+    ["ID", value("id", "event_id", "reference_id")],
+  ].filter((field): field is [string, string] => Boolean(field[1]));
+  if (!fields.length) return null;
+  return (
+    <div className="mb-4 rounded-md border border-border bg-surface p-3">
+      <p className="mb-2 text-xs font-medium uppercase text-secondary">Payload summary</p>
+      <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-xs sm:grid-cols-3">
+        {fields.map(([label, fieldValue]) => <div key={label}><p className="text-muted">{label}</p><p className="mt-0.5 truncate font-medium text-foreground" title={fieldValue}>{fieldValue}</p></div>)}
+      </div>
+    </div>
+  );
+}
+
+function valueFromCustomer(customer: Record<string, unknown>) {
+  for (const key of ["name", "email", "id"]) {
+    const value = customer[key];
+    if (typeof value === "string" || typeof value === "number") return String(value);
+  }
+  return null;
+}
+
 function StatusIcon({ status }: { status: EventStatus }) {
   if (status === "delivered")
     return <CheckCircle2 className="h-4 w-4 text-success" />;
@@ -57,6 +101,7 @@ export function EventDetail() {
   const deleteEvent = useDeleteEvent();
   const canWrite = useCanWrite();
   const { data: attempts } = useAttempts(id, ev?.status);
+  const { data: notifications } = useHookNotifications(id, ev?.status);
   const [confirmDelete, setConfirmDelete] = useState(false);
 
   if (isLoading) return <FullSpinner label="Loading event…" />;
@@ -139,6 +184,7 @@ export function EventDetail() {
             title="Request"
             subtitle="Incoming webhook payload"
           />
+          <PayloadSummary body={ev.body} />
           <div className="mb-4">
             <p className="text-xs font-medium text-secondary uppercase mb-2">
               Headers
@@ -194,6 +240,7 @@ export function EventDetail() {
       </div>
 
       <DeliveryTimeline attempts={attempts ?? []} />
+      <HookNotificationsTimeline notifications={notifications ?? []} />
 
       <ConfirmDialog
         open={confirmDelete}
@@ -210,6 +257,27 @@ export function EventDetail() {
         }
       />
     </div>
+  );
+}
+
+function HookNotificationsTimeline({ notifications }: { notifications: import("../types/api").HookNotificationDelivery[] }) {
+  if (notifications.length === 0) return null;
+  return (
+    <Card className="mt-6">
+      <CardHeader title="Hook notifications" subtitle={`${notifications.length} notification${notifications.length === 1 ? "" : "s"}`} />
+      <div className="space-y-3">
+        {notifications.map((notification) => (
+          <div key={notification.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-md border border-border bg-surface px-3 py-2.5 text-sm">
+            <span className="font-semibold capitalize text-foreground">{notification.destination_type}</span>
+            <StatusBadge status={notification.status} />
+            {notification.http_status !== null && <code className="font-mono text-xs text-secondary">HTTP {notification.http_status}</code>}
+            <span className="text-xs text-muted">{notification.attempts} attempt{notification.attempts === 1 ? "" : "s"}</span>
+            <span className="text-xs text-muted">{formatDateTime(notification.created_at)}</span>
+            {notification.error && <p className="basis-full text-xs text-danger">{notification.error}</p>}
+          </div>
+        ))}
+      </div>
+    </Card>
   );
 }
 

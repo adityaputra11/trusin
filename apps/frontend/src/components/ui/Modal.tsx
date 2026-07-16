@@ -95,9 +95,9 @@ export function Modal({ open, onClose, title, description, children, footer }: M
         aria-describedby={description ? descId : undefined}
         tabIndex={-1}
         onKeyDown={onKeyDown}
-        className="relative w-full max-w-md bg-card border border-border rounded-lg shadow-2xl outline-none"
+        className="relative flex max-h-[calc(100dvh-2rem)] w-full max-w-xl flex-col overflow-hidden rounded-lg border border-border bg-card shadow-2xl outline-none"
       >
-        <div className="flex items-start justify-between p-6 pb-4">
+        <div className="flex shrink-0 items-start justify-between p-6 pb-4">
           <div>
             <h2 id={titleId} className="text-lg font-semibold text-foreground">
               {title}
@@ -116,9 +116,9 @@ export function Modal({ open, onClose, title, description, children, footer }: M
             <X className="h-5 w-5" />
           </button>
         </div>
-        <div className="px-6 pb-4">{children}</div>
+        <div className="min-h-0 flex-1 overflow-y-auto px-6 pb-4">{children}</div>
         {footer && (
-          <div className="flex items-center justify-end gap-2 p-6 pt-4 border-t border-border">
+          <div className="flex shrink-0 items-center justify-end gap-2 border-t border-border p-6 pt-4">
             {footer}
           </div>
         )}
