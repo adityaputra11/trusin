@@ -1,6 +1,7 @@
 import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   Inbox,
   Search,
@@ -9,14 +10,20 @@ import {
   SlidersHorizontal,
   X,
   AlertCircle,
+  CheckCircle2,
+  Circle,
+  FlaskConical,
 } from "lucide-react";
 import {
   useEvents,
   useSources,
   useBulkRetry,
   useBulkDelete,
+  useDestinations,
+  useRules,
 } from "../lib/hooks";
 import { useCanWrite } from "../lib/user-context";
+import { getAuthHeader } from "../lib/auth";
 import { EndpointBox } from "../components/EndpointBox";
 import { EventRow } from "../components/EventRow";
 import {
@@ -49,6 +56,66 @@ const STATUS_FILTERS: { value: string; label: string }[] = [
 const STATUS_LABEL: Record<string, string> = Object.fromEntries(
   STATUS_FILTERS.map((s) => [s.value, s.label]),
 );
+
+function BetaBanner() {
+  const [open, setOpen] = useState(true);
+  if (!open) return null;
+  return (
+    <div className="relative overflow-hidden rounded-lg border border-[rgba(74,222,128,.26)] bg-[linear-gradient(100deg,rgba(74,222,128,.11),rgba(74,222,128,.035)_58%,rgba(7,10,8,.2))] px-4 py-3.5 pr-12">
+      <div className="flex items-start gap-3">
+        <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-[rgba(74,222,128,.3)] bg-[rgba(74,222,128,.12)] text-success">
+          <FlaskConical className="h-4 w-4" />
+        </span>
+        <div>
+          <p className="text-sm font-semibold text-foreground">You’re helping test the trusin beta</p>
+          <p className="mt-0.5 text-sm text-secondary">Things may change while we refine webhook delivery, destinations, and observability. Thanks for reporting anything unexpected.</p>
+        </div>
+      </div>
+      <button type="button" onClick={() => setOpen(false)} className="absolute right-3 top-3 rounded-md p-1.5 text-muted transition-base hover:bg-hover hover:text-foreground" aria-label="Dismiss beta notice" title="Dismiss">
+        <X className="h-4 w-4" />
+      </button>
+    </div>
+  );
+}
+
+function SetupChecklist({
+  destinationReady,
+  providerReady,
+  hookReady,
+  testReady,
+  canWrite,
+  onNavigate,
+}: {
+  destinationReady: boolean;
+  providerReady: boolean;
+  hookReady: boolean;
+  testReady: boolean;
+  canWrite: boolean;
+  onNavigate: (to: string) => void;
+}) {
+  if (destinationReady && providerReady && hookReady) return null;
+  const steps = [
+    { label: "Configure destination", complete: destinationReady, to: "/settings/destinations" },
+    { label: "Add provider", complete: providerReady, to: "/providers" },
+    { label: "Send test", complete: testReady, to: "/send" },
+    { label: "Add hook", complete: hookReady, to: "/hooks" },
+  ];
+  return (
+    <Card className="border-[rgba(74,222,128,.24)] bg-[rgba(74,222,128,.035)]">
+      <p className="text-[10px] font-semibold uppercase tracking-[.13em] text-success">Quick setup</p>
+      <h2 className="mt-1 text-base font-semibold text-foreground">Finish your notification flow</h2>
+      <p className="mt-1 text-sm text-secondary">Set a workspace destination, connect a provider, then choose where its notifications go.</p>
+      <div className="mt-4 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+        {steps.map((step, index) => (
+          <button key={step.label} type="button" disabled={!canWrite || step.complete} onClick={() => onNavigate(step.to)} className="flex items-center gap-2 rounded-md border border-border bg-surface px-3 py-2.5 text-left text-sm transition-base hover:border-border-hover disabled:cursor-default disabled:hover:border-border">
+            {step.complete ? <CheckCircle2 className="h-4 w-4 shrink-0 text-success" /> : <Circle className="h-4 w-4 shrink-0 text-muted" />}
+            <span className={step.complete ? "text-secondary line-through" : "font-medium text-foreground"}>{index + 1}. {step.label}</span>
+          </button>
+        ))}
+      </div>
+    </Card>
+  );
+}
 
 // Isolated + memoized so typing in the search input re-renders only this bar,
 // not the 50-row table body beneath it. Search is the one filter that stays
@@ -268,6 +335,7 @@ export function Dashboard() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const canWrite = useCanWrite();
+  const queryClient = useQueryClient();
 
   // UI state (what the user typed) vs committed state (what we query for).
   // Splitting them lets us debounce the actual fetch without throttling input.
@@ -280,6 +348,7 @@ export function Dashboard() {
   const [page, setPage] = useState(1);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [filterModalOpen, setFilterModalOpen] = useState(false);
+  const [liveEventId, setLiveEventId] = useState<string | null>(null);
 
   useEffect(() => {
     if (searchParams.get("welcome") !== "1") return;
@@ -288,6 +357,60 @@ export function Dashboard() {
     next.delete("welcome");
     setSearchParams(next, { replace: true });
   }, [searchParams, setSearchParams]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    let reconnectTimer: number | undefined;
+    let highlightTimer: number | undefined;
+    const connect = async () => {
+      try {
+        const auth = getAuthHeader();
+        const response = await fetch("/events/stream", {
+          headers: auth ? { Authorization: auth } : {},
+          credentials: "include",
+          signal: controller.signal,
+        });
+        if (!response.ok || !response.body) throw new Error("Live stream unavailable");
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+        while (!controller.signal.aborted) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const messages = buffer.split("\n\n");
+          buffer = messages.pop() ?? "";
+          for (const message of messages) {
+            const data = message.split("\n").find((line) => line.startsWith("data: "))?.slice(6);
+            if (!data) continue;
+            try {
+              const event = JSON.parse(data) as { id: string; source: string };
+              queryClient.invalidateQueries({ queryKey: ["events"] });
+              queryClient.invalidateQueries({ queryKey: ["sources"] });
+              setLiveEventId(event.id);
+              window.clearTimeout(highlightTimer);
+              highlightTimer = window.setTimeout(() => setLiveEventId(null), 2200);
+              toast.success("New webhook received", {
+                description: `${event.source} is now in the delivery queue.`,
+                action: { label: "View", onClick: () => navigate(`/event/${event.id}`) },
+              });
+            } catch {
+              // Ignore SSE comments or malformed intermediary data.
+            }
+          }
+        }
+      } catch {
+        // Fall back to the existing 15-second query poll when the stream is unavailable.
+      }
+      if (!controller.signal.aborted) reconnectTimer = window.setTimeout(connect, 3000);
+    };
+    connect();
+    return () => {
+      controller.abort();
+      window.clearTimeout(reconnectTimer);
+      window.clearTimeout(highlightTimer);
+    };
+  }, [navigate, queryClient]);
 
   // Debounce timer in a ref: setting it never triggers a re-render.
   const debounceRef = useRef<number | undefined>(undefined);
@@ -304,6 +427,8 @@ export function Dashboard() {
   };
 
   const { data: sources } = useSources();
+  const { data: destinations = [] } = useDestinations();
+  const { data: rules = [] } = useRules();
   const bulkRetry = useBulkRetry();
   const bulkDelete = useBulkDelete();
 
@@ -366,6 +491,9 @@ export function Dashboard() {
   );
 
   const events = data?.events ?? [];
+  const providers = rules.filter((rule) => rule.rule_kind === "provider");
+  const hooks = rules.filter((rule) => rule.rule_kind === "hook");
+  const destinationReady = destinations.some((destination) => destination.enabled);
 
   const allVisibleIds = events.map((e) => e.id);
   const allSelected =
@@ -419,6 +547,8 @@ export function Dashboard() {
 
   return (
     <div className="space-y-1">
+      <BetaBanner />
+      <SetupChecklist destinationReady={destinationReady} providerReady={providers.length > 0} testReady={events.length > 0} hookReady={hooks.length > 0} canWrite={canWrite} onNavigate={navigate} />
       <EndpointBox />
 
       <div className="flex items-end justify-between mb-3 mt-1">
@@ -491,6 +621,7 @@ export function Dashboard() {
             icon={<Inbox className="h-10 w-10" strokeWidth={1.5} />}
             title="No events yet"
             description="Webhooks received by the backend will show up here in real time."
+            action={canWrite ? <Button variant="outline" size="sm" onClick={() => navigate("/send")}><FlaskConical className="h-4 w-4" /> Send a test webhook</Button> : undefined}
           />
         ) : (
           <>
@@ -521,6 +652,7 @@ export function Dashboard() {
                     event={ev}
                     onClick={onRowClick}
                     selected={selected.has(ev.id)}
+                    highlighted={liveEventId === ev.id}
                     onSelect={canWrite ? toggleOne : undefined}
                   />
                 ))}

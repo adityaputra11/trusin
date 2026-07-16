@@ -5,7 +5,7 @@ use std::sync::Arc;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::Json;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::auth;
@@ -26,6 +26,54 @@ pub async fn list_rules(
     .await
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(rules))
+}
+
+#[derive(Serialize, sqlx::FromRow)]
+pub struct RuleHealth {
+    pub rule_id: Uuid,
+    pub received_24h: i64,
+    pub delivered_24h: i64,
+    pub failed_24h: i64,
+    pub last_activity_at: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+/// A compact 24-hour health view for providers and hooks. This is deliberately
+/// derived from delivery records instead of trusting a cached rule flag.
+pub async fn rule_health(
+    State(state): State<Arc<AppState>>,
+    axum::Extension(cu): axum::Extension<auth::CurrentUser>,
+) -> Result<Json<Vec<RuleHealth>>, StatusCode> {
+    require_scope(&cu, "rules:read")?;
+    let rows = sqlx::query_as::<_, RuleHealth>(
+        r#"SELECT provider.id AS rule_id,
+                  COUNT(event.id)::BIGINT AS received_24h,
+                  COUNT(event.id) FILTER (WHERE event.status = 'delivered')::BIGINT AS delivered_24h,
+                  COUNT(event.id) FILTER (WHERE event.status = 'failed')::BIGINT AS failed_24h,
+                  MAX(event.created_at) AT TIME ZONE 'UTC' AS last_activity_at
+           FROM forward_rules provider
+           LEFT JOIN webhook_events event ON event.organization_id = provider.organization_id
+               AND event.source = provider.source_pattern
+               AND event.created_at >= NOW() - INTERVAL '24 hours'
+           WHERE provider.organization_id = $1 AND provider.rule_kind = 'provider'
+           GROUP BY provider.id
+           UNION ALL
+           SELECT hook.id AS rule_id,
+                  COUNT(notification.id)::BIGINT AS received_24h,
+                  COUNT(notification.id) FILTER (WHERE notification.status = 'delivered')::BIGINT AS delivered_24h,
+                  COUNT(notification.id) FILTER (WHERE notification.status IN ('failed', 'skipped'))::BIGINT AS failed_24h,
+                  MAX(notification.created_at) AS last_activity_at
+           FROM forward_rules hook
+           LEFT JOIN hook_notification_deliveries notification ON notification.hook_id = hook.id
+               AND notification.organization_id = hook.organization_id
+               AND notification.created_at >= NOW() - INTERVAL '24 hours'
+           WHERE hook.organization_id = $1 AND hook.rule_kind = 'hook'
+           GROUP BY hook.id"#,
+    )
+    .bind(cu.organization_id)
+    .fetch_all(&state.db)
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(rows))
 }
 
 #[derive(Deserialize)]
@@ -84,6 +132,9 @@ fn destination_target_and_config(
             Ok((target_url, serde_json::Value::Object(config)))
         }
         "slack" => {
+            if config.is_empty() {
+                return Ok(("Slack".to_string(), serde_json::json!({})));
+            }
             let webhook_url = string("webhook_url").ok_or(StatusCode::BAD_REQUEST)?;
             if !valid_http_url(webhook_url) {
                 return Err(StatusCode::BAD_REQUEST);
@@ -94,6 +145,9 @@ fn destination_target_and_config(
             ))
         }
         "telegram" => {
+            if config.is_empty() {
+                return Ok(("Telegram".to_string(), serde_json::json!({})));
+            }
             let bot_token = string("bot_token").ok_or(StatusCode::BAD_REQUEST)?;
             let chat_id = string("chat_id").ok_or(StatusCode::BAD_REQUEST)?;
             Ok((
@@ -102,6 +156,9 @@ fn destination_target_and_config(
             ))
         }
         "email" => {
+            if config.is_empty() {
+                return Ok(("Email".to_string(), serde_json::json!({})));
+            }
             let recipient = string("recipient").ok_or(StatusCode::BAD_REQUEST)?;
             if !valid_email(recipient) {
                 return Err(StatusCode::BAD_REQUEST);
@@ -150,6 +207,25 @@ async fn validated_ingest_hostname(
         .ok_or(StatusCode::BAD_REQUEST)
 }
 
+async fn ensure_native_destination_available(
+    db: &sqlx::PgPool,
+    organization_id: Uuid,
+    destination_type: &str,
+) -> Result<(), StatusCode> {
+    if destination_type == "webhook" {
+        return Ok(());
+    }
+    let available: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM organization_destinations WHERE organization_id = $1 AND kind = $2 AND enabled = true)",
+    )
+    .bind(organization_id)
+    .bind(destination_type)
+    .fetch_one(db)
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    available.then_some(()).ok_or(StatusCode::CONFLICT)
+}
+
 pub async fn create_rule(
     State(state): State<Arc<AppState>>,
     axum::Extension(cu): axum::Extension<auth::CurrentUser>,
@@ -193,12 +269,20 @@ pub async fn create_rule(
     if rule_kind != "hook" && destination_type != "webhook" {
         return Err(StatusCode::BAD_REQUEST);
     }
+    if rule_kind == "hook" {
+        ensure_native_destination_available(&state.db, cu.organization_id, &destination_type)
+            .await?;
+    }
     let (target_url, destination_config) = destination_target_and_config(
         &destination_type,
         input.target_url.trim().to_string(),
-        input
-            .destination_config
-            .unwrap_or_else(|| serde_json::json!({})),
+        if rule_kind == "hook" && destination_type != "webhook" {
+            serde_json::json!({})
+        } else {
+            input
+                .destination_config
+                .unwrap_or_else(|| serde_json::json!({}))
+        },
     )?;
     let ingest_hostname = if rule_kind == "provider" {
         validated_ingest_hostname(&state.db, cu.organization_id, input.ingest_hostname).await?
@@ -359,12 +443,23 @@ pub async fn update_rule(
     if current.rule_kind != "hook" && destination_type != "webhook" {
         return Err(StatusCode::BAD_REQUEST);
     }
+    if current.rule_kind == "hook" {
+        ensure_native_destination_available(&state.db, cu.organization_id, &destination_type)
+            .await?;
+    }
     let config = input
         .destination_config
         .unwrap_or(current.destination_config);
     let candidate_target = input.target_url.unwrap_or(current.target_url);
-    let (target_url, destination_config) =
-        destination_target_and_config(&destination_type, candidate_target, config)?;
+    let (target_url, destination_config) = destination_target_and_config(
+        &destination_type,
+        candidate_target,
+        if current.rule_kind == "hook" && destination_type != "webhook" {
+            serde_json::json!({})
+        } else {
+            config
+        },
+    )?;
     let ingest_hostname = if current.rule_kind == "provider" {
         match input.ingest_hostname {
             Some(hostname) => {

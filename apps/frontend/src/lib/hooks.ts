@@ -24,6 +24,10 @@ import type {
   UpdateRuleInput,
   WorkspaceUser,
   WebhookEvent,
+  WorkspaceDestination,
+  HookNotificationDelivery,
+  RuleHealth,
+  WeeklyDigestSettings,
 } from "../types/api";
 
 function buildEventsQuery(q: EventQuery): string {
@@ -37,6 +41,35 @@ function buildEventsQuery(q: EventQuery): string {
   if (q.per_page) p.set("per_page", String(q.per_page));
   const s = p.toString();
   return s ? `?${s}` : "";
+}
+
+export function useDestinations() {
+  return useQuery<WorkspaceDestination[]>({ queryKey: ["destinations"], queryFn: () => api.get("/api/destinations") });
+}
+
+export function useSaveDestination() {
+  const qc = useQueryClient();
+  return useMutation({ mutationFn: (input: { kind: "slack" | "telegram" | "email"; enabled: boolean; config: Record<string, string> }) => api.post<WorkspaceDestination>("/api/destinations", input), onSuccess: () => qc.invalidateQueries({ queryKey: ["destinations"] }) });
+}
+
+export function useTestDestination() {
+  return useMutation({
+    mutationFn: (kind: "slack" | "telegram" | "email") => api.post<void>(`/api/destinations/${kind}/test`),
+    onSuccess: () => toast.success("Test notification sent"),
+    onError: () => toast.error("Could not send the test notification"),
+  });
+}
+
+export function useWeeklyDigest() {
+  return useQuery<WeeklyDigestSettings>({ queryKey: ["weekly-digest"], queryFn: () => api.get("/api/digests/weekly") });
+}
+
+export function useUpdateWeeklyDigest() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (enabled: boolean) => api.post<WeeklyDigestSettings>("/api/digests/weekly", { enabled }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["weekly-digest"] }),
+  });
 }
 
 export function useEvents(q: EventQuery, opts?: { refetchInterval?: number }) {
@@ -67,6 +100,16 @@ export function useAttempts(
   return useQuery<DeliveryAttempt[]>({
     queryKey: ["attempts", eventId],
     queryFn: () => api.get<DeliveryAttempt[]>(`/events/${eventId}/attempts`),
+    enabled: !!eventId,
+    refetchInterval: inFlight ? 3000 : false,
+  });
+}
+
+export function useHookNotifications(eventId: string | undefined, eventStatus: string | undefined) {
+  const inFlight = eventStatus === "queued" || eventStatus === "retrying";
+  return useQuery<HookNotificationDelivery[]>({
+    queryKey: ["hook-notifications", eventId],
+    queryFn: () => api.get<HookNotificationDelivery[]>(`/events/${eventId}/hook-notifications`),
     enabled: !!eventId,
     refetchInterval: inFlight ? 3000 : false,
   });
@@ -302,6 +345,14 @@ export function useRules() {
   return useQuery<ForwardRule[]>({
     queryKey: ["rules"],
     queryFn: () => api.get<ForwardRule[]>(`/rules`),
+  });
+}
+
+export function useRuleHealth() {
+  return useQuery<RuleHealth[]>({
+    queryKey: ["rule-health"],
+    queryFn: () => api.get<RuleHealth[]>("/rules/health"),
+    refetchInterval: 30_000,
   });
 }
 

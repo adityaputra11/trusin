@@ -1,5 +1,5 @@
-import { useState, type FormEvent } from "react";
-import { Navigate } from "react-router-dom";
+import { useEffect, useState, type FormEvent } from "react";
+import { Navigate, useSearchParams } from "react-router-dom";
 import { Send, CheckCircle2, AlertCircle } from "lucide-react";
 import { ApiError, api } from "../lib/api";
 import { useRules } from "../lib/hooks";
@@ -40,6 +40,7 @@ function validateTarget(value: string): string | null {
 }
 
 export function SendWebhook() {
+  const [searchParams, setSearchParams] = useSearchParams();
   const canWrite = useCanWrite();
   const { data: rules, isLoading: providersLoading, isError: providersError } = useRules();
   const [providerId, setProviderId] = useState(CUSTOM_PROVIDER);
@@ -59,6 +60,13 @@ export function SendWebhook() {
       : selectedProvider.source_pattern
     : "";
   const isCustom = !selectedProvider;
+
+  useEffect(() => {
+    const requestedProvider = searchParams.get("provider");
+    if (!requestedProvider || !providers.some((provider) => provider.id === requestedProvider)) return;
+    setProviderId(requestedProvider);
+    setSearchParams({}, { replace: true });
+  }, [providers, searchParams, setSearchParams]);
 
   if (!canWrite) return <Navigate to="/" replace />;
 

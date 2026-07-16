@@ -1,6 +1,8 @@
+import { useEffect, useState } from "react";
 import { Outlet, useLocation } from "react-router-dom";
 import { MobileNav, Sidebar } from "./Sidebar";
 import { TopBar } from "./TopBar";
+import { CommandPalette } from "./CommandPalette";
 import { useMe } from "../../lib/hooks";
 import { UserContext } from "../../lib/user-context";
 
@@ -31,6 +33,18 @@ export function Layout() {
   // useCurrentUser() / useCanWrite() — no per-page useMe() calls.
   const me = useMe();
   const user = me.data ?? null;
+  const [commandOpen, setCommandOpen] = useState(false);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        setCommandOpen((open) => !open);
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
 
   return (
     <UserContext.Provider value={user}>
@@ -45,6 +59,7 @@ export function Layout() {
             </div>
           </main>
           <MobileNav />
+          <CommandPalette open={commandOpen} onClose={() => setCommandOpen(false)} />
         </div>
       </div>
     </UserContext.Provider>

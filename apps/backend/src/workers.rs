@@ -86,6 +86,30 @@ async fn record_attempt(
     .map(|_| ());
 }
 
+async fn record_hook_notification(
+    db: &sqlx::PgPool,
+    event: &WebhookEvent,
+    rule: &ForwardRule,
+    status: &str,
+    http_status: Option<i32>,
+    error: Option<&str>,
+    attempts: i32,
+) {
+    let _ = sqlx::query(
+        "INSERT INTO hook_notification_deliveries (organization_id, event_id, hook_id, destination_type, status, http_status, error, attempts) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)",
+    )
+    .bind(event.organization_id)
+    .bind(event.id)
+    .bind(rule.id)
+    .bind(&rule.destination_type)
+    .bind(status)
+    .bind(http_status)
+    .bind(error)
+    .bind(attempts)
+    .execute(db)
+    .await;
+}
+
 /// Main delivery worker. Pops event ids off the Redis queue and attempts to
 /// deliver each to its `target_url`, signing with the optional global
 /// `DEFAULT_SIGNING_SECRET` and recording each attempt.
@@ -662,14 +686,47 @@ async fn forward_to_rules(
     .await
     .unwrap_or_default();
 
-    for rule in rules {
+    for mut rule in rules {
+        if rule.destination_type != "webhook" {
+            let setting = sqlx::query_as::<_, (serde_json::Value, bool)>(
+                "SELECT config, enabled FROM organization_destinations WHERE organization_id = $1 AND kind = $2",
+            )
+            .bind(event.organization_id)
+            .bind(&rule.destination_type)
+            .fetch_optional(db)
+            .await
+            .ok()
+            .flatten();
+            let Some((config, true)) = setting else {
+                warn!(
+                    "hook {} skipped: {} destination is unavailable",
+                    rule.name, rule.destination_type
+                );
+                record_hook_notification(
+                    db,
+                    event,
+                    &rule,
+                    "skipped",
+                    None,
+                    Some("Workspace destination is disabled or not configured"),
+                    0,
+                )
+                .await;
+                continue;
+            };
+            rule.destination_config = config;
+        }
         let delivery_status = if trigger_on == "success" {
             "delivered"
         } else {
             "failed"
         };
         let mut delivered = false;
+        let mut http_status = None;
+        let mut error = None;
+        let mut attempts = 0;
         for attempt in 1..=3 {
+            attempts = attempt;
             let result = build_rule_request(client, &rule, event, delivery_status, response_status)
                 .and_then(|request| Ok(request));
             let response = match result {
@@ -684,16 +741,27 @@ async fn forward_to_rules(
                         rule.target_url,
                         response.status()
                     );
+                    http_status = Some(response.status().as_u16() as i32);
                     delivered = true;
                     break;
                 }
-                Ok(response) => warn!(
-                    "hook {} attempt {attempt}/3 -> {}: {}",
-                    rule.name,
-                    rule.target_url,
-                    response.status()
-                ),
-                Err(error) => warn!("hook {} attempt {attempt}/3 failed: {error}", rule.name),
+                Ok(response) => {
+                    http_status = Some(response.status().as_u16() as i32);
+                    error = Some("Notification endpoint returned an error response");
+                    warn!(
+                        "hook {} attempt {attempt}/3 -> {}: {}",
+                        rule.name,
+                        rule.target_url,
+                        response.status()
+                    );
+                }
+                Err(request_error) => {
+                    error = Some("Notification request could not be completed");
+                    warn!(
+                        "hook {} attempt {attempt}/3 failed: {request_error}",
+                        rule.name
+                    );
+                }
             }
             if attempt < 3 {
                 tokio::time::sleep(tokio::time::Duration::from_millis(250 * attempt)).await;
@@ -702,5 +770,15 @@ async fn forward_to_rules(
         if !delivered {
             warn!("hook {} could not be delivered after 3 attempts", rule.name);
         }
+        record_hook_notification(
+            db,
+            event,
+            &rule,
+            if delivered { "delivered" } else { "failed" },
+            http_status,
+            error,
+            attempts as i32,
+        )
+        .await;
     }
 }

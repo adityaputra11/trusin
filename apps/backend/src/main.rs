@@ -3,6 +3,8 @@
 mod audit;
 mod auth;
 mod config;
+mod destinations;
+mod digests;
 mod events;
 mod invites;
 mod middleware;
@@ -36,22 +38,24 @@ use tracing::info;
 use crate::config::{
     get_default_target, get_endpoint, get_oauth_status, health, set_default_target,
 };
+use crate::destinations::{list_destinations, save_destination, test_destination};
+use crate::digests::{get_weekly_digest, update_weekly_digest, weekly_digest_worker};
 use crate::events::{
     ack_event, bulk_delete, bulk_retry, delete_event, event_stream, get_event, list_attempts,
-    list_events, list_sources, retry_event,
+    list_events, list_hook_notifications, list_sources, retry_event,
 };
-use crate::ratelimit::build_rate_limiter;
-use crate::rules::{create_rule, delete_rule, list_rules, update_rule};
-use crate::send::send_webhook;
+use crate::invites::{create_invite, list_invites, resend_invite, revoke_invite};
 use crate::organizations::{
     bootstrap_default_organization, create_domain, current_organization, delete_domain,
     list_domains, provision_organization, retention_worker, verify_domain,
 };
-use crate::invites::{create_invite, list_invites, resend_invite, revoke_invite};
 use crate::platform::{
     bootstrap_platform_operator, list_platform_organizations, platform_organization_detail,
     platform_overview, update_platform_subscription,
 };
+use crate::ratelimit::build_rate_limiter;
+use crate::rules::{create_rule, delete_rule, list_rules, rule_health, update_rule};
+use crate::send::send_webhook;
 use crate::state::{redis_from_env, seed_default_user};
 use crate::stats::metrics;
 use crate::users::{list_users, update_user_role};
@@ -174,6 +178,7 @@ async fn main() {
     tokio::spawn(retry_worker(db, r_redis));
     tokio::spawn(retention_worker(state.db.clone()));
     tokio::spawn(auth::welcome_email_worker(state.db.clone()));
+    tokio::spawn(weekly_digest_worker(state.db.clone()));
 
     let public = Router::new()
         .route("/config/endpoint", get(get_endpoint))
@@ -205,13 +210,27 @@ async fn main() {
         .route("/events/bulk/delete", post(bulk_delete))
         .route("/events/{id}", get(get_event).delete(delete_event))
         .route("/events/{id}/attempts", get(list_attempts))
+        .route(
+            "/events/{id}/hook-notifications",
+            get(list_hook_notifications),
+        )
         .route("/events/{id}/retry", post(retry_event))
         .route("/events/{id}/ack", post(ack_event))
         .route("/rules", get(list_rules).post(create_rule))
+        .route("/rules/health", get(rule_health))
         .route("/rules/{id}", delete(delete_rule).patch(update_rule))
         .route("/stats", get(metrics))
         .route("/api/send", post(send_webhook))
         .route("/api/organization", get(current_organization))
+        .route(
+            "/api/destinations",
+            get(list_destinations).post(save_destination),
+        )
+        .route("/api/destinations/{kind}/test", post(test_destination))
+        .route(
+            "/api/digests/weekly",
+            get(get_weekly_digest).post(update_weekly_digest),
+        )
         .route("/api/platform/overview", get(platform_overview))
         .route(
             "/api/platform/organizations",

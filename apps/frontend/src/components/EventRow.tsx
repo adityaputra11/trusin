@@ -8,6 +8,7 @@ interface EventRowProps {
   event: WebhookEvent;
   onClick: (id: string) => void;
   selected?: boolean;
+  highlighted?: boolean;
   onSelect?: (id: string) => void;
 }
 
@@ -18,10 +19,11 @@ export const EventRow = memo(function EventRow({
   event,
   onClick,
   selected,
+  highlighted,
   onSelect,
 }: EventRowProps) {
   return (
-    <TR onClick={() => onClick(event.id)} className={selected ? "bg-hover" : ""}>
+    <TR onClick={() => onClick(event.id)} className={highlighted ? "bg-[rgba(74,222,128,.12)] animate-pulse" : selected ? "bg-hover" : ""}>
       <TD onClick={(e) => e.stopPropagation()}>
         {onSelect && (
           <input

@@ -20,9 +20,11 @@ function LimitBar({ label, used, limit }: { label: string; used: number; limit: 
         <span className="text-secondary">{label}</span>
         <span className="text-muted">{unlimited ? `${used} · Unlimited` : `${used.toLocaleString()} / ${limit.toLocaleString()}`}</span>
       </div>
-      <div className="h-1.5 rounded-full bg-surface overflow-hidden">
-        <div className={`h-full rounded-full ${percent >= 90 ? "bg-warning" : "bg-success"}`} style={{ width: unlimited ? "8%" : `${percent}%` }} />
-      </div>
+      {!unlimited && (
+        <div className="h-1.5 rounded-full bg-surface overflow-hidden">
+          <div className={`h-full rounded-full ${percent >= 90 ? "bg-warning" : "bg-success"}`} style={{ width: `${percent}%` }} />
+        </div>
+      )}
     </div>
   );
 }
@@ -143,7 +145,7 @@ export function Organization() {
         <CardHeader title="Organization API keys" subtitle="Keys belong to this organization and carry explicit scopes." action={<KeyRound className="h-5 w-5 text-muted" />} />
         <div className="flex flex-col sm:flex-row gap-3 sm:items-center sm:justify-between">
           <p className="text-sm text-secondary">{usage.api_keys} active key{usage.api_keys === 1 ? "" : "s"}. Create, inspect scopes, or revoke them from Settings.</p>
-          <Button variant="outline" onClick={() => navigate("/settings")}><ExternalLink className="h-4 w-4" /> Manage keys</Button>
+          <Button variant="outline" onClick={() => navigate("/settings/developer")}><ExternalLink className="h-4 w-4" /> Manage keys</Button>
         </div>
       </Card>
     </div>

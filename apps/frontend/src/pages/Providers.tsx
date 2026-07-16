@@ -1,6 +1,7 @@
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { useCanWrite } from "../lib/user-context";
-import { Check, Copy, Plus, Pencil, Settings2, Trash2 } from "lucide-react";
+import { Check, Copy, Plus, Pencil, Settings2, Trash2, FlaskConical } from "lucide-react";
 import {
   useRules,
   useCreateRule,
@@ -8,6 +9,8 @@ import {
   useOrganization,
   useUpdateRule,
   useDomains,
+  useRuleHealth,
+  useDestinations,
 } from "../lib/hooks";
 import {
   Badge,
@@ -28,7 +31,7 @@ import {
   Textarea,
   ConfirmDialog,
 } from "../components/ui";
-import type { ForwardRule } from "../types/api";
+import type { ForwardRule, RuleHealth } from "../types/api";
 
 const METHODS = ["POST", "PUT", "PATCH", "GET", "DELETE"] as const;
 
@@ -40,6 +43,7 @@ interface FormState {
   headers_text: string; // newline-separated "Key: value" lines, edited as text
   signing_secret: string;
   ingest_hostname: string;
+  failure_destination: "" | "slack" | "telegram" | "email";
 }
 
 const EMPTY: FormState = {
@@ -50,6 +54,7 @@ const EMPTY: FormState = {
   headers_text: "",
   signing_secret: "",
   ingest_hostname: "",
+  failure_destination: "",
 };
 
 /** Parse "Key: value" lines (one per line) into a headers object. */
@@ -81,11 +86,22 @@ function webhookUrl(endpoint: string | undefined, source: string, ingestHostname
   return `${base.replace(/\/$/, "")}/${encodeURIComponent(source.trim())}`;
 }
 
+function HealthBadge({ health }: { health?: RuleHealth }) {
+  if (!health || health.received_24h === 0) return <Badge variant="neutral">No activity</Badge>;
+  if (health.failed_24h > 0) return <Badge variant="danger">Failing</Badge>;
+  if (health.delivered_24h > 0) return <Badge variant="success">Healthy</Badge>;
+  return <Badge variant="info">In flight</Badge>;
+}
+
 export function Providers() {
+  const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const canWrite = useCanWrite();
   const { data: rules, isLoading } = useRules();
   const { data: organization } = useOrganization();
   const { data: domains } = useDomains(canWrite);
+  const { data: health = [] } = useRuleHealth();
+  const { data: destinations = [] } = useDestinations();
   const createRule = useCreateRule();
   const updateRule = useUpdateRule();
   const deleteRule = useDeleteRule();
@@ -100,6 +116,8 @@ export function Providers() {
 
   // Providers = named source mappings, exclude the seeded catch-all "Default".
   const providers = (rules ?? []).filter((r) => r.rule_kind === "provider");
+  const nativeDestinations = destinations.filter((destination) => destination.enabled);
+  const healthByRule = new Map(health.map((item) => [item.rule_id, item]));
 
   const openCreate = () => {
     setEditing(null);
@@ -107,6 +125,12 @@ export function Providers() {
     setError(null);
     setOpen(true);
   };
+
+  useEffect(() => {
+    if (searchParams.get("new") !== "1" || !canWrite) return;
+    openCreate();
+    setSearchParams({}, { replace: true });
+  }, [canWrite, searchParams, setSearchParams]);
 
   const openEdit = (rule: ForwardRule) => {
     setEditing(rule);
@@ -121,6 +145,7 @@ export function Providers() {
       headers_text: headersToText(rule.headers),
       signing_secret: rule.signing_secret ?? "",
       ingest_hostname: rule.ingest_hostname ?? "",
+      failure_destination: "",
     });
     setError(null);
     setOpen(true);
@@ -143,7 +168,7 @@ export function Providers() {
           ingest_hostname: form.ingest_hostname,
         });
       } else {
-        await createRule.mutateAsync({
+        const provider = await createRule.mutateAsync({
           name: form.name.trim(),
           target_url: form.target_url.trim(),
           source_pattern,
@@ -153,6 +178,16 @@ export function Providers() {
           rule_kind: "provider",
           ingest_hostname: form.ingest_hostname,
         });
+        if (form.failure_destination) {
+          await createRule.mutateAsync({
+            name: `${form.name.trim()} failure alert`,
+            target_url: "",
+            rule_kind: "hook",
+            provider_id: provider.id,
+            trigger_on: "failure",
+            destination_type: form.failure_destination,
+          });
+        }
       }
       setOpen(false);
     } catch (err) {
@@ -210,6 +245,7 @@ export function Providers() {
             <TH>Outbound method</TH>
             <TH>Target URL</TH>
             <TH>Status</TH>
+            <TH>Health (24h)</TH>
             {canWrite && <TH className="text-right">Actions</TH>}
           </THead>
           <TBody>
@@ -266,9 +302,22 @@ export function Providers() {
                     </Badge>
                   </button>
                 </TD>
+                <TD>
+                  <div className="space-y-1">
+                    <HealthBadge health={healthByRule.get(rule.id)} />
+                    {healthByRule.get(rule.id)?.received_24h ? <p className="text-[11px] text-muted">{healthByRule.get(rule.id)!.delivered_24h}/{healthByRule.get(rule.id)!.received_24h} delivered</p> : null}
+                  </div>
+                </TD>
                 {canWrite && (
                 <TD className="text-right">
                   <div className="flex items-center justify-end gap-1">
+                    <button
+                      onClick={() => navigate(`/send?provider=${encodeURIComponent(rule.id)}`)}
+                      className="p-2 rounded-md text-muted hover:text-success hover:bg-hover transition-base"
+                      title="Send test webhook"
+                    >
+                      <FlaskConical className="h-4 w-4" />
+                    </button>
                     <button
                       onClick={() => openEdit(rule)}
                       className="p-2 rounded-md text-muted hover:text-foreground hover:bg-hover transition-base"
@@ -325,32 +374,6 @@ export function Providers() {
               disabled={!!editing}
             />
           </Field>
-          <Field
-            label="Source pattern"
-            htmlFor="source"
-            hint="Defaults to the provider name. Use * to match everything."
-          >
-            <Input
-              id="source"
-              value={form.source_pattern}
-              onChange={(e) =>
-                setForm({ ...form, source_pattern: e.target.value })
-              }
-              placeholder={form.name || "source-name"}
-            />
-          </Field>
-          <Field label="Incoming domain" htmlFor="ingest-hostname" hint="Choose where this provider receives POST webhooks. The full URL remains available in the provider list.">
-            <Select
-              id="ingest-hostname"
-              value={form.ingest_hostname}
-              onChange={(event) => setForm({ ...form, ingest_hostname: event.target.value })}
-            >
-              <option value="">Terusin canonical domain</option>
-              {(domains ?? []).filter((domain) => domain.status === "active").map((domain) => (
-                <option key={domain.id} value={domain.hostname}>{domain.hostname}</option>
-              ))}
-            </Select>
-          </Field>
           <Field label="Target URL" htmlFor="target">
             <Input
               id="target"
@@ -362,52 +385,37 @@ export function Providers() {
               required
             />
           </Field>
-          <Field
-            label="Outbound method"
-            htmlFor="method"
-            hint="HTTP method used for the outbound delivery."
-          >
-            <Select
-              id="method"
-              value={form.method}
-              onChange={(e) => setForm({ ...form, method: e.target.value })}
-            >
-              {METHODS.map((m) => (
-                <option key={m} value={m}>
-                  {m}
-                </option>
-              ))}
-            </Select>
-          </Field>
-          <Field
-            label="Custom headers"
-            htmlFor="headers"
-            hint={`One "Key: value" per line. Sent on every outbound delivery.`}
-          >
-            <Textarea
-              id="headers"
-              value={form.headers_text}
-              onChange={(e) =>
-                setForm({ ...form, headers_text: e.target.value })
-              }
-              placeholder={"X-Custom-Header: value\nAuthorization: Bearer ..."}
-              rows={3}
-            />
-          </Field>
-          <Field
-            label="Signing secret"
-            htmlFor="signing"
-            hint="Optional. If set, outbound deliveries include an X-Terusin-Signature header (HMAC-SHA256)."
-          >
-            <Input
-              id="signing"
-              value={form.signing_secret}
-              onChange={(e) =>
-                setForm({ ...form, signing_secret: e.target.value })
-              }
-              placeholder="leave empty to disable signing"
-            />
-          </Field>
+          <details className="rounded-md border border-border bg-surface p-3">
+            <summary className="cursor-pointer text-sm font-medium text-secondary hover:text-foreground">Advanced settings</summary>
+            <div className="mt-4 space-y-4">
+              <Field label="Source pattern" htmlFor="source" hint="Defaults to the provider name. Use * to match everything.">
+                <Input id="source" value={form.source_pattern} onChange={(e) => setForm({ ...form, source_pattern: e.target.value })} placeholder={form.name || "source-name"} />
+              </Field>
+              <Field label="Incoming domain" htmlFor="ingest-hostname" hint="Defaults to the canonical Terusin domain.">
+                <Select id="ingest-hostname" value={form.ingest_hostname} onChange={(event) => setForm({ ...form, ingest_hostname: event.target.value })}>
+                  <option value="">Terusin canonical domain</option>
+                  {(domains ?? []).filter((domain) => domain.status === "active").map((domain) => <option key={domain.id} value={domain.hostname}>{domain.hostname}</option>)}
+                </Select>
+              </Field>
+              {!editing && nativeDestinations.length > 0 && (
+                <Field label="Failure alerts" htmlFor="provider-failure-destination" hint="Automatically creates a failure notification Hook.">
+                  <Select id="provider-failure-destination" value={form.failure_destination} onChange={(event) => setForm({ ...form, failure_destination: event.target.value as FormState["failure_destination"] })}>
+                    <option value="">No automatic alert</option>
+                    {nativeDestinations.map((destination) => <option key={destination.kind} value={destination.kind}>Alert via {destination.kind[0].toUpperCase() + destination.kind.slice(1)}</option>)}
+                  </Select>
+                </Field>
+              )}
+              <Field label="Outbound method" htmlFor="method">
+                <Select id="method" value={form.method} onChange={(e) => setForm({ ...form, method: e.target.value })}>{METHODS.map((method) => <option key={method} value={method}>{method}</option>)}</Select>
+              </Field>
+              <Field label="Custom headers" htmlFor="headers" hint='One "Key: value" per line.'>
+                <Textarea id="headers" value={form.headers_text} onChange={(e) => setForm({ ...form, headers_text: e.target.value })} placeholder={"X-Custom-Header: value\nAuthorization: Bearer ..."} rows={3} />
+              </Field>
+              <Field label="Signing secret" htmlFor="signing" hint="Adds an X-Terusin-Signature header (HMAC-SHA256).">
+                <Input id="signing" value={form.signing_secret} onChange={(e) => setForm({ ...form, signing_secret: e.target.value })} placeholder="leave empty to disable signing" />
+              </Field>
+            </div>
+          </details>
           {error && (
             <p className="text-sm text-danger bg-[rgba(239,68,68,.1)] border border-[rgba(239,68,68,.25)] rounded-md p-3">
               {error}
