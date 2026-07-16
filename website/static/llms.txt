@@ -1,0 +1,35 @@
+# trusin
+> trusin is an open-source, self-hosted webhook relay for reliable delivery operations.
+
+trusin receives webhook events, stores their history in Postgres, queues delivery with Redis, routes events to targets, retries retryable failures, and provides a dashboard, CLI/TUI, and MCP server.
+
+## Primary links
+- [Website](https://trusin.my.id/): Product overview and webhook relay guide.
+- [Documentation](https://docs.trusin.my.id/docs/intro): Product and deployment documentation.
+- [Webhook relay guide](https://trusin.my.id/webhook-relay): What a webhook relay is and when to use one.
+- [GitHub repository](https://github.com/adityaputra11/terusin): Source code, releases, and issue tracker.
+- [Dashboard](https://app.trusin.my.id/): Hosted application.
+
+## Documentation
+- [Architecture](https://docs.trusin.my.id/docs/concepts/architecture): trusin documentation: Architecture.
+- [Reliability model](https://docs.trusin.my.id/docs/concepts/reliability): trusin documentation: Reliability model.
+- [Authentication and RBAC](https://docs.trusin.my.id/docs/guides/authentication): trusin documentation: Authentication and RBAC.
+- [CLI and MCP](https://docs.trusin.my.id/docs/guides/cli-and-mcp): trusin documentation: CLI and MCP.
+- [Local development](https://docs.trusin.my.id/docs/guides/local-development): trusin documentation: Local development.
+- [Receiving and forwarding webhooks](https://docs.trusin.my.id/docs/guides/webhooks): trusin documentation: Receiving and forwarding webhooks.
+- [Welcome](https://docs.trusin.my.id/docs/intro): trusin documentation: trusin.
+- [Self-hosted webhook infrastructure](https://docs.trusin.my.id/docs/learn/self-hosted-infrastructure): Run trusin on infrastructure you control with Postgres, Redis, HTTPS, backups, and operational visibility.
+- [Webhook delivery](https://docs.trusin.my.id/docs/learn/webhook-delivery): How webhook delivery works in trusin: receive an event, persist it, queue it, deliver it, and record the result.
+- [Webhook relay vs. queues](https://docs.trusin.my.id/docs/learn/webhook-relay-vs-queues): Understand the difference between a webhook relay and a queue, and why reliable webhook delivery needs both.
+- [Webhook retries](https://docs.trusin.my.id/docs/learn/webhook-retries): Learn how trusin retries failed webhooks, what retryable failures mean, and how to design idempotent receivers.
+- [Production deployment](https://docs.trusin.my.id/docs/operations/deployment): trusin documentation: Production deployment.
+- [Testing](https://docs.trusin.my.id/docs/operations/testing): trusin documentation: Testing.
+- [Troubleshooting](https://docs.trusin.my.id/docs/operations/troubleshooting): trusin documentation: Troubleshooting.
+- [API reference](https://docs.trusin.my.id/docs/reference/api): trusin documentation: API reference.
+- [Configuration](https://docs.trusin.my.id/docs/reference/configuration): trusin documentation: Configuration.
+
+## AI and integration notes
+- Use API tokens for CLI and MCP access; never request or expose a dashboard password.
+- The bundled MCP server runs locally over stdio and uses TERUSIN_TOKEN.
+- Webhook delivery is at-least-once; target handlers should be idempotent.
+- For complete documentation content, read https://trusin.my.id/llms-full.txt.

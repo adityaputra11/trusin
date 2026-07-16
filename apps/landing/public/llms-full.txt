@@ -1,0 +1,776 @@
+# trusin Documentation
+> Complete public documentation for trusin, an open-source self-hosted webhook relay.
+
+Canonical documentation: https://docs.trusin.my.id/docs/intro
+Product website: https://trusin.my.id/
+
+<!-- Source: https://docs.trusin.my.id/docs/concepts/architecture -->
+# Architecture
+
+```mermaid
+flowchart LR
+  P[Webhook provider] --> B[Axum backend]
+  B --> PG[(Postgres)]
+  B --> R[(Redis queue)]
+  R --> W[Delivery workers]
+  W --> T[Target endpoint]
+  W --> PG
+  D[React dashboard] --> X[Web proxy]
+  X --> B
+  C[CLI / MCP] --> B
+```
+
+- **backend** handles ingest, the API, authentication, the queue, and workers.
+- **frontend** is a React + Vite SPA.
+- **web** embeds the SPA bundle and reverse-proxies API paths to the backend.
+- **tui** provides an operational CLI.
+- **mcp** provides stdio JSON-RPC tools for AI clients.
+- **receiver** is an example target for development.
+
+Public ingest does not wait for the target to finish. Events are stored and queued first, so provider latency does not depend on downstream delivery.
+
+---
+
+<!-- Source: https://docs.trusin.my.id/docs/concepts/reliability -->
+# Reliability model
+
+An event starts as `queued`. A worker pops its ID with `BRPOP`, reads the payload from Postgres, and sends an HTTP POST.
+
+- A network error changes the status to `retrying` and schedules the ID in the `terusin:retry` sorted set.
+- Retry delay is `10 × 2^retry_count` seconds.
+- After `MAX_RETRIES`, the status becomes `failed`.
+- A 2xx response becomes `delivered` and records an attempt.
+- Admins can retry, acknowledge, or delete an event.
+
+Delivery is **at least once**: receivers must be idempotent. Use the provider business event ID or a deduplication key at the target.
+
+---
+
+<!-- Source: https://docs.trusin.my.id/docs/guides/authentication -->
+# Authentication and RBAC
+
+trusin hosted runs isolated organizations in a shared database. Each user belongs to one organization and has either the `admin` or `viewer` role. Events, rules, audit logs, and API keys are always scoped to that organization.
+
+Users with the server-side `platform_operator` flag can access `/platform` to view all tenants and subscriber data. This flag is never inherited by API keys, so a tenant token cannot access the control plane.
+
+The backend accepts three authentication methods in this order:
+
+1. The `terusin_session` JWT cookie created by Google OAuth.
+2. A `ts_`-prefixed Bearer API token for the CLI and MCP server.
+3. HTTP Basic authentication for legacy compatibility.
+
+The `trusin` CLI is token-only: it does not provide password login. Running
+`trusin` for the first time asks for an API token and stores it locally; browser
+sign-in remains available through Google, GitHub, or the configured password flow.
+
+Read endpoints are available to both `admin` and `viewer` roles. Rule changes, event retry/acknowledge/delete actions, bulk actions, and default-target changes require an admin.
+
+## Browser sign-in and workspace creation
+
+Enable Google sign-in with these environment variables:
+
+```bash
+GOOGLE_CLIENT_ID=...
+GOOGLE_CLIENT_SECRET=...
+GITHUB_CLIENT_ID=...
+GITHUB_CLIENT_SECRET=...
+APP_URL=https://app.your-terusin.example
+# Optional explicit overrides for a split frontend/backend deployment.
+OAUTH_REDIRECT_URI=https://app.your-terusin.example/api/auth/callback/google
+FRONTEND_URL=https://app.your-terusin.example
+JWT_SECRET='random-strong-secret'
+RESEND_API_KEY=re_...
+EMAIL_FROM='trusin <noreply@your-terusin.example>'
+```
+
+Register `https://app.your-terusin.example/api/auth/callback/google` in Google Cloud Console and `https://app.your-terusin.example/api/auth/callback/github` in the GitHub OAuth App. When configured, the login page displays the matching provider. A first Google or GitHub sign-in creates a `free` workspace and makes that account its admin; there is no separate password registration flow.
+
+Free workspaces are limited to their owner and cannot invite users. Paid workspaces can invite `admin` or `viewer` users from **Users**. Invitations are delivered by Resend, expire after seven days, and can only be claimed by the Google account with the invited email address. In this version, an account belongs to one workspace only.
+
+The OAuth callback is protected by a short-lived state token in Redis. Session cookies are `HttpOnly` and `SameSite=Lax`; they also become `Secure` when `FRONTEND_URL` uses HTTPS.
+
+## Cloudflare Turnstile
+
+When `TURNSTILE_SECRET_KEY` is set, Turnstile is required before Google, GitHub, or password sign-in can start. Create a Managed widget in Cloudflare Turnstile, allow the dashboard hostname (for example `app.your-terusin.example`), then set the public Site Key in the frontend build as `VITE_TURNSTILE_SITE_KEY` and the matching Secret Key as `TURNSTILE_SECRET_KEY` on the backend. Turnstile does not require moving the domain DNS to Cloudflare.
+
+## API tokens
+
+Create a token from **Settings → Developer → API Tokens**. The plaintext token is displayed only once; the server stores a SHA-256 hash. Tokens are organization-scoped and carry explicit scopes: `events:read`, `webhooks:send`, `rules:read`, `rules:write`, or `organization:manage`.
+
+```bash
+trusin
+# paste ts_your_token when prompted
+
+# Or configure a device without the interactive prompt:
+trusin set-token ts_your_token
+
+# Or provide a temporary token for automation:
+export TERUSIN_TOKEN=ts_your_token
+```
+
+Do not commit tokens, `JWT_SECRET`, signing secrets, or passwords. Use a secrets manager in production.
+
+## Audit trail
+
+trusin records important actions in **Activity**: login, invitation lifecycle events, token creation/revocation, role changes, rule create/update/delete event actions, retry/acknowledge/delete event actions, bulk actions, and default-target changes. Authenticated users can read the audit trail at `GET /api/audit`.
+
+---
+
+<!-- Source: https://docs.trusin.my.id/docs/guides/cli-and-mcp -->
+# CLI and MCP
+
+## CLI
+
+### Install the CLI
+
+Install the latest verified release on macOS (Apple Silicon or Intel) or Linux
+(x86_64 or ARM64):
+
+```bash
+curl -fsSL https://download.trusin.my.id/install.sh | sh
+```
+
+The installer downloads the matching GitHub Release asset, verifies its SHA-256
+checksum, and installs `trusin` to `/usr/local/bin`. It prompts for `sudo` only
+when that directory is not writable.
+
+Install a specific release or use a writable directory without `sudo`:
+
+```bash
+curl -fsSL https://download.trusin.my.id/install.sh | TERUSIN_VERSION=v0.1.0 sh
+curl -fsSL https://download.trusin.my.id/install.sh | TERUSIN_INSTALL="$HOME/.local/bin" sh
+```
+
+## Uninstall
+
+Remove the CLI, its bundled MCP server, and local credentials with a confirmation prompt:
+
+```sh
+trusin uninstall
+```
+
+For scripts, pass `--yes`. This does not delete your workspace or revoke API tokens; manage
+those from Settings in the dashboard.
+
+After installation, create an API token in **Settings → Developer → API Tokens**
+and run the CLI:
+
+```bash
+trusin
+```
+
+On its first run, `trusin` asks for the `ts_...` token, stores it in the OS
+keychain when available, and opens the interactive TUI. The CLI does not use
+your dashboard password. To add or replace a token non-interactively, run
+`trusin set-token ts_your_token`.
+
+If the command is not found after a custom installation, add that directory to
+your shell `PATH`. The installer supports macOS and Linux only; Windows users can
+build the CLI from source.
+
+### Build from source
+
+```bash
+cargo build --release --bin trusin
+./target/release/trusin
+./target/release/trusin status
+./target/release/trusin events -l 10
+./target/release/trusin forward --port 3000
+./target/release/trusin interactive
+```
+
+`forward` points the default target at a local service and can start ngrok when the backend is remote. Tokens are stored in the OS keychain when available.
+
+## Local development without ngrok
+
+Use `trusin dev` to mirror new events from one source to your local service. The
+CLI keeps an authenticated outbound stream to trusin, so your laptop does not
+need a public URL and private targets never reach the production API.
+
+Start a local receiver or your application:
+
+```bash
+cargo run --bin receiver
+```
+
+In another terminal, mirror a source such as Stripe:
+
+```bash
+trusin dev --source stripe --port 3000
+```
+
+`trusin dev` adds `X-Trusin-Event-Id` and `X-Trusin-Source` headers, then posts
+the original JSON body to `http://127.0.0.1:<port>`. It is a **mirror**: normal
+production delivery and event status are left unchanged. Use `trusin forward`
+only when you explicitly need trusin to make your local server its delivery target.
+
+## Interactive TUI
+
+Running `trusin` opens a full-screen terminal dashboard for operators after
+token onboarding. `trusin interactive` remains available when you want to open
+the dashboard explicitly:
+
+- **Overview**: concise health, queue depth, success rate, backend, and auth mode.
+- **Events**: recent events, local search with `/`, details with `Enter`, retry with `x`.
+- **Rules**: active and inactive routing rules.
+- **Config**: backend, dashboard URL, and default target.
+- **Tokens**: API token guidance and auth precedence.
+
+Primary shortcuts: `1-5` changes tabs, `r` refreshes, `/` searches, `c` clears search, `o` opens the dashboard, and `q` quits.
+
+## MCP server
+
+The installer bundles the MCP sidecar. Save your API token once, then configure
+your AI client to launch `trusin mcp`; the CLI passes its saved token and backend
+configuration to the stdio server without storing credentials in the client config.
+
+```bash
+trusin set-token ts_your_token
+```
+
+```json
+{
+  "mcpServers": {
+    "trusin": {
+      "command": "trusin",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+### OpenCode
+
+OpenCode uses an `mcp` object rather than `mcpServers`. Add this to
+`~/.config/opencode/opencode.json` (or your project `opencode.json`), then restart OpenCode:
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "trusin": {
+      "type": "local",
+      "command": ["/usr/local/bin/trusin", "mcp"],
+      "enabled": true,
+      "timeout": 10000
+    }
+  }
+}
+```
+
+Run `trusin set-token ts_...` before launching OpenCode. The wrapper reads the saved
+token from your OS keychain, so the token does not need to be stored in OpenCode's config.
+Use `opencode mcp list` to confirm that the server is connected.
+
+For a custom sidecar location, set `TRUSIN_MCP_PATH` before launching
+`trusin mcp`. Direct executions of `trusin-mcp` continue to accept
+`TERUSIN_URL` and `TERUSIN_TOKEN`.
+
+---
+
+<!-- Source: https://docs.trusin.my.id/docs/guides/local-development -->
+# Local development
+
+## Prerequisites
+
+- Rust 1.85 atau lebih baru
+- Node.js 18 atau lebih baru
+- Docker with Compose
+- `curl` for smoke tests
+
+## Development loop
+
+```bash
+docker compose up -d postgres redis
+PORT=3011 cargo run --bin backend
+```
+
+Jalankan Vite di terminal kedua. Vite mem-proxy API ke backend port 3011.
+
+```bash
+cd apps/frontend
+npm install
+npm run dev
+```
+
+The development dashboard is available at `http://localhost:5173`. To test the embedded production bundle:
+
+```bash
+cd apps/frontend && npm run build && cd ../..
+touch apps/web/src/main.rs
+PORT=3012 BACKEND_URL=http://localhost:3011 cargo run --bin web
+```
+
+`touch` forces `rust-embed` to read the `dist/` contents again.
+
+## Documentation
+
+```bash
+cd website
+npm install
+npm start
+```
+
+Docusaurus is available at `http://localhost:3000`.
+
+---
+
+<!-- Source: https://docs.trusin.my.id/docs/guides/webhooks -->
+# Receiving and forwarding webhooks
+
+The source is taken from the first path segment. `/stripe/webhook` becomes `stripe`; the `X-Webhook-Source` header can override it.
+
+The public ingest target is selected in this order:
+
+1. An active Provider matching the source.
+2. `DEFAULT_TARGET_URL` or the default target configured by an admin.
+
+`X-Target-Url` on public ingest is rejected by default to prevent arbitrary forwarding and SSRF exposure. The legacy override can only be explicitly enabled with `ALLOW_PUBLIC_TARGET_OVERRIDE=true` and must still pass the server URL policy.
+
+```bash
+curl -X POST https://your-terusin.example/stripe/webhook \
+  -H 'content-type: application/json' \
+  -d '{"type":"payment_intent.succeeded"}'
+```
+
+## Sending from the dashboard
+
+Admins can open the **Send** page and choose an active Provider or **Custom / manual**. Provider mode uses the selected rule's source and target. Custom mode accepts a source and target directly; an empty target uses the default target.
+
+The dashboard uses `POST /api/send`, not a target override on the public ingest endpoint. Targets must be credential-free `http` or `https` URLs that comply with the server network policy.
+
+The JSON payload and headers are stored before an event enters the queue. A `2xx` target response marks an event as `delivered`; retryable network or HTTP failures use exponential backoff. A final non-`2xx` response marks the event as `failed`.
+
+## Signing
+
+Set `DEFAULT_SIGNING_SECRET` to add `X-Terusin-Signature: sha256=<hex>` to the main delivery. Its value is the HMAC-SHA256 of the raw JSON body.
+
+## Provider hooks
+
+A **Provider** is the primary target for a webhook source. A **Hook** is an optional, independent follow-up delivery attached to one provider. Hooks never replace or reroute the provider target.
+
+When creating a hook, choose when it should run:
+
+- **Provider succeeds**: sends the original payload as soon as the provider returns a `2xx` response.
+- **Provider fails**: sends the original payload only after the provider has exhausted all retries or reaches a final, non-retryable failure.
+
+Each hook request includes `X-Terusin-Delivery-Status` (`delivered` or `failed`) and, when the provider returned an HTTP response, `X-Terusin-Response-Status`. A failed hook is logged but does not affect the provider event or trigger another hook.
+
+---
+
+<!-- Source: https://docs.trusin.my.id/docs/intro -->
+# trusin
+
+trusin is a self-hosted webhook relay for teams that need reliable delivery, audit history, an operations dashboard, CLI/TUI, MCP, and control over webhook data. It receives provider requests, stores events in Postgres, pushes event IDs to Redis, and delivers them to target endpoints with background workers.
+
+## Quick start
+
+```bash
+docker compose up -d postgres redis
+AUTH_USERNAME=admin AUTH_PASSWORD=change-me-in-production PORT=3011 cargo run --bin backend
+```
+
+In a second terminal:
+
+```bash
+cd apps/frontend && npm install && npm run build && cd ../..
+AUTH_USERNAME=admin AUTH_PASSWORD=change-me-in-production \
+  BACKEND_URL=http://localhost:3011 PORT=3012 cargo run --bin web
+```
+
+Open `http://localhost:3012` and sign in with the same credentials. Change the default password before exposing the service to the internet.
+
+For production, enable Google OAuth and use API tokens for CLI/TUI/MCP. Read **Authentication and RBAC** before exposing an instance to the internet.
+
+## Send your first webhook
+
+```bash
+curl -X POST http://localhost:3011/github/webhook \
+  -H 'content-type: application/json' \
+  -d '{"action":"ping"}'
+```
+
+The response includes an event `id` and the initial `queued` status. Monitor delivery from the dashboard or `GET /events/{id}`.
+
+---
+
+<!-- Source: https://docs.trusin.my.id/docs/learn/self-hosted-infrastructure -->
+# Self-hosted webhook infrastructure
+
+Self-hosting a webhook delivery layer gives your team control over event data, network placement, retention, and recovery. trusin is designed to run with a Rust backend, Postgres for durable history, and Redis for delivery queues.
+
+## Minimum production components
+
+- **Postgres** stores events, users, routing rules, and delivery attempts.
+- **Redis** buffers pending delivery and retry schedules.
+- **HTTPS reverse proxy** exposes the dashboard, API, and public ingest endpoint.
+- **Backups and monitoring** protect the event history and identify delivery incidents.
+
+## Operating safely
+
+Use a secret manager for credentials, restrict database and Redis network access, run migrations before declaring the service healthy, and configure alerting for failed events and queue growth. The [deployment guide](/docs/operations/deployment) includes the supported Ubuntu and Caddy layout.
+
+For a local setup, start with [local development](/docs/guides/local-development).
+
+---
+
+<!-- Source: https://docs.trusin.my.id/docs/learn/webhook-delivery -->
+# Webhook delivery
+
+Webhook delivery is the path from a provider event to your target endpoint. A reliable delivery layer accepts the provider request quickly, records it durably, and performs downstream work independently.
+
+## How trusin delivers an event
+
+1. A provider sends `POST /{source}` to the public ingest endpoint.
+2. trusin validates the route and saves the headers and payload in Postgres.
+3. It adds the event ID to a Redis delivery queue.
+4. A worker sends the payload to the configured target and records the HTTP result.
+
+This separation prevents a slow or unavailable target from making the provider request wait. Inspect the event timeline in the dashboard or through the [API reference](/docs/reference/api).
+
+## What to expect at the receiver
+
+trusin provides **at-least-once** delivery. A receiver must accept duplicate deliveries safely by using a provider event ID or an application-level deduplication key. Return a 2xx response only after the event is accepted by your application.
+
+Read [receiving and forwarding webhooks](/docs/guides/webhooks) to configure sources, providers, hooks, and signing.
+
+---
+
+<!-- Source: https://docs.trusin.my.id/docs/learn/webhook-relay-vs-queues -->
+# Webhook relay vs. queues
+
+A webhook relay is an HTTP-facing delivery service. It receives an incoming event, applies routing and security policy, sends it to a target, and records the outcome. A queue is a component that stores work until a worker can process it.
+
+## The difference
+
+| Capability | Webhook relay | Queue |
+| --- | --- | --- |
+| Receives HTTP from providers | Yes | Usually no |
+| Routes by source or provider | Yes | No |
+| Decouples provider latency | Often, using a queue | Yes |
+| Delivers HTTP to a target | Yes | No |
+| Records delivery attempts | Yes | No |
+
+trusin combines a webhook relay with Postgres-backed event history and a Redis queue. That gives a provider a fast acknowledgment while workers deliver and retry asynchronously.
+
+Use a queue alone when your producer and consumer already share a messaging protocol. Use a webhook relay when external providers speak HTTP and your team needs routing, signing, retries, and an operator-friendly timeline.
+
+---
+
+<!-- Source: https://docs.trusin.my.id/docs/learn/webhook-retries -->
+# Webhook retries
+
+Webhook retries recover from temporary downstream failures without asking the provider to resend the original event. trusin records each attempt so an operator can distinguish a transient failure from a final failure.
+
+## Retry behavior
+
+For retryable network failures, trusin changes the event to `retrying` and schedules exponential backoff: `10 × 2^retry_count` seconds. After `MAX_RETRIES`, the event is marked `failed`. A successful 2xx response marks it `delivered`.
+
+## Design receivers for retries
+
+- Make processing idempotent: store and deduplicate the provider event ID.
+- Return 2xx only when the event is safely accepted.
+- Treat client-side validation failures as final; use an appropriate non-2xx response when the payload cannot be processed.
+- Use the delivery timeline to inspect request and response details before a manual retry.
+
+See the [reliability model](/docs/concepts/reliability) and [troubleshooting guide](/docs/operations/troubleshooting) for operational details.
+
+---
+
+<!-- Source: https://docs.trusin.my.id/docs/operations/deployment -->
+# Production deployment
+
+The hosted trusin deployment runs on Ubuntu with Caddy. GitHub Actions builds every artifact after a merge to `master`; the server receives the compiled release and never builds application code itself.
+
+## Public URLs
+
+- `https://trusin.my.id` — landing page.
+- `https://app.trusin.my.id` — dashboard and Google OAuth callback.
+- `https://api.trusin.my.id` — authenticated API for the CLI, MCP, and integrations.
+- `https://ingest.trusin.my.id/{source}` — public webhook ingest endpoint.
+- `https://docs.trusin.my.id` — documentation.
+
+Create A (and, when applicable, AAAA) records for the root domain, `www`, `app`, `api`, `ingest`, and `docs` pointing to the Ubuntu server. Caddy obtains and renews HTTPS certificates after DNS resolves and ports 80 and 443 are reachable.
+
+## GitHub Actions setup
+
+The `Deploy trusin production` workflow runs on every push to `master`. Add these repository secrets before merging a release:
+
+| Secret | Purpose |
+| --- | --- |
+| `SSH_HOST`, `SSH_USER`, `SSH_PORT`, `SSH_KEY` | Ubuntu SSH connection; `SSH_USER` is `ubuntu` and `SSH_PORT` defaults to `22`. |
+| `DATABASE_URL` | Managed Postgres connection string, allowlisted for the server IP. |
+| `AUTH_USERNAME`, `AUTH_PASSWORD`, `JWT_SECRET` | Legacy admin access and cookie-session signing. |
+| `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | Google OAuth credentials. |
+| `OAUTH_GITHUB_CLIENT_ID`, `OAUTH_GITHUB_CLIENT_SECRET` | GitHub OAuth credentials; the workflow maps them to the backend's `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET`. |
+| `RESEND_API_KEY`, `EMAIL_FROM` | Invitation email delivery through Resend. |
+| `PLATFORM_ADMIN_TOKEN` | One-time hosted-platform bootstrap token. |
+| `REDIS_URL` | Optional override; defaults to the local Redis service. |
+| `TURNSTILE_SITE_KEY`, `TURNSTILE_SECRET_KEY`, `DEFAULT_SIGNING_SECRET` | Optional captcha and outbound-signing configuration. |
+
+Optional repository variables `GOOGLE_SITE_VERIFICATION` and `BING_SITE_VERIFICATION` add the respective search-engine verification meta tags to the landing page. They are intentionally variables, not runtime secrets.
+
+Register `https://app.trusin.my.id/api/auth/callback/google` as the Google OAuth redirect URI and `https://app.trusin.my.id/api/auth/callback/github` as the GitHub OAuth callback. For Turnstile, create a Managed widget that allows `app.trusin.my.id`; DNS does not need to be hosted by Cloudflare. The workflow intentionally fails before deployment if any required production secret is missing.
+
+## Ubuntu runtime
+
+The installer keeps releases in `/opt/trusin/releases/<commit>` and atomically points `/opt/trusin/current` at the successful release. It also performs `git pull --ff-only origin master` in `~/terusin`, updates the static sites in `/var/www/trusin`, and starts:
+
+- `trusin-backend` on `127.0.0.1:3011`.
+- `trusin-web` on `127.0.0.1:3012`.
+
+The runtime configuration is stored at `/etc/trusin/trusin.env`, readable only by the `terusin` system user. Caddy loads its dedicated site file at `/etc/caddy/sites-enabled/trusin.caddy`; the existing application routes are left unchanged.
+
+Customer-owned ingest domains and dynamic TLS are deliberately deferred in v1. Send webhooks to the canonical `ingest.trusin.my.id` host instead.
+
+## Release validation
+
+Each deployment checks service state, local backend health, all public HTTPS URLs, and that the API rejects an unauthenticated session request. The backend runs SQLx migrations at startup and connects to both managed Postgres and local Redis before becoming healthy.
+
+For a manual check after a release:
+
+```bash
+sudo systemctl status terusin-backend terusin-web
+curl -fsS https://api.trusin.my.id/health
+curl -i -X POST https://ingest.trusin.my.id/stripe \
+  -H 'content-type: application/json' \
+  --data '{"id":"evt_smoke_test"}'
+```
+
+## Self-hosted alternative
+
+For a self-hosted development or single-server installation, build the frontend before compiling the web binary:
+
+```bash
+cd apps/frontend && npm ci && npm run build && cd ../..
+cargo build --release --bin backend --bin web
+```
+
+Use HTTPS, a secret manager, Postgres backups, Redis persistence appropriate to your workload, health checks, and log monitoring. Do not expose Postgres or Redis directly to the internet.
+
+---
+
+<!-- Source: https://docs.trusin.my.id/docs/operations/testing -->
+# Testing
+
+## Static checks
+
+```bash
+cargo test --workspace
+cd apps/frontend && npm run build
+cd ../../website && npm run build
+```
+
+## End-to-end smoke test
+
+```bash
+./scripts/e2e-smoke.sh
+```
+
+The test uses an isolated Compose project and ports `55432`, `56379`, `3311`, `3312`, and `3330`. It verifies:
+
+1. Postgres and Redis are healthy.
+2. The backend and web proxy are healthy.
+3. The production SPA is served.
+4. A webhook enters through the web proxy.
+5. An event is stored, queued, and received by the example receiver.
+6. The event and delivery attempt become `delivered`.
+
+Test containers and volumes are removed automatically; process logs are temporarily kept in `/tmp/terusin-e2e-*.log`.
+
+---
+
+<!-- Source: https://docs.trusin.my.id/docs/operations/troubleshooting -->
+# Troubleshooting
+
+## Backend does not start
+
+Ensure Postgres and Redis are running, then inspect `DATABASE_URL` and `REDIS_URL`.
+
+```bash
+docker compose ps
+docker compose logs postgres redis
+```
+
+## An event is not delivered
+
+- Ensure the target is reachable from the backend host/container; `localhost` inside a container points to that container.
+- Inspect event details and `/events/{id}/attempts`.
+- Ensure the target returns HTTP 2xx.
+- Inspect `MAX_RETRIES` and the Redis sorted set when status is `retrying`.
+
+## Dashboard shows 401
+
+Ensure `AUTH_USERNAME` and `AUTH_PASSWORD` in the web process match the seeded backend user. Vite development sends browser credentials directly to the backend.
+
+## Frontend changes do not appear in the web binary
+
+Build ulang frontend, lalu paksa recompilation resource embed:
+
+```bash
+cd apps/frontend && npm run build && cd ../..
+touch apps/web/src/main.rs
+cargo build --bin web
+```
+
+## Smoke test fails
+
+Read `/tmp/terusin-e2e-backend.log`, `/tmp/terusin-e2e-web.log`, and `/tmp/terusin-e2e-receiver.log`. Ensure another process is not using the test ports.
+
+---
+
+<!-- Source: https://docs.trusin.my.id/docs/reference/api -->
+# API reference
+
+## Public
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/health` | Health probe |
+| POST | `/i/{ingest_key}/{source}` | Hosted canonical webhook ingest (copy the workspace URL from Providers) |
+| POST | `/{source}` | Custom-domain or self-hosted webhook ingest |
+| GET | `/config/endpoint` | Public server endpoint (not a tenant webhook URL) |
+| GET | `/config/oauth` | Google OAuth status |
+| GET | `/api/auth/google` | Redirect to Google OAuth |
+| GET | `/api/auth/callback/google` | Callback Google OAuth |
+| GET | `/api/auth/me` | Probe session/token/basic auth |
+| POST | `/api/auth/login` | Login password |
+| POST | `/api/auth/logout` | Logout |
+
+## Authenticated endpoints
+
+| Method | Path | Role |
+|---|---|---|
+| GET | `/events`, `/events/{id}` | viewer+ |
+| GET | `/events/{id}/attempts` | viewer+ |
+| GET | `/events/sources`, `/events/stream` | viewer+ |
+| GET | `/rules`, `/stats` | viewer+ |
+| POST/PATCH/DELETE | `/rules...` | admin |
+| POST | `/events/{id}/retry`, `/events/{id}/ack` | admin |
+| DELETE | `/events/{id}` | admin |
+| POST | `/events/bulk/retry`, `/events/bulk/delete` | admin |
+| POST | `/config/default-target` | admin |
+| POST | `/api/send` | admin |
+| GET | `/api/organization` | viewer+ |
+| GET/POST/DELETE | `/api/domains...` | admin + `organization:manage` |
+| GET/POST/DELETE | `/api/api-keys...` | admin + `organization:manage` |
+| GET | `/api/audit` | viewer+ |
+| GET | `/api/users` | admin |
+| PATCH | `/api/users/{id}/role` | admin |
+| GET/POST/DELETE | `/api/auth/tokens...` | own tokens |
+
+Use `Authorization: Bearer ts_...` or Basic auth. API keys can carry `events:read`, `webhooks:send`, `rules:read`, `rules:write`, and `organization:manage` scopes. Event listing supports `search`, `status`, `source`, `from`, `to`, `page`, and `per_page` (maximum 200).
+
+## Platform operator provisioning
+
+Bootstrap the first operator with `POST /api/platform/bootstrap/operator` and `Authorization: Bearer $PLATFORM_ADMIN_TOKEN`:
+
+```json
+{ "username": "admin" }
+```
+
+This endpoint only works while no operator exists. After bootstrap, sign in normally as the operator and use the internal `/platform` dashboard or these session-protected APIs:
+
+- `GET /api/platform/overview`
+- `GET /api/platform/organizations`
+- `GET /api/platform/organizations/{id}`
+- `POST /api/platform/organizations`
+- `PATCH /api/platform/organizations/{id}/subscription`
+
+Hosted organizations cannot be created by a tenant admin. A platform operator creates an organization and its initial admin, plus subscriber and billing-contact data:
+
+```json
+{
+  "name": "Acme",
+  "slug": "acme",
+  "username": "acme-admin",
+  "password": "a-long-initial-password",
+  "email": "admin@acme.example",
+  "subscriber_name": "Acme Inc.",
+  "billing_contact_name": "Jane Doe",
+  "billing_contact_email": "billing@acme.example"
+}
+```
+
+## Custom ingest domains
+
+An admin creates a domain through `POST /api/domains`, then adds CNAME `<domain>` to `INGEST_CANONICAL_HOST` and TXT `_terusin-verification.<domain>` with the API-returned token. `POST /api/domains/{id}/verify` activates the domain only when both records are valid. Only an `active` domain accepts webhooks.
+
+### Send webhook
+
+`POST /api/send` is available only to admins. Select an active provider with `provider_id`, or send manually with `source` and `target_url`. `target_url` may be empty in manual mode when a default target is configured.
+
+```json
+{
+  "provider_id": "uuid-provider",
+  "body": { "event": "payment.success" }
+}
+```
+
+Manual targets must use `http` or `https`, must not include URL credentials, and must pass the target network policy. `X-Target-Url` is disabled by default on public ingest.
+
+## Audit entry
+
+`GET /api/audit?page=1&per_page=25` returns:
+
+```json
+{
+  "entries": [
+    {
+      "id": "uuid",
+      "actor_user_id": "uuid",
+      "actor_email": "admin@example.com",
+      "action": "rule.updated",
+      "resource_type": "rule",
+      "resource_id": "uuid",
+      "metadata": {},
+      "created_at": "2026-07-15T10:00:00"
+    }
+  ],
+  "total": 1,
+  "page": 1,
+  "per_page": 25,
+  "pages": 1
+}
+```
+
+---
+
+<!-- Source: https://docs.trusin.my.id/docs/reference/configuration -->
+# Configuration
+
+| Variable | Default | Description |
+|---|---|---|
+| `DATABASE_URL` | `postgres://localhost:5432/terusin` | Postgres connection |
+| `REDIS_URL` | `redis://127.0.0.1:6379` | Redis connection |
+| `PORT` | backend `3001` | Process port |
+| `BACKEND_URL` | `http://localhost:$BACKEND_PORT` | Web upstream |
+| `AUTH_USERNAME` | `admin` | Legacy Basic seed user |
+| `AUTH_PASSWORD` | `change-me-in-production` | Legacy Basic seed password |
+| `JWT_SECRET` | - | JWT cookie secret; use a strong production value |
+| `GOOGLE_CLIENT_ID` | - | Google OAuth client ID |
+| `GOOGLE_CLIENT_SECRET` | - | Google OAuth client secret |
+| `GITHUB_CLIENT_ID` | - | GitHub OAuth App client ID |
+| `GITHUB_CLIENT_SECRET` | - | GitHub OAuth App client secret |
+| `APP_URL` | `http://localhost:5173` | Canonical dashboard URL; determines the default OAuth callback |
+| `OAUTH_REDIRECT_URI` | `$APP_URL/api/auth/callback/google` | Optional explicit callback registered in Google |
+| `FRONTEND_URL` | `APP_URL` | Optional dashboard URL after OAuth completes |
+| `TURNSTILE_SECRET_KEY` | - | Enables required Cloudflare Turnstile verification for browser sign-in |
+| `DEFAULT_TARGET_URL` | empty | Fallback target |
+| `ALLOW_PUBLIC_TARGET_OVERRIDE` | `false` | Opt-in legacy `X-Target-Url` on public ingest; still subject to URL policy |
+| `ALLOW_PRIVATE_TARGETS` | `false` | Allows loopback/private targets for local development |
+| `DEFAULT_SIGNING_SECRET` | empty | Global outbound HMAC secret |
+| `MAX_RETRIES` | `5` | Network retry limit |
+| `WORKER_COUNT` | `4` | Parallel delivery workers |
+| `WEB_URL` | localhost development origins | Comma-separated CORS origins |
+| `PUBLIC_URL` | `https://ingest.trusin.my.id` | URL shown by the dashboard |
+| `TERUSIN_TOKEN` | - | CLI/MCP token |
+| `HOSTED_MODE` | `false` | Enables hosted Free-plan entitlements and quotas |
+| `INGEST_CANONICAL_HOST` | `ingest.trusin.my.id` | CNAME target for customer ingest domains |
+| `PLATFORM_ADMIN_TOKEN` | - | One-time bearer secret for platform-operator bootstrap; never send it to a browser |
+
+For production, use HTTPS for `FRONTEND_URL`, a secret manager for sensitive values, and the exact public redirect URI registered in Google Cloud. For hosted trusin, use `https://app.trusin.my.id` as `FRONTEND_URL` and a `WEB_URL` origin, plus `https://ingest.trusin.my.id` as `PUBLIC_URL`.
+
+`HOSTED_MODE=false` (default) leaves self-hosted installations without quotas. With `HOSTED_MODE=true`, the Free plan limits accepted events to 10,000 per UTC month, one active domain, ten providers, three active API keys, one user, and seven days of event retention.
+
+---

@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build",
+    "build": "npm run generate:llms && tsc -b && vite build",
+    "generate:llms": "node ../../scripts/generate-llms.mjs",
     "preview": "vite preview",
     "typecheck": "tsc -b --noEmit"
   },
