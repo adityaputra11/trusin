@@ -127,4 +127,15 @@ mod tests {
         assert!(check_user_rate_limit(&limiter, user_id).is_none());
         assert!(check_user_rate_limit(&limiter, user_id).is_some());
     }
+
+    #[test]
+    fn sign_in_limiter_blocks_the_sixth_attempt_for_an_ip() {
+        let limiter = build_rate_limiter(120, 5);
+        let ip = "203.0.113.10".parse().unwrap();
+
+        for _ in 0..5 {
+            assert!(check_rate_limit(&limiter, ip).is_none());
+        }
+        assert!(check_rate_limit(&limiter, ip).is_some());
+    }
 }

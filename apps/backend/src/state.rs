@@ -23,8 +23,8 @@ pub struct AppState {
     /// Present when Cloudflare Turnstile is configured (TURNSTILE_SECRET_KEY set).
     pub turnstile: Option<Arc<TurnstileConfig>>,
     pub ai: Option<Arc<AiConfig>>,
-    /// Per-IP rate limiter for the login endpoint (5/min). Shared so handlers
-    /// can call `check_key` directly without a separate middleware layer.
+    /// Per-IP limiter shared by password and OAuth sign-in starts (5/10 min).
+    /// Handlers call `check_key` directly without a separate middleware layer.
     pub login_limiter: Arc<KeyedLimiter>,
     /// Per-IP rate limiter for /api/auth/me (30/min — called on every page load).
     pub me_limiter: Arc<KeyedLimiter>,
