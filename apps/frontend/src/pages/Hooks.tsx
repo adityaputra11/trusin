@@ -31,6 +31,11 @@ interface FormState {
   method: string;
   headers_text: string;
   signing_secret: string;
+  destination_type: "webhook" | "slack" | "telegram" | "email";
+  slack_webhook_url: string;
+  telegram_bot_token: string;
+  telegram_chat_id: string;
+  email_recipient: string;
 }
 
 const METHODS = ["POST", "PUT", "PATCH", "GET", "DELETE"] as const;
@@ -42,6 +47,11 @@ const EMPTY: FormState = {
   method: "POST",
   headers_text: "",
   signing_secret: "",
+  destination_type: "webhook",
+  slack_webhook_url: "",
+  telegram_bot_token: "",
+  telegram_chat_id: "",
+  email_recipient: "",
 };
 
 function parseHeadersText(text: string): Record<string, string> {
@@ -71,9 +81,11 @@ export function Hooks() {
   const [form, setForm] = useState<FormState>(EMPTY);
   const [error, setError] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<ForwardRule | null>(null);
+  const [deleteConfirmation, setDeleteConfirmation] = useState("");
 
   const providers = (rules ?? []).filter((rule) => rule.rule_kind === "provider");
   const hooks = (rules ?? []).filter((rule) => rule.rule_kind === "hook");
+  const destinationNeedsConfig = !editing || editing.destination_type !== form.destination_type;
 
   const openCreate = () => {
     setEditing(null);
@@ -92,6 +104,11 @@ export function Hooks() {
       method: METHODS.includes(rule.method as (typeof METHODS)[number]) ? rule.method : "POST",
       headers_text: headersToText(rule.headers),
       signing_secret: "",
+      destination_type: rule.destination_type === "slack" || rule.destination_type === "telegram" || rule.destination_type === "email" ? rule.destination_type : "webhook",
+      slack_webhook_url: "",
+      telegram_bot_token: "",
+      telegram_chat_id: "",
+      email_recipient: rule.destination_type === "email" ? rule.target_url : "",
     });
     setError(null);
     setOpen(true);
@@ -101,14 +118,30 @@ export function Hooks() {
     e.preventDefault();
     setError(null);
     try {
+      let raw_destination_config: Record<string, string> | undefined;
+      if (form.destination_type === "slack") {
+        raw_destination_config = { webhook_url: form.slack_webhook_url.trim() };
+      } else if (form.destination_type === "telegram") {
+        raw_destination_config = {
+          bot_token: form.telegram_bot_token.trim(),
+          chat_id: form.telegram_chat_id.trim(),
+        };
+      } else if (form.destination_type === "email") {
+        raw_destination_config = { recipient: form.email_recipient.trim() };
+      }
+      const destination_config = raw_destination_config && Object.values(raw_destination_config).some(Boolean)
+        ? raw_destination_config
+        : undefined;
       const input = {
         name: form.name.trim(),
-        target_url: form.target_url.trim(),
+        target_url: form.destination_type === "webhook" ? form.target_url.trim() : "",
         provider_id: form.provider_id,
         trigger_on: form.trigger_on,
         method: form.method,
         headers: parseHeadersText(form.headers_text),
         signing_secret: form.signing_secret.trim() || undefined,
+        destination_type: form.destination_type,
+        destination_config,
       };
       if (editing) {
         await updateRule.mutateAsync({ id: editing.id, ...input });
@@ -157,6 +190,7 @@ export function Hooks() {
             <TH>Provider</TH>
             <TH>Run when</TH>
             <TH>Target URL</TH>
+            <TH>Destination</TH>
             <TH>Status</TH>
             {canWrite && <TH className="text-right">Actions</TH>}
           </THead>
@@ -188,6 +222,7 @@ export function Hooks() {
                     {rule.target_url || "—"}
                   </code>
                 </TD>
+                <TD><Badge variant="purple">{rule.destination_type ?? "webhook"}</Badge></TD>
                 <TD>
                   <button
                     type="button"
@@ -221,7 +256,7 @@ export function Hooks() {
                     <Pencil className="h-4 w-4" />
                   </button>
                   <button
-                    onClick={() => setDeleteTarget(rule)}
+                    onClick={() => { setDeleteTarget(rule); setDeleteConfirmation(""); }}
                     className="p-2 rounded-md text-muted hover:text-danger hover:bg-[rgba(239,68,68,.1)] transition-base"
                     title="Delete"
                   >
@@ -287,18 +322,23 @@ export function Hooks() {
               <option value="failure">Provider fails</option>
             </Select>
           </Field>
-          <Field label="Target URL" htmlFor="hook-target">
-            <Input
-              id="hook-target"
-              value={form.target_url}
-              onChange={(e) =>
-                setForm({ ...form, target_url: e.target.value })
-              }
-              placeholder="https://example.com/webhook"
-              required
-            />
+          <Field label="Destination" htmlFor="hook-destination" hint="Webhook retains the original payload; native destinations send a summary and payload.">
+            <Select
+              id="hook-destination"
+              value={form.destination_type}
+              onChange={(event) => setForm({ ...form, destination_type: event.target.value as FormState["destination_type"] })}
+            >
+              <option value="webhook">Webhook</option>
+              <option value="slack">Slack</option>
+              <option value="telegram">Telegram</option>
+              <option value="email">Email</option>
+            </Select>
           </Field>
-          <Field label="HTTP method" htmlFor="hook-method">
+          {form.destination_type === "webhook" ? <>
+            <Field label="Target URL" htmlFor="hook-target">
+              <Input id="hook-target" value={form.target_url} onChange={(e) => setForm({ ...form, target_url: e.target.value })} placeholder="https://example.com/webhook" required />
+            </Field>
+            <Field label="Outbound method" htmlFor="hook-method">
             <Select
               id="hook-method"
               value={form.method}
@@ -324,6 +364,22 @@ export function Hooks() {
               placeholder={editing ? "existing secret is hidden" : "leave empty to disable signing"}
             />
           </Field>
+          </> : form.destination_type === "slack" ? (
+            <Field label="Slack Incoming Webhook URL" htmlFor="slack-webhook-url" hint={editing ? "Enter a replacement URL to update this destination." : undefined}>
+              <Input id="slack-webhook-url" type="url" value={form.slack_webhook_url} onChange={(event) => setForm({ ...form, slack_webhook_url: event.target.value })} placeholder="https://hooks.slack.com/services/..." required={destinationNeedsConfig} />
+            </Field>
+          ) : form.destination_type === "telegram" ? <>
+            <Field label="Telegram bot token" htmlFor="telegram-bot-token" hint={editing ? "Enter a replacement token to update this destination." : undefined}>
+              <Input id="telegram-bot-token" type="password" value={form.telegram_bot_token} onChange={(event) => setForm({ ...form, telegram_bot_token: event.target.value })} required={destinationNeedsConfig} />
+            </Field>
+            <Field label="Telegram chat ID" htmlFor="telegram-chat-id">
+              <Input id="telegram-chat-id" value={form.telegram_chat_id} onChange={(event) => setForm({ ...form, telegram_chat_id: event.target.value })} required={destinationNeedsConfig} />
+            </Field>
+          </> : (
+            <Field label="Email recipient" htmlFor="email-recipient" hint="Uses the server's configured Resend sender.">
+              <Input id="email-recipient" type="email" value={form.email_recipient} onChange={(event) => setForm({ ...form, email_recipient: event.target.value })} placeholder="alerts@example.com" required={destinationNeedsConfig} />
+            </Field>
+          )}
           {error && (
             <p className="text-sm text-danger bg-[rgba(239,68,68,.1)] border border-[rgba(239,68,68,.25)] rounded-md p-3">
               {error}
@@ -334,20 +390,27 @@ export function Hooks() {
 
       <ConfirmDialog
         open={deleteTarget !== null}
-        onClose={() => setDeleteTarget(null)}
+        onClose={() => { setDeleteTarget(null); setDeleteConfirmation(""); }}
         title="Delete hook"
         description={`Delete hook "${deleteTarget?.name ?? ""}"? This cannot be undone.`}
         confirmLabel="Delete"
         danger
         loading={deleteRule.isPending}
+        confirmDisabled={deleteConfirmation !== (deleteTarget?.target_url ?? "")}
         onConfirm={() => {
           if (deleteTarget) {
             deleteRule.mutate(deleteTarget.id, {
-              onSuccess: () => setDeleteTarget(null),
+              onSuccess: () => { setDeleteTarget(null); setDeleteConfirmation(""); },
             });
           }
         }}
-      />
+      >
+        <div className="space-y-3">
+          <p className="text-sm text-secondary">Type this target URL to confirm:</p>
+          <code className="block rounded-md bg-surface-2 px-3 py-2 text-xs text-foreground break-all">{deleteTarget?.target_url}</code>
+          <Input value={deleteConfirmation} onChange={(event) => setDeleteConfirmation(event.target.value)} placeholder="Enter target URL" autoComplete="off" />
+        </div>
+      </ConfirmDialog>
     </Card>
   );
 }

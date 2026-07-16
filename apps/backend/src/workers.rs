@@ -6,7 +6,7 @@ use chrono::Utc;
 use hmac::{Hmac, Mac};
 use redis::aio::ConnectionManager;
 use sha2::Sha256;
-use tracing::info;
+use tracing::{info, warn};
 use uuid::Uuid;
 
 use crate::model::{ForwardRule, WebhookEvent};
@@ -210,8 +210,13 @@ pub async fn worker(db: sqlx::PgPool, mut redis: ConnectionManager, max_retries:
                     .execute(&db).await.ok();
                     let delay = retry_delay_secs(retry_count);
                     let retry_at = Utc::now().timestamp() + delay as i64;
-                    redis::cmd("ZADD").arg(RETRY_KEY).arg(retry_at).arg(id.to_string())
-                        .query_async::<()>(&mut redis).await.ok();
+                    redis::cmd("ZADD")
+                        .arg(RETRY_KEY)
+                        .arg(retry_at)
+                        .arg(id.to_string())
+                        .query_async::<()>(&mut redis)
+                        .await
+                        .ok();
                     info!("queued {id} for retry #{retry_count} in {delay}s");
                 } else {
                     record_attempt(
@@ -404,7 +409,9 @@ pub async fn retry_worker(db: sqlx::PgPool, mut redis: ConnectionManager) {
                             .execute(&db).await.ok();
                             info!("retry delivered {id}");
                             forward_to_rules(&db, &event, &client, "success", Some(status)).await;
-                        } else if is_retryable_status(status) && event.retry_count < event.max_retries {
+                        } else if is_retryable_status(status)
+                            && event.retry_count < event.max_retries
+                        {
                             let retry_count = event.retry_count + 1;
                             record_attempt(
                                 &db,
@@ -524,13 +531,78 @@ pub async fn retry_worker(db: sqlx::PgPool, mut redis: ConnectionManager) {
 /// Build an outbound request honoring the rule's `method`, custom `headers`,
 /// and optional HMAC `signing_secret`. When a secret is present, an
 /// `X-Terusin-Signature: sha256=<hex>` header is added over the body bytes.
+fn hook_notification_text(
+    event: &WebhookEvent,
+    delivery_status: &str,
+    response_status: Option<i32>,
+) -> String {
+    let response = response_status
+        .map(|status| format!("HTTP {status}"))
+        .unwrap_or_else(|| "no HTTP response".to_string());
+    let payload = serde_json::to_string_pretty(&event.body).unwrap_or_else(|_| "{}".to_string());
+    format!(
+        "Terusin webhook {delivery_status}\nSource: {}\nDelivery: {response}\nTarget: {}\nPayload:\n{payload}",
+        event.source, event.target_url,
+    )
+}
+
+/// Build an outbound request for a hook. Native destination credentials only
+/// live in `destination_config`, which is skipped during API serialization.
 fn build_rule_request(
     client: &reqwest::Client,
     rule: &ForwardRule,
-    body: &serde_json::Value,
+    event: &WebhookEvent,
     delivery_status: &str,
     response_status: Option<i32>,
-) -> reqwest::RequestBuilder {
+) -> Result<reqwest::RequestBuilder, String> {
+    if rule.destination_type != "webhook" {
+        let config = rule
+            .destination_config
+            .as_object()
+            .ok_or("invalid destination config")?;
+        let value = |key: &str| {
+            config
+                .get(key)
+                .and_then(|value| value.as_str())
+                .filter(|value| !value.is_empty())
+        };
+        let text = hook_notification_text(event, delivery_status, response_status);
+        return match rule.destination_type.as_str() {
+            "slack" => {
+                let url = value("webhook_url").ok_or("Slack webhook URL is missing")?;
+                Ok(client.post(url).json(&serde_json::json!({ "text": text })))
+            }
+            "telegram" => {
+                let token = value("bot_token").ok_or("Telegram bot token is missing")?;
+                let chat_id = value("chat_id").ok_or("Telegram chat ID is missing")?;
+                let url = format!("https://api.telegram.org/bot{token}/sendMessage");
+                Ok(client
+                    .post(url)
+                    .json(&serde_json::json!({ "chat_id": chat_id, "text": text })))
+            }
+            "email" => {
+                let recipient = value("recipient").ok_or("Email recipient is missing")?;
+                let api_key = std::env::var("RESEND_API_KEY")
+                    .ok()
+                    .filter(|value| !value.trim().is_empty())
+                    .ok_or("RESEND_API_KEY is not configured")?;
+                let from = std::env::var("EMAIL_FROM")
+                    .ok()
+                    .filter(|value| !value.trim().is_empty())
+                    .ok_or("EMAIL_FROM is not configured")?;
+                Ok(client
+                    .post("https://api.resend.com/emails")
+                    .bearer_auth(api_key)
+                    .json(&serde_json::json!({
+                        "from": from,
+                        "to": [recipient],
+                        "subject": format!("Terusin webhook {}: {}", delivery_status, event.source),
+                        "text": text,
+                    })))
+            }
+            _ => Err("unsupported hook destination".to_string()),
+        };
+    }
     let method = match rule.method.to_uppercase().as_str() {
         "GET" => reqwest::Method::GET,
         "PUT" => reqwest::Method::PUT,
@@ -539,7 +611,7 @@ fn build_rule_request(
         _ => reqwest::Method::POST,
     };
     // Serialize once so the signature covers the exact bytes we send.
-    let body_bytes = serde_json::to_vec(body).unwrap_or_default();
+    let body_bytes = serde_json::to_vec(&event.body).unwrap_or_default();
     let mut req = client
         .request(method, &rule.target_url)
         .header("content-type", "application/json")
@@ -561,7 +633,7 @@ fn build_rule_request(
     if let Some(status) = response_status {
         req = req.header("X-Terusin-Response-Status", status.to_string());
     }
-    req
+    Ok(req)
 }
 
 async fn forward_to_rules(
@@ -583,19 +655,52 @@ async fn forward_to_rules(
              AND provider.active = true
              AND provider.source_pattern = $3"#,
     )
-        .bind(event.organization_id)
-        .bind(trigger_on)
-        .bind(&event.source)
-        .fetch_all(db)
-        .await
-        .unwrap_or_default();
+    .bind(event.organization_id)
+    .bind(trigger_on)
+    .bind(&event.source)
+    .fetch_all(db)
+    .await
+    .unwrap_or_default();
 
     for rule in rules {
-        let delivery_status = if trigger_on == "success" { "delivered" } else { "failed" };
-        let req = build_rule_request(client, &rule, &event.body, delivery_status, response_status);
-        let res = req.send().await;
-        if let Ok(r) = res {
-            tracing::info!("hook {} -> {}: {}", rule.name, rule.target_url, r.status());
+        let delivery_status = if trigger_on == "success" {
+            "delivered"
+        } else {
+            "failed"
+        };
+        let mut delivered = false;
+        for attempt in 1..=3 {
+            let result = build_rule_request(client, &rule, event, delivery_status, response_status)
+                .and_then(|request| Ok(request));
+            let response = match result {
+                Ok(request) => request.send().await.map_err(|error| error.to_string()),
+                Err(error) => Err(error),
+            };
+            match response {
+                Ok(response) if response.status().is_success() => {
+                    info!(
+                        "hook {} -> {}: {}",
+                        rule.name,
+                        rule.target_url,
+                        response.status()
+                    );
+                    delivered = true;
+                    break;
+                }
+                Ok(response) => warn!(
+                    "hook {} attempt {attempt}/3 -> {}: {}",
+                    rule.name,
+                    rule.target_url,
+                    response.status()
+                ),
+                Err(error) => warn!("hook {} attempt {attempt}/3 failed: {error}", rule.name),
+            }
+            if attempt < 3 {
+                tokio::time::sleep(tokio::time::Duration::from_millis(250 * attempt)).await;
+            }
+        }
+        if !delivered {
+            warn!("hook {} could not be delivered after 3 attempts", rule.name);
         }
     }
 }
