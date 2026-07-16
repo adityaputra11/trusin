@@ -1,5 +1,6 @@
 //! Backend entry point: wiring only (modules, re-exports, CORS, main).
 
+mod ai;
 mod audit;
 mod auth;
 mod config;
@@ -23,7 +24,7 @@ mod workers;
 // resolving after the split. auth.rs imports `AppState`/`User` and calls
 // `crate::check_rate_limit` / `crate::client_ip_from`.
 pub use model::User;
-pub use ratelimit::{check_rate_limit, client_ip_from};
+pub use ratelimit::{check_rate_limit, check_user_rate_limit, client_ip_from};
 pub use state::AppState;
 
 use std::sync::Arc;
@@ -51,7 +52,7 @@ use crate::platform::{
     bootstrap_platform_operator, list_platform_organizations, platform_organization_detail,
     platform_overview, update_platform_subscription,
 };
-use crate::ratelimit::build_rate_limiter;
+use crate::ratelimit::{build_rate_limiter, build_user_rate_limiter};
 use crate::rules::{create_rule, delete_rule, list_rules, rule_health, update_rule};
 use crate::send::send_webhook;
 use crate::state::{redis_from_env, seed_default_user};
@@ -149,9 +150,25 @@ async fn main() {
         info!("turnstile captcha disabled (set TURNSTILE_SECRET_KEY to enable)");
     }
 
+    let ai = match ai::AiConfig::from_env() {
+        Ok(config) => config,
+        Err(error) => {
+            tracing::warn!("AI explanations disabled: {error}");
+            None
+        }
+    };
+    if ai.is_some() {
+        info!("AI explanations enabled");
+    }
+
     // Per-IP rate limiters for the auth endpoints. In-memory (per-process).
     let login_limiter = build_rate_limiter(60, 5);
     let me_limiter = build_rate_limiter(60, 30);
+    let ai_explain_limit = std::env::var("AI_EXPLAIN_RATE_LIMIT")
+        .ok()
+        .and_then(|value| value.parse::<u32>().ok())
+        .unwrap_or(5);
+    let ai_explain_limiter = build_user_rate_limiter(ai_explain_limit);
 
     let state = Arc::new(AppState {
         db: db.clone(),
@@ -159,8 +176,10 @@ async fn main() {
         max_retries,
         oauth,
         turnstile,
+        ai,
         login_limiter: login_limiter.clone(),
         me_limiter: me_limiter.clone(),
+        ai_explain_limiter,
     });
 
     let worker_count: usize = std::env::var("WORKER_COUNT")
@@ -200,6 +219,7 @@ async fn main() {
             "/config/default-target",
             get(get_default_target).post(set_default_target),
         )
+        .route("/config/ai", get(ai::status))
         .route("/events", get(list_events))
         .route("/events/sources", get(list_sources))
         .route("/events/stream", get(event_stream))
@@ -211,6 +231,7 @@ async fn main() {
             "/events/{id}/hook-notifications",
             get(list_hook_notifications),
         )
+        .route("/events/{id}/ai-explanation", post(ai::explain_event))
         .route("/events/{id}/retry", post(retry_event))
         .route("/events/{id}/ack", post(ack_event))
         .route("/rules", get(list_rules).post(create_rule))

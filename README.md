@@ -26,6 +26,7 @@
 - **Self-hosted** — Docker Compose, or bare metal with Postgres + Redis
 - **ngrok optional** — auto-starts tunnel when backend is remote
 - **MCP server** — AI agent integration via stdio JSON-RPC
+- **AI explanations (optional)** — diagnose failed deliveries from redacted event evidence
 
 ## Requirements
 
@@ -99,6 +100,22 @@ https://your-host.com/github/webhook      → source = "github"
 ```
 
 Add providers with target URLs via dashboard or `trusin` CLI. Webhooks are forwarded automatically.
+
+## AI explanations
+
+AI explanations are disabled by default. To enable the read-only “Explain with AI” action on event detail pages, configure Nebius AI Studio on the backend:
+
+```sh
+AI_ENABLED=true \
+AI_PROVIDER=nebius \
+NEBIUS_API_KEY=... \
+NEBIUS_MODEL=... \
+AI_EXPLAIN_RATE_LIMIT=5 \
+cargo run --bin backend
+```
+
+The backend sends only redacted and truncated event context to the configured provider. Explanations are generated on demand and are not stored; they never retry, reroute, or modify webhook events.
+`AI_EXPLAIN_RATE_LIMIT` limits each authenticated user to five explanations per hour by default; set it between `1` and `100` to control spend. `AI_PROVIDER=openai` remains available for an OpenAI-compatible fallback.
 
 ## MCP for AI agents
 

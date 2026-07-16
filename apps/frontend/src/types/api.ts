@@ -17,6 +17,18 @@ export interface WebhookEvent {
   response_body: string | null;
 }
 
+export interface AiStatus {
+  enabled: boolean;
+}
+
+export interface AiExplanation {
+  summary: string;
+  likely_cause: string;
+  evidence: string[];
+  recommended_actions: string[];
+  retry_recommendation: "safe" | "caution" | "not_recommended";
+}
+
 /** One outbound delivery attempt (retry timeline entry). */
 export interface DeliveryAttempt {
   id: string;

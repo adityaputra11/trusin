@@ -6,9 +6,10 @@ use redis::aio::ConnectionManager;
 use tracing::info;
 use uuid::Uuid;
 
+use crate::ai::AiConfig;
 use crate::auth::{OAuthConfig, TurnstileConfig};
 use crate::model::User;
-use crate::ratelimit::KeyedLimiter;
+use crate::ratelimit::{KeyedLimiter, UserKeyedLimiter};
 
 /// Shared state cloned into every handler via `Arc<AppState>`. All fields are
 /// `pub` because sibling modules (handlers, workers, `auth`) read them
@@ -21,11 +22,13 @@ pub struct AppState {
     pub oauth: Option<Arc<OAuthConfig>>,
     /// Present when Cloudflare Turnstile is configured (TURNSTILE_SECRET_KEY set).
     pub turnstile: Option<Arc<TurnstileConfig>>,
+    pub ai: Option<Arc<AiConfig>>,
     /// Per-IP rate limiter for the login endpoint (5/min). Shared so handlers
     /// can call `check_key` directly without a separate middleware layer.
     pub login_limiter: Arc<KeyedLimiter>,
     /// Per-IP rate limiter for /api/auth/me (30/min — called on every page load).
     pub me_limiter: Arc<KeyedLimiter>,
+    pub ai_explain_limiter: Arc<UserKeyedLimiter>,
 }
 
 /// Seed the legacy admin/password user from `AUTH_USERNAME` / `AUTH_PASSWORD`
