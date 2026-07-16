@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" /><meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Webhook Operations MCP Server | trusin</title>
+    <meta name="description" content="Connect AI clients to trusin through a standards-compliant MCP server for webhook health, events, delivery attempts, retries, and sending." />
+    <link rel="canonical" href="https://trusin.my.id/mcp" /><link rel="stylesheet" href="/seo.css" />
+    <meta property="og:title" content="Webhook Operations MCP Server | trusin" /><meta property="og:description" content="Give AI clients token-authenticated webhook delivery context." /><meta property="og:url" content="https://trusin.my.id/mcp" /><meta property="og:image" content="https://trusin.my.id/og-image.png" />
+  </head>
+  <body><div class="shell"><header><a class="brand" href="/">trusin</a><nav><a href="/webhook-delivery">Delivery</a><a href="/webhook-retries">Retries</a><a href="/cli">CLI</a><a href="/self-hosted">Self-hosted</a><a href="https://docs.trusin.my.id">Docs</a></nav></header><main>
+    <span class="eyebrow">MODEL CONTEXT PROTOCOL</span><h1>Give AI clients reliable webhook context.</h1>
+    <p class="lead">trusin bundles an MCP server that lets supported AI clients query delivery health, metrics, events, attempts, and safely request sends or retries through your API token.</p>
+    <pre><code>{
+  "command": "trusin",
+  "args": ["mcp"],
+  "env": { "TERUSIN_TOKEN": "ts_your_token" }
+}</code></pre>
+    <div class="actions"><a class="button primary" href="https://docs.trusin.my.id/docs/guides/cli-and-mcp">Configure MCP</a><a class="button" href="/cli">Install the CLI</a></div>
+    <h2>Tools built for operations</h2><ul><li><code>get_health</code> and <code>get_metrics</code> for an operational overview.</li><li><code>list_events</code>, <code>get_event</code>, and <code>get_delivery_attempts</code> for investigation.</li><li><code>send_webhook</code> and <code>retry_event</code> for controlled action.</li></ul>
+    <div class="callout"><strong>Credentials stay with your client.</strong><p>The MCP server runs over local stdio and reads <code>TERUSIN_TOKEN</code>. It does not use browser credentials or a default local password.</p></div>
+    <h2>Related resources</h2><p>Install the <a href="/cli">trusin CLI</a> first, then create a token in Settings. Learn how event delivery works in <a href="/webhook-delivery">Webhook delivery</a>.</p>
+  </main><footer>© trusin · <a href="https://github.com/adityaputra11/terusin">GitHub</a> · <a href="https://docs.trusin.my.id">Documentation</a></footer></div></body>
+</html>

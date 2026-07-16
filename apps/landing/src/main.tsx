@@ -113,9 +113,10 @@ function App() {
         <nav className="nav container" aria-label="Main navigation">
           <Logo />
           <div className="nav-links">
-            <a href="#product">Product</a>
-            <a href="#faq">FAQ</a>
-            <a href="#hosting">Managed hosting</a>
+            <a href="/webhook-delivery">Delivery</a>
+            <a href="/webhook-retries">Retries</a>
+            <a href="/cli">CLI</a>
+            <a href="/mcp">MCP</a>
             <a href={config.docsUrl}>Docs</a>
             <GitHubStars />
           </div>
@@ -174,6 +175,20 @@ function App() {
           </div>
         </section>
 
+        <section className="section guides container" aria-labelledby="guides-heading">
+          <div className="section-heading">
+            <div><p className="kicker">BUILD WITH TRUSIN</p><h2 id="guides-heading">Start with the part<br />you need most.</h2></div>
+            <p>Practical guides for reliable webhook delivery, local development, and AI-assisted operations.</p>
+          </div>
+          <div className="guide-grid">
+            <Guide href="/webhook-delivery" title="Webhook delivery" text="Receive provider events, queue delivery, and keep a complete timeline." />
+            <Guide href="/webhook-retries" title="Webhook retries" text="Recover retryable failures with controlled exponential backoff." />
+            <Guide href="/cli" title="trusin CLI" text="Forward events to localhost and operate the relay from your terminal." />
+            <Guide href="/mcp" title="MCP server" text="Give AI clients a typed, token-authenticated view of delivery operations." />
+            <Guide href="/self-hosted" title="Self-hosted" text="Run trusin with Postgres and Redis on infrastructure you control." />
+          </div>
+        </section>
+
         <section className="section api-client container">
           <div className="api-client-copy"><p className="kicker">COMING NEXT</p><h2>Your webhook control room is getting an API workspace.</h2><p>trusin is expanding into a focused REST API client for building, running, saving, and sharing HTTP requests alongside the webhook events they trigger.</p><ul><li><i>✓</i> Request builder, response viewer, and request history</li><li><i>✓</i> Environments, variables, and redacted secret handling</li><li><i>✓</i> Collections plus OpenAPI, cURL, and Postman import</li></ul></div>
           <div className="request-preview" aria-label="API client concept preview"><div className="request-top"><span>API CLIENT</span><b>IN DEVELOPMENT</b></div><div className="request-url"><strong>POST</strong><code>https://api.acme.test/v1/orders</code><button type="button" tabIndex={-1}>Send</button></div><div className="request-body"><div><span>Headers</span><span>Body</span><span>Auth</span></div><code>{'{'}<br />&nbsp;&nbsp;"amount": 12000,<br />&nbsp;&nbsp;"currency": "IDR"<br />{'}'}</code></div><div className="response"><span>201 Created <i>184ms</i></span><code>{'{'} "id": "ord_87q9", "status": "created" {'}'}</code></div></div>
@@ -200,7 +215,7 @@ function App() {
         <section className="cta"><div className="container"><p className="kicker">SHIP WITH CONFIDENCE</p><h2>Stop hoping your webhooks arrive.</h2><p>Own the delivery layer your product depends on—self-host it, or let us run it for you.</p><div className="hero-actions"><a className="button button-primary" href={managedCta.href}>{managedCta.label} <Arrow /></a><a className="button button-secondary" href={config.githubUrl}>View on GitHub <span>→</span></a></div></div></section>
       </main>
 
-      <footer className="footer"><div className="container"><Logo /><span>© {new Date().getFullYear()} trusin. Apache-2.0.</span><div><a href={config.docsUrl}>Documentation</a><a href={config.githubUrl}>GitHub</a><a href={config.appUrl}>Open app</a></div></div></footer>
+      <footer className="footer"><div className="container"><Logo /><span>© {new Date().getFullYear()} trusin. Apache-2.0.</span><div><a href="/webhook-delivery">Delivery</a><a href="/webhook-retries">Retries</a><a href="/cli">CLI</a><a href="/mcp">MCP</a><a href="/self-hosted">Self-hosted</a><a href={config.docsUrl}>Docs</a><a href={config.githubUrl}>GitHub</a><a href={config.appUrl}>Open app</a></div></div></footer>
     </div>
   );
 }
@@ -210,5 +225,6 @@ function Feature({ number, glyph, title, text }: { number: string; glyph: string
 function Node({ label, sub, icon, primary = false }: { label: string; sub: string; icon: string; primary?: boolean }) { return <div className={`pipeline-node ${primary ? "primary" : ""}`}><i>{icon}</i><strong>{label}</strong><small>{sub}</small></div>; }
 function Point({ title, text }: { title: string; text: string }) { return <article><i>✓</i><div><h3>{title}</h3><p>{text}</p></div></article>; }
 function Faq({ question, answer }: { question: string; answer: string }) { return <article><h3>{question}</h3><p>{answer}</p></article>; }
+function Guide({ href, title, text }: { href: string; title: string; text: string }) { return <a className="guide" href={href}><span>Guide</span><h3>{title}</h3><p>{text}</p><b>Explore →</b></a>; }
 
 createRoot(document.getElementById("root")!).render(<StrictMode><App /></StrictMode>);
