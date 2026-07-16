@@ -69,25 +69,6 @@ function HealthBadge({ health }: { health?: RuleHealth }) {
   return <Badge variant="info">In flight</Badge>;
 }
 
-function hookName(
-  providerName: string | undefined,
-  destinationType: FormState["destination_type"],
-  targetUrl: string,
-  triggerOn: FormState["trigger_on"],
-) {
-  const destination = destinationType === "webhook"
-    ? (() => {
-        try {
-          return new URL(targetUrl).hostname || "webhook";
-        } catch {
-          return "webhook";
-        }
-      })()
-    : destinationType;
-
-  return `${providerName || "Provider"} → ${destination} (${triggerOn})`;
-}
-
 export function Hooks() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -144,9 +125,8 @@ export function Hooks() {
     e.preventDefault();
     setError(null);
     try {
-      const providerName = providers.find((provider) => provider.id === form.provider_id)?.name;
       const input = {
-        name: form.name.trim() || hookName(providerName, form.destination_type, form.target_url, form.trigger_on),
+        name: form.name.trim(),
         target_url: form.destination_type === "webhook" ? form.target_url.trim() : "",
         provider_id: form.provider_id,
         trigger_on: form.trigger_on,
@@ -311,13 +291,22 @@ export function Hooks() {
         }
       >
         <form id="hook-form" onSubmit={submit} className="space-y-4">
+          <Field label="Name" htmlFor="hook-name">
+            <Input
+              id="hook-name"
+              value={form.name}
+              onChange={(e) => setForm({ ...form, name: e.target.value })}
+              placeholder="my-hook"
+              required
+              autoFocus
+            />
+          </Field>
           <Field label="Provider" htmlFor="hook-provider" hint="The hook mirrors this provider's source.">
             <Select
               id="hook-provider"
               value={form.provider_id}
               onChange={(e) => setForm({ ...form, provider_id: e.target.value })}
               required
-              autoFocus
             >
               <option value="" disabled>Select a provider</option>
               {providers.map((provider) => <option key={provider.id} value={provider.id}>{provider.name} ({provider.source_pattern})</option>)}
@@ -343,19 +332,6 @@ export function Hooks() {
           <details className="rounded-md border border-border bg-surface p-3">
             <summary className="cursor-pointer text-sm font-medium text-secondary hover:text-foreground">Advanced settings</summary>
             <div className="mt-4 space-y-4">
-              <Field label="Name" htmlFor="hook-name" hint="Leave empty to generate a name from the provider and destination.">
-                <Input
-                  id="hook-name"
-                  value={form.name}
-                  onChange={(e) => setForm({ ...form, name: e.target.value })}
-                  placeholder={hookName(
-                    providers.find((provider) => provider.id === form.provider_id)?.name,
-                    form.destination_type,
-                    form.target_url,
-                    form.trigger_on,
-                  )}
-                />
-              </Field>
               <Field label="Run when" htmlFor="hook-trigger" hint="Failure runs after all provider retries are exhausted.">
                 <Select id="hook-trigger" value={form.trigger_on} onChange={(event) => setForm({ ...form, trigger_on: event.target.value as FormState["trigger_on"] })}>
                   <option value="success">Provider succeeds</option>
