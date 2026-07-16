@@ -237,33 +237,34 @@ export function Providers() {
           }
         />
       ) : (
-        <Table>
-          <THead>
-            <TH>Name</TH>
-            <TH>Source</TH>
-            <TH>Webhook URL</TH>
-            <TH>Outbound method</TH>
-            <TH>Target URL</TH>
-            <TH>Status</TH>
-            <TH>Health (24h)</TH>
-            {canWrite && <TH className="text-right">Actions</TH>}
-          </THead>
-          <TBody>
+        <div className="px-3 pb-3 sm:px-4 sm:pb-4">
+          <Table className="table-fixed">
+            <THead>
+            <TH className="w-[10%]">Name</TH>
+            <TH className="w-[9%]">Source</TH>
+            <TH className="w-[27%]">Webhook URL</TH>
+            <TH className="w-[10%]">Outbound method</TH>
+            <TH className="w-[23%]">Target URL</TH>
+            <TH className="w-[8%]">Status</TH>
+            <TH className="w-[9%]">Health (24h)</TH>
+            {canWrite && <TH className="w-[4%] text-right">Actions</TH>}
+            </THead>
+            <TBody>
             {providers.map((rule) => (
               <TR key={rule.id}>
-                <TD>
-                  <span className="font-medium text-foreground">
+                <TD className="min-w-0">
+                  <span className="block truncate font-medium text-foreground">
                     {rule.name}
                   </span>
                 </TD>
-                <TD>
-                  <code className="text-xs text-secondary font-mono">
+                <TD className="min-w-0">
+                  <code className="block truncate text-xs text-secondary font-mono">
                     {rule.source_pattern}
                   </code>
                 </TD>
-                <TD>
-                  <div className="flex items-center gap-1 max-w-[280px]">
-                    <code className="text-xs text-muted font-mono truncate">
+                <TD className="min-w-0">
+                  <div className="flex min-w-0 items-center gap-1">
+                    <code className="min-w-0 flex-1 truncate text-xs text-muted font-mono">
                       {webhookUrl(organization?.ingest_url, rule.source_pattern, rule.ingest_hostname) || "Loading…"}
                     </code>
                     <Badge variant="purple" className="shrink-0">POST only</Badge>
@@ -279,13 +280,13 @@ export function Providers() {
                     </button>
                   </div>
                 </TD>
-                <TD>
-                  <code className="text-xs text-secondary font-mono">
+                <TD className="min-w-0">
+                  <code className="block truncate text-xs text-secondary font-mono">
                     {rule.method}
                   </code>
                 </TD>
-                <TD>
-                  <code className="text-xs text-muted font-mono truncate max-w-[280px] inline-block align-bottom">
+                <TD className="min-w-0">
+                  <code className="block truncate text-xs text-muted font-mono">
                     {rule.target_url || "—"}
                   </code>
                 </TD>
@@ -337,8 +338,9 @@ export function Providers() {
                 )}
               </TR>
             ))}
-          </TBody>
-        </Table>
+            </TBody>
+          </Table>
+        </div>
       )}
 
       <Modal
