@@ -1,12 +1,13 @@
 import { useState, type FormEvent } from "react";
 import { useCanWrite } from "../lib/user-context";
-import { Check, Copy, Link2, Plus, Pencil, Settings2, Trash2 } from "lucide-react";
+import { Check, Copy, Plus, Pencil, Settings2, Trash2 } from "lucide-react";
 import {
   useRules,
   useCreateRule,
   useDeleteRule,
   useOrganization,
   useUpdateRule,
+  useDomains,
 } from "../lib/hooks";
 import {
   Badge,
@@ -38,6 +39,7 @@ interface FormState {
   method: string;
   headers_text: string; // newline-separated "Key: value" lines, edited as text
   signing_secret: string;
+  ingest_hostname: string;
 }
 
 const EMPTY: FormState = {
@@ -47,6 +49,7 @@ const EMPTY: FormState = {
   method: "POST",
   headers_text: "",
   signing_secret: "",
+  ingest_hostname: "",
 };
 
 /** Parse "Key: value" lines (one per line) into a headers object. */
@@ -71,15 +74,18 @@ function headersToText(h: Record<string, string> | null | undefined): string {
     .join("\n");
 }
 
-function webhookUrl(endpoint: string | undefined, source: string): string {
-  if (!endpoint || !source.trim()) return "";
-  return `${endpoint.replace(/\/$/, "")}/${encodeURIComponent(source.trim())}`;
+function webhookUrl(endpoint: string | undefined, source: string, ingestHostname?: string | null): string {
+  if (!source.trim()) return "";
+  const base = ingestHostname ? `https://${ingestHostname}` : endpoint;
+  if (!base) return "";
+  return `${base.replace(/\/$/, "")}/${encodeURIComponent(source.trim())}`;
 }
 
 export function Providers() {
   const canWrite = useCanWrite();
   const { data: rules, isLoading } = useRules();
   const { data: organization } = useOrganization();
+  const { data: domains } = useDomains(canWrite);
   const createRule = useCreateRule();
   const updateRule = useUpdateRule();
   const deleteRule = useDeleteRule();
@@ -90,6 +96,7 @@ export function Providers() {
   const [error, setError] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<ForwardRule | null>(null);
   const [copiedProviderId, setCopiedProviderId] = useState<string | null>(null);
+  const [deleteConfirmation, setDeleteConfirmation] = useState("");
 
   // Providers = named source mappings, exclude the seeded catch-all "Default".
   const providers = (rules ?? []).filter((r) => r.rule_kind === "provider");
@@ -113,6 +120,7 @@ export function Providers() {
         : "POST",
       headers_text: headersToText(rule.headers),
       signing_secret: rule.signing_secret ?? "",
+      ingest_hostname: rule.ingest_hostname ?? "",
     });
     setError(null);
     setOpen(true);
@@ -132,6 +140,7 @@ export function Providers() {
           method: form.method,
           headers,
           signing_secret: form.signing_secret.trim() || undefined,
+          ingest_hostname: form.ingest_hostname,
         });
       } else {
         await createRule.mutateAsync({
@@ -142,6 +151,7 @@ export function Providers() {
           headers,
           signing_secret: form.signing_secret.trim() || undefined,
           rule_kind: "provider",
+          ingest_hostname: form.ingest_hostname,
         });
       }
       setOpen(false);
@@ -153,7 +163,7 @@ export function Providers() {
   const saving = createRule.isPending || updateRule.isPending;
 
   const copyWebhookUrl = async (provider: ForwardRule) => {
-    const url = webhookUrl(organization?.ingest_url, provider.source_pattern);
+    const url = webhookUrl(organization?.ingest_url, provider.source_pattern, provider.ingest_hostname);
     if (!url) return;
     try {
       await navigator.clipboard.writeText(url);
@@ -197,7 +207,7 @@ export function Providers() {
             <TH>Name</TH>
             <TH>Source</TH>
             <TH>Webhook URL</TH>
-            <TH>Method</TH>
+            <TH>Outbound method</TH>
             <TH>Target URL</TH>
             <TH>Status</TH>
             {canWrite && <TH className="text-right">Actions</TH>}
@@ -218,8 +228,9 @@ export function Providers() {
                 <TD>
                   <div className="flex items-center gap-1 max-w-[280px]">
                     <code className="text-xs text-muted font-mono truncate">
-                      {webhookUrl(organization?.ingest_url, rule.source_pattern) || "Loading…"}
+                      {webhookUrl(organization?.ingest_url, rule.source_pattern, rule.ingest_hostname) || "Loading…"}
                     </code>
+                    <Badge variant="purple" className="shrink-0">POST only</Badge>
                     <button
                       type="button"
                       onClick={() => copyWebhookUrl(rule)}
@@ -266,7 +277,7 @@ export function Providers() {
                       <Pencil className="h-4 w-4" />
                     </button>
                     <button
-                      onClick={() => setDeleteTarget(rule)}
+                      onClick={() => { setDeleteTarget(rule); setDeleteConfirmation(""); }}
                       className="p-2 rounded-md text-muted hover:text-danger hover:bg-[rgba(239,68,68,.1)] transition-base"
                       title="Delete"
                     >
@@ -328,15 +339,18 @@ export function Providers() {
               placeholder={form.name || "source-name"}
             />
           </Field>
-          <div className="rounded-md border border-border bg-surface-2 p-3">
-            <div className="flex items-center gap-2 text-xs font-medium text-secondary">
-              <Link2 className="h-3.5 w-3.5 text-success" />
-              Webhook endpoint to paste in your provider
-            </div>
-            <code className="mt-2 block truncate text-xs text-foreground font-mono">
-              {webhookUrl(organization?.ingest_url, form.source_pattern || form.name) || "Enter a provider name to generate the endpoint"}
-            </code>
-          </div>
+          <Field label="Incoming domain" htmlFor="ingest-hostname" hint="Choose where this provider receives POST webhooks. The full URL remains available in the provider list.">
+            <Select
+              id="ingest-hostname"
+              value={form.ingest_hostname}
+              onChange={(event) => setForm({ ...form, ingest_hostname: event.target.value })}
+            >
+              <option value="">Terusin canonical domain</option>
+              {(domains ?? []).filter((domain) => domain.status === "active").map((domain) => (
+                <option key={domain.id} value={domain.hostname}>{domain.hostname}</option>
+              ))}
+            </Select>
+          </Field>
           <Field label="Target URL" htmlFor="target">
             <Input
               id="target"
@@ -349,7 +363,7 @@ export function Providers() {
             />
           </Field>
           <Field
-            label="HTTP method"
+            label="Outbound method"
             htmlFor="method"
             hint="HTTP method used for the outbound delivery."
           >
@@ -404,20 +418,34 @@ export function Providers() {
 
       <ConfirmDialog
         open={deleteTarget !== null}
-        onClose={() => setDeleteTarget(null)}
-        title="Delete provider"
-        description={`Delete provider "${deleteTarget?.name ?? ""}"? Its attached hooks will also be deleted. This cannot be undone.`}
-        confirmLabel="Delete"
+        onClose={() => { setDeleteTarget(null); setDeleteConfirmation(""); }}
+        title="Delete webhook"
+        description="This cannot be undone. Attached hooks will also be deleted."
+        confirmLabel="Delete webhook"
         danger
         loading={deleteRule.isPending}
+        confirmDisabled={deleteConfirmation !== webhookUrl(organization?.ingest_url, deleteTarget?.source_pattern ?? "", deleteTarget?.ingest_hostname)}
         onConfirm={() => {
           if (deleteTarget) {
             deleteRule.mutate(deleteTarget.id, {
-              onSuccess: () => setDeleteTarget(null),
+              onSuccess: () => { setDeleteTarget(null); setDeleteConfirmation(""); },
             });
           }
         }}
-      />
+      >
+        <div className="space-y-3">
+          <p className="text-sm text-secondary">Type this webhook endpoint to confirm:</p>
+          <code className="block rounded-md bg-surface-2 px-3 py-2 text-xs text-foreground break-all">
+            {webhookUrl(organization?.ingest_url, deleteTarget?.source_pattern ?? "", deleteTarget?.ingest_hostname)}
+          </code>
+          <Input
+            value={deleteConfirmation}
+            onChange={(event) => setDeleteConfirmation(event.target.value)}
+            placeholder="Enter webhook endpoint"
+            autoComplete="off"
+          />
+        </div>
+      </ConfirmDialog>
     </Card>
   );
 }

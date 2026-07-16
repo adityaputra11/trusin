@@ -42,6 +42,8 @@ export interface ForwardRule {
   rule_kind: "provider" | "hook" | string;
   provider_id: string | null;
   trigger_on: "success" | "failure" | string;
+  destination_type: "webhook" | "slack" | "telegram" | "email" | string;
+  ingest_hostname: string | null;
   signing_secret?: string | null;
   created_at?: string;
 }
@@ -56,6 +58,9 @@ export interface CreateRuleInput {
   rule_kind?: "provider" | "hook";
   provider_id?: string;
   trigger_on?: "success" | "failure";
+  destination_type?: "webhook" | "slack" | "telegram" | "email";
+  destination_config?: Record<string, string>;
+  ingest_hostname?: string;
 }
 
 /** Partial update for PATCH /rules/:id. All fields optional. */
@@ -68,6 +73,9 @@ export interface UpdateRuleInput {
   active?: boolean;
   trigger_on?: "success" | "failure";
   signing_secret?: string;
+  destination_type?: "webhook" | "slack" | "telegram" | "email";
+  destination_config?: Record<string, string>;
+  ingest_hostname?: string;
 }
 
 export interface ListEventsResponse {

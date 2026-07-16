@@ -335,23 +335,6 @@ function GeneralTab() {
         </div>
       </Card>
 
-      <Card>
-        <CardHeader title="Environment Variables" subtitle="Optional overrides for local trusin commands" />
-        <div className="space-y-2">
-          {[
-            { k: "TERUSIN_URL", v: "http://127.0.0.1:3011", desc: "Backend URL for direct MCP use. trusin mcp uses your saved CLI configuration." },
-            { k: "TERUSIN_TOKEN", v: "\u2014", desc: "Optional token override. Use trusin set-token for normal CLI and MCP setup." },
-          ].map((row) => (
-            <div key={row.k} className="flex items-start gap-4 py-2 border-b border-border last:border-0">
-              <code className="text-xs font-mono text-success w-36 shrink-0">{row.k}</code>
-              <div className="min-w-0">
-                <p className="text-sm text-foreground">default: <code className="text-xs font-mono text-muted">{row.v}</code></p>
-                <p className="text-xs text-muted">{row.desc}</p>
-              </div>
-            </div>
-          ))}
-        </div>
-      </Card>
     </div>
   );
 }

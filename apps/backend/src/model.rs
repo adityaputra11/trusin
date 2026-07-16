@@ -33,6 +33,12 @@ pub struct ForwardRule {
     pub rule_kind: String,
     pub provider_id: Option<Uuid>,
     pub trigger_on: String,
+    pub destination_type: String,
+    /// Native destination credentials are only used by the delivery worker.
+    /// They must never be serialized back to dashboard users.
+    #[serde(skip)]
+    pub destination_config: serde_json::Value,
+    pub ingest_hostname: Option<String>,
     /// Per-rule HMAC secret used to sign outbound deliveries. Never serialized
     /// to API clients (would leak the secret to anyone with read access to
     /// /rules). `sqlx::FromRow` ignores serde attrs and still populates this

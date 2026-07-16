@@ -4,6 +4,7 @@
 // the Escape-to-close, click-outside, and (once added) the a11y/focus-trap
 // behavior.
 
+import { type ReactNode } from "react";
 import { Button } from "./Button";
 import { Modal } from "./Modal";
 
@@ -23,6 +24,10 @@ interface ConfirmDialogProps {
   /** Disables the confirm button + shows a spinner. Pass the mutation's
    * `isPending` so the dialog reflects in-flight state. */
   loading?: boolean;
+  /** Optional content rendered between the description and footer. */
+  children?: ReactNode;
+  /** Keeps confirmation unavailable until caller validation passes. */
+  confirmDisabled?: boolean;
   onConfirm: () => void;
 }
 
@@ -35,6 +40,8 @@ export function ConfirmDialog({
   cancelLabel = "Cancel",
   danger = false,
   loading = false,
+  children,
+  confirmDisabled = false,
   onConfirm,
 }: ConfirmDialogProps) {
   return (
@@ -52,6 +59,7 @@ export function ConfirmDialog({
             variant={danger ? "danger" : "primary"}
             size="sm"
             loading={loading}
+            disabled={confirmDisabled}
             onClick={onConfirm}
           >
             {confirmLabel}
@@ -59,9 +67,7 @@ export function ConfirmDialog({
         </>
       }
     >
-      {/* Modal already renders `description`; this is intentionally empty so
-       * the body slot exists for future richer confirm content. */}
-      {null}
+      {children}
     </Modal>
   );
 }
