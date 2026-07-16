@@ -129,9 +129,9 @@ function App() {
           <div className="grid" aria-hidden="true" />
           <div className="container hero-content">
             <div className="hero-copy">
-              <p className="eyebrow"><i /> WEBHOOK INFRASTRUCTURE, UNDER YOUR CONTROL</p>
+              <p className="eyebrow"><i /> OPEN-SOURCE WEBHOOK RELAY, UNDER YOUR CONTROL</p>
               <h1>Every webhook.<br /><em>Delivered with certainty.</em></h1>
-              <p className="hero-lead">trusin is the reliable delivery layer between your providers and services—built for teams that need control, visibility, and zero guesswork.</p>
+              <p className="hero-lead">trusin is an open-source webhook relay between your providers and services—built for teams that need control, visibility, and zero guesswork.</p>
               <div className="hero-actions">
                 <a className="button button-primary" href={managedCta.href}>{managedCta.label} <Arrow /></a>
                 <a className="button button-secondary" href={`${config.docsUrl}/docs/intro`}>Self-host trusin <span aria-hidden="true">→</span></a>
