@@ -21,10 +21,11 @@ install -d -o terusin -g terusin -m 0755 /opt/trusin/releases /etc/trusin
 install -d -o root -g root -m 0755 /var/www/trusin
 
 if [ -d "$stage_dir/bin" ]; then
+  previous_release="$(readlink -f /opt/trusin/current 2>/dev/null || true)"
   rm -rf "$release_dir"
   install -d -o terusin -g terusin -m 0755 "$release_dir/bin"
-  if [ -d /opt/trusin/current/bin ]; then
-    cp -a /opt/trusin/current/bin/. "$release_dir/bin/"
+  if [ -n "$previous_release" ] && [ "$previous_release" != "$release_dir" ] && [ -d "$previous_release/bin" ]; then
+    cp -a "$previous_release/bin/." "$release_dir/bin/"
   fi
   cp -a "$stage_dir/bin/." "$release_dir/bin/"
   chown -R terusin:terusin "$release_dir"
