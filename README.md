@@ -29,6 +29,20 @@
 - **MCP server** — AI agent integration via stdio JSON-RPC
 - **AI explanations (optional)** — diagnose failed deliveries from redacted event evidence
 
+## Built with Codex and GPT-5.6
+
+trusin was built iteratively with Codex and GPT-5.6 as a development partner.
+
+- **Architecture and implementation** — accelerated the Rust delivery worker,
+  retry flow, React dashboard, CLI/TUI, and MCP server.
+- **Reliability and security** — helped review OAuth, Turnstile, API tokens,
+  rate limits, RBAC, and outbound destination validation.
+- **Developer experience** — helped refine documentation, deployment workflows,
+  operational UX, and AI-assisted delivery explanations.
+
+All generated suggestions and changes were reviewed, tested, and adapted for
+trusin's production requirements.
+
 ## Requirements
 
 | Resource | Minimum | Recommended |
