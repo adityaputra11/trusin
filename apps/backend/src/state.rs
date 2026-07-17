@@ -7,7 +7,7 @@ use tracing::info;
 use uuid::Uuid;
 
 use crate::ai::AiConfig;
-use crate::auth::{OAuthConfig, TurnstileConfig};
+use crate::auth::{OAuthConfig, PasskeyConfig, TurnstileConfig};
 use crate::model::User;
 use crate::ratelimit::{KeyedLimiter, UserKeyedLimiter};
 
@@ -20,6 +20,7 @@ pub struct AppState {
     pub max_retries: i32,
     /// Present when Google OAuth is configured (GOOGLE_CLIENT_ID/SECRET set).
     pub oauth: Option<Arc<OAuthConfig>>,
+    pub passkey: Option<Arc<PasskeyConfig>>,
     /// Present when Cloudflare Turnstile is configured (TURNSTILE_SECRET_KEY set).
     pub turnstile: Option<Arc<TurnstileConfig>>,
     pub ai: Option<Arc<AiConfig>>,

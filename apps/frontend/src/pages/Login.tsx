@@ -15,6 +15,7 @@ export function Login() {
   const { data: oauthStatus } = useOAuthStatus();
   const providers = oauthStatus?.providers ?? [];
   const captchaRequired = oauthStatus?.captcha_required ?? false;
+  const passkeyEnabled = oauthStatus?.passkey_enabled ?? false;
 
   const [user, setUser] = useState("");
   const [password, setPassword] = useState("");
@@ -25,6 +26,7 @@ export function Login() {
   const [turnstileToken, setTurnstileToken] = useState<string | null>(null);
   const [captchaError, setCaptchaError] = useState<string | null>(null);
   const [oauthLoading, setOauthLoading] = useState<"google" | "github" | null>(null);
+  const [passkeyLoading, setPasskeyLoading] = useState(false);
   const turnstileContainerRef = useRef<HTMLDivElement>(null);
   const turnstileWidgetId = useRef<string | null>(null);
 
@@ -154,6 +156,40 @@ export function Login() {
     window.location.assign(`/api/auth/${provider}${query}`);
   };
 
+  const signInWithPasskey = async () => {
+    if (!user.trim()) {
+      setError("Enter your email or username first to use a passkey.");
+      return;
+    }
+    if (captchaRequired && !turnstileToken) {
+      setError("Please complete the captcha before continuing.");
+      return;
+    }
+    if (!window.PublicKeyCredential) {
+      setError("Passkeys are not supported by this browser.");
+      return;
+    }
+    setError(null);
+    setPasskeyLoading(true);
+    try {
+      const start = await api.post<{ challenge_id: string; options: { publicKey: PublicKeyCredentialRequestOptions } }>(
+        "/api/auth/passkey/start",
+        { username: user.trim(), turnstile_token: turnstileToken },
+        { noAuth: true },
+      );
+      const credential = await navigator.credentials.get({ publicKey: decodeRequestOptions(start.options.publicKey) }) as PublicKeyCredential | null;
+      if (!credential) throw new Error("Passkey request was cancelled.");
+      await api.post("/api/auth/passkey/finish", { challenge_id: start.challenge_id, credential: serializeAssertion(credential) }, { noAuth: true });
+      navigate("/", { replace: true });
+    } catch (err) {
+      const status = (err as { status?: number }).status;
+      setError(status === 429 ? "Too many attempts. Please wait before trying again." : "Passkey sign-in failed. Try again or use another sign-in method.");
+      if (status !== 429) resetTurnstile();
+    } finally {
+      setPasskeyLoading(false);
+    }
+  };
+
   const captchaBlocked = captchaRequired && (!TURNSTILE_SITE_KEY || !!captchaError || !turnstileToken);
 
   return (
@@ -238,11 +274,54 @@ export function Login() {
           >
             {loading ? "Signing in…" : "Sign in"}
           </Button>
+          {passkeyEnabled && (
+            <button type="button" disabled={captchaBlocked || loading || passkeyLoading} onClick={signInWithPasskey} className="w-full rounded-lg border border-border bg-transparent px-4 py-3 text-sm font-medium text-foreground transition-base hover:bg-card-secondary disabled:cursor-not-allowed disabled:opacity-50">
+              {passkeyLoading ? "Checking passkey…" : "Sign in with passkey"}
+            </button>
+          )}
         </form>
         <p className="mt-5 text-center text-xs text-muted">Secure access for your workspace.</p>
       </div>
     </div>
   );
+}
+
+function fromBase64Url(value: string): ArrayBuffer {
+  const normalized = value.replace(/-/g, "+").replace(/_/g, "/");
+  const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, "=");
+  const bytes = Uint8Array.from(atob(padded), (character) => character.charCodeAt(0));
+  return bytes.buffer;
+}
+
+function toBase64Url(buffer: ArrayBuffer): string {
+  const bytes = new Uint8Array(buffer);
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+function decodeRequestOptions(options: PublicKeyCredentialRequestOptions): PublicKeyCredentialRequestOptions {
+  return {
+    ...options,
+    challenge: fromBase64Url(options.challenge as unknown as string),
+    allowCredentials: options.allowCredentials?.map((credential) => ({ ...credential, id: fromBase64Url(credential.id as unknown as string) })),
+  };
+}
+
+function serializeAssertion(credential: PublicKeyCredential) {
+  const response = credential.response as AuthenticatorAssertionResponse;
+  return {
+    id: credential.id,
+    rawId: toBase64Url(credential.rawId),
+    type: credential.type,
+    response: {
+      authenticatorData: toBase64Url(response.authenticatorData),
+      clientDataJSON: toBase64Url(response.clientDataJSON),
+      signature: toBase64Url(response.signature),
+      userHandle: response.userHandle ? toBase64Url(response.userHandle) : null,
+    },
+    clientExtensionResults: credential.getClientExtensionResults(),
+  };
 }
 
 // Inline Google "G" mark — keeps the design clean without bundling an SVG asset.

@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import {
   Activity,
@@ -25,7 +25,9 @@ import {
   useDestinations,
   useSaveDestination,
   useTestDestination,
+  useOAuthStatus,
 } from "../lib/hooks";
+import { api } from "../lib/api";
 import type { WorkspaceDestination } from "../types/api";
 import { useCanWrite, useCurrentUser } from "../lib/user-context";
 import { formatRelative } from "../lib/format";
@@ -568,9 +570,49 @@ function DeveloperSettings() {
   return (
     <div className="space-y-6">
       <GeneralTab />
+      <Passkeys />
       <CliInstallCard />
       <DevicesAndTokens />
       <McpTab />
     </div>
   );
 }
+
+type Passkey = { id: string; name: string; created_at: string; last_used_at: string | null };
+
+function Passkeys() {
+  const { data: status } = useOAuthStatus();
+  const [keys, setKeys] = useState<Passkey[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = () => api.get<Passkey[]>("/api/auth/passkeys").then(setKeys).catch(() => setError("Could not load passkeys."));
+  useEffect(() => { if (status?.passkey_enabled) void load(); }, [status?.passkey_enabled]);
+
+  const add = async () => {
+    if (!window.PublicKeyCredential) { setError("Passkeys are not supported by this browser."); return; }
+    setLoading(true); setError(null);
+    try {
+      const start = await api.post<{ challenge_id: string; options: { publicKey: PublicKeyCredentialCreationOptions } }>("/api/auth/passkeys/register/start");
+      const credential = await navigator.credentials.create({ publicKey: decodeCreationOptions(start.options.publicKey) }) as PublicKeyCredential | null;
+      if (!credential) throw new Error("cancelled");
+      await api.post("/api/auth/passkeys/register/finish", { challenge_id: start.challenge_id, credential: serializeRegistration(credential), name: "This device" });
+      await load();
+    } catch { setError("Could not add this passkey. Try again."); } finally { setLoading(false); }
+  };
+
+  const remove = async (id: string) => { await api.delete(`/api/auth/passkeys/${id}`); await load(); };
+  if (!status?.passkey_enabled) return null;
+  return <Card>
+    <CardHeader title="Passkeys" subtitle="Use Touch ID, Face ID, Windows Hello, or a security key to sign in" action={<Button size="sm" onClick={add} loading={loading}><KeyRound className="h-4 w-4" /> Add passkey</Button>} />
+    <div className="space-y-2">
+      {keys.length === 0 ? <p className="text-sm text-secondary">No passkeys registered yet.</p> : keys.map((key) => <div key={key.id} className="flex items-center justify-between rounded-md border border-border bg-surface p-3"><div><p className="text-sm font-medium text-foreground">{key.name}</p><p className="text-xs text-muted">Added {formatRelative(key.created_at)}{key.last_used_at ? ` · Used ${formatRelative(key.last_used_at)}` : ""}</p></div><Button size="sm" variant="ghost" onClick={() => remove(key.id)}><Trash2 className="h-4 w-4" /> Remove</Button></div>)}
+      {error && <p className="text-sm text-danger">{error}</p>}
+    </div>
+  </Card>;
+}
+
+function fromBase64Url(value: string): ArrayBuffer { const text = value.replace(/-/g, "+").replace(/_/g, "/").padEnd(Math.ceil(value.length / 4) * 4, "="); return Uint8Array.from(atob(text), (character) => character.charCodeAt(0)).buffer; }
+function toBase64Url(value: ArrayBuffer): string { let binary = ""; for (const byte of new Uint8Array(value)) binary += String.fromCharCode(byte); return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, ""); }
+function decodeCreationOptions(options: PublicKeyCredentialCreationOptions): PublicKeyCredentialCreationOptions { return { ...options, challenge: fromBase64Url(options.challenge as unknown as string), user: { ...options.user, id: fromBase64Url(options.user.id as unknown as string) }, excludeCredentials: options.excludeCredentials?.map((credential) => ({ ...credential, id: fromBase64Url(credential.id as unknown as string) })) }; }
+function serializeRegistration(credential: PublicKeyCredential) { const response = credential.response as AuthenticatorAttestationResponse; return { id: credential.id, rawId: toBase64Url(credential.rawId), type: credential.type, response: { attestationObject: toBase64Url(response.attestationObject), clientDataJSON: toBase64Url(response.clientDataJSON), transports: response.getTransports?.() }, clientExtensionResults: credential.getClientExtensionResults() }; }

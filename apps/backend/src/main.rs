@@ -143,6 +143,11 @@ async fn main() {
         info!("google oauth disabled (set GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET to enable)");
     }
 
+    let passkey = auth::PasskeyConfig::from_env().map(Arc::new);
+    if passkey.is_some() {
+        info!("passkey authentication enabled");
+    }
+
     let turnstile = auth::TurnstileConfig::from_env().map(Arc::new);
     if turnstile.is_some() {
         info!("turnstile captcha enabled for browser sign-in");
@@ -177,6 +182,7 @@ async fn main() {
         redis: main_redis,
         max_retries,
         oauth,
+        passkey,
         turnstile,
         ai,
         login_limiter: login_limiter.clone(),
@@ -207,6 +213,8 @@ async fn main() {
         .route("/api/auth/github", get(auth::github_login))
         .route("/api/auth/callback/github", get(auth::github_callback))
         .route("/api/auth/captcha", post(auth::create_captcha_grant))
+        .route("/api/auth/passkey/start", post(auth::passkey_login_start))
+        .route("/api/auth/passkey/finish", post(auth::passkey_login_finish))
         .route("/api/auth/me", get(auth::me))
         .route("/api/auth/login", post(auth::login))
         .route("/api/auth/logout", post(auth::logout));
@@ -217,6 +225,16 @@ async fn main() {
     );
 
     let protected = Router::new()
+        .route("/api/auth/passkeys", get(auth::list_passkeys))
+        .route(
+            "/api/auth/passkeys/register/start",
+            post(auth::passkey_register_start),
+        )
+        .route(
+            "/api/auth/passkeys/register/finish",
+            post(auth::passkey_register_finish),
+        )
+        .route("/api/auth/passkeys/{id}", delete(auth::delete_passkey))
         .route(
             "/config/default-target",
             get(get_default_target).post(set_default_target),

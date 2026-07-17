@@ -172,6 +172,7 @@ jobs:
           EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
           NEBIUS_API_KEY: ${{ secrets.NEBIUS_API_KEY }}
           AI_ENABLED: ${{ vars.AI_ENABLED }}
+          PASSKEY_ENABLED: ${{ vars.PASSKEY_ENABLED }}
           NEBIUS_MODEL: ${{ vars.NEBIUS_MODEL }}
           AI_EXPLAIN_RATE_LIMIT: ${{ vars.AI_EXPLAIN_RATE_LIMIT }}
           PLATFORM_ADMIN_TOKEN: ${{ secrets.PLATFORM_ADMIN_TOKEN }}
@@ -185,7 +186,7 @@ jobs:
           {
             write_env DATABASE_URL "$DATABASE_URL"; write_env REDIS_URL "${REDIS_URL:-redis://127.0.0.1:6379}"; write_env PORT 3011; write_env BACKEND_URL http://127.0.0.1:3011; write_env BACKEND_PORT 3011; write_env WEB_PORT 3012
             write_env PUBLIC_URL https://ingest.trusin.my.id; write_env APP_URL https://app.trusin.my.id; write_env FRONTEND_URL https://app.trusin.my.id; write_env OAUTH_REDIRECT_URI https://app.trusin.my.id/api/auth/callback/google; write_env WEB_URL https://app.trusin.my.id; write_env HOSTED_MODE true; write_env INGEST_CANONICAL_HOST ingest.trusin.my.id
-            write_env AUTH_USERNAME "$AUTH_USERNAME"; write_env AUTH_PASSWORD "$AUTH_PASSWORD"; write_env JWT_SECRET "$JWT_SECRET"; write_env GOOGLE_CLIENT_ID "$GOOGLE_CLIENT_ID"; write_env GOOGLE_CLIENT_SECRET "$GOOGLE_CLIENT_SECRET"; write_env GITHUB_CLIENT_ID "$GITHUB_CLIENT_ID"; write_env GITHUB_CLIENT_SECRET "$GITHUB_CLIENT_SECRET"; write_env RESEND_API_KEY "$RESEND_API_KEY"; write_env EMAIL_FROM "$EMAIL_FROM"; write_env NEBIUS_API_KEY "$NEBIUS_API_KEY"; write_env AI_ENABLED "${AI_ENABLED:-false}"; write_env AI_PROVIDER nebius; write_env NEBIUS_MODEL "$NEBIUS_MODEL"; write_env AI_EXPLAIN_RATE_LIMIT "${AI_EXPLAIN_RATE_LIMIT:-5}"; write_env PLATFORM_ADMIN_TOKEN "$PLATFORM_ADMIN_TOKEN"; write_env TURNSTILE_SITE_KEY "$TURNSTILE_SITE_KEY"; write_env TURNSTILE_SECRET_KEY "$TURNSTILE_SECRET_KEY"; write_env DEFAULT_SIGNING_SECRET "$DEFAULT_SIGNING_SECRET"; write_env MAX_RETRIES 5; write_env WORKER_COUNT 4
+            write_env AUTH_USERNAME "$AUTH_USERNAME"; write_env AUTH_PASSWORD "$AUTH_PASSWORD"; write_env JWT_SECRET "$JWT_SECRET"; write_env GOOGLE_CLIENT_ID "$GOOGLE_CLIENT_ID"; write_env GOOGLE_CLIENT_SECRET "$GOOGLE_CLIENT_SECRET"; write_env GITHUB_CLIENT_ID "$GITHUB_CLIENT_ID"; write_env GITHUB_CLIENT_SECRET "$GITHUB_CLIENT_SECRET"; write_env RESEND_API_KEY "$RESEND_API_KEY"; write_env EMAIL_FROM "$EMAIL_FROM"; write_env NEBIUS_API_KEY "$NEBIUS_API_KEY"; write_env AI_ENABLED "${AI_ENABLED:-false}"; write_env AI_PROVIDER nebius; write_env NEBIUS_MODEL "$NEBIUS_MODEL"; write_env AI_EXPLAIN_RATE_LIMIT "${AI_EXPLAIN_RATE_LIMIT:-5}"; write_env PASSKEY_ENABLED "${PASSKEY_ENABLED:-false}"; write_env PASSKEY_RP_ORIGIN https://app.trusin.my.id; write_env PASSKEY_RP_ID trusin.my.id; write_env PLATFORM_ADMIN_TOKEN "$PLATFORM_ADMIN_TOKEN"; write_env TURNSTILE_SITE_KEY "$TURNSTILE_SITE_KEY"; write_env TURNSTILE_SECRET_KEY "$TURNSTILE_SECRET_KEY"; write_env DEFAULT_SIGNING_SECRET "$DEFAULT_SIGNING_SECRET"; write_env MAX_RETRIES 5; write_env WORKER_COUNT 4
           } > upload/trusin-release-${{ github.sha }}/release/runtime.env
 
       - name: Prepare static deployment
