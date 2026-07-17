@@ -88,11 +88,21 @@ pub async fn auth_middleware(
     mut req: Request<Body>,
     next: Next,
 ) -> Result<Response, Response> {
-    // 1) Try the session JWT cookie first (Google OAuth users).
-    if let Some(cfg) = &state.oauth {
+    // 1) Try the session JWT cookie first (OAuth or passkey users).
+    let jwt_secret = state
+        .oauth
+        .as_ref()
+        .map(|config| config.jwt_secret.as_str())
+        .or_else(|| {
+            state
+                .passkey
+                .as_ref()
+                .map(|config| config.jwt_secret.as_str())
+        });
+    if let Some(jwt_secret) = jwt_secret {
         if let Some(cookie) = req.headers().get("Cookie").and_then(|v| v.to_str().ok()) {
             if let Some(token) = extract_session_cookie(cookie) {
-                if let Some(uid) = auth::verify_jwt(&token, &cfg.jwt_secret) {
+                if let Some(uid) = auth::verify_jwt(&token, jwt_secret) {
                     let user = sqlx::query_as::<_, User>("SELECT * FROM users WHERE id = $1")
                         .bind(uid)
                         .fetch_optional(&state.db)

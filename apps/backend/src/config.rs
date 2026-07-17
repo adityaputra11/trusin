@@ -73,6 +73,7 @@ pub async fn get_oauth_status(State(state): State<Arc<AppState>>) -> Json<serde_
         "enabled": !providers.is_empty(),
         "providers": providers,
         "captcha_required": state.turnstile.is_some(),
+        "passkey_enabled": state.passkey.is_some(),
     }))
 }
 

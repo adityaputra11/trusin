@@ -13,7 +13,7 @@
 // users without them needing Basic credentials.
 
 use axum::{
-    extract::{Query, State},
+    extract::{Path, Query, State},
     http::{header, HeaderMap, StatusCode},
     response::{IntoResponse, Redirect, Response},
     Json,
@@ -27,6 +27,10 @@ use sqlx::PgPool;
 use std::collections::HashMap;
 use std::sync::Arc;
 use uuid::Uuid;
+use webauthn_rs::prelude::{
+    Passkey, PasskeyAuthentication, PasskeyRegistration, PublicKeyCredential,
+    RegisterPublicKeyCredential, Url, Webauthn, WebauthnBuilder,
+};
 
 use async_trait::async_trait;
 
@@ -202,6 +206,41 @@ impl OAuthConfig {
         let mut providers = self.providers.keys().copied().collect::<Vec<_>>();
         providers.sort_unstable();
         providers
+    }
+}
+
+/// WebAuthn passkey configuration. The RP ID defaults to the dashboard host;
+/// set PASSKEY_RP_ID=trusin.my.id in production to scope credentials to the
+/// parent domain instead.
+pub struct PasskeyConfig {
+    webauthn: Webauthn,
+    pub frontend_url: String,
+    pub jwt_secret: String,
+}
+
+impl PasskeyConfig {
+    pub fn from_env() -> Option<Self> {
+        if std::env::var("PASSKEY_ENABLED").ok().as_deref() != Some("true") {
+            return None;
+        }
+        let frontend_url = std::env::var("PASSKEY_RP_ORIGIN")
+            .or_else(|_| std::env::var("FRONTEND_URL"))
+            .or_else(|_| std::env::var("APP_URL"))
+            .ok()?
+            .trim_end_matches('/')
+            .to_string();
+        let origin = Url::parse(&frontend_url).ok()?;
+        let rp_id = std::env::var("PASSKEY_RP_ID")
+            .ok()
+            .filter(|value| !value.trim().is_empty())
+            .or_else(|| origin.host_str().map(str::to_string))?;
+        let webauthn = WebauthnBuilder::new(&rp_id, &origin).ok()?.build().ok()?;
+        let jwt_secret = std::env::var("JWT_SECRET").ok()?;
+        (!jwt_secret.trim().is_empty()).then_some(Self {
+            webauthn,
+            frontend_url,
+            jwt_secret,
+        })
     }
 }
 
@@ -1254,8 +1293,15 @@ async fn deliver_email(
 }
 
 fn build_cookie(jwt: &str, cfg: &OAuthConfig) -> (header::HeaderName, header::HeaderValue) {
+    build_cookie_for_frontend(jwt, &cfg.frontend_url)
+}
+
+fn build_cookie_for_frontend(
+    jwt: &str,
+    frontend_url: &str,
+) -> (header::HeaderName, header::HeaderValue) {
     // Cookie value must be ASCII-safe; JWT already is.
-    let secure = cfg.frontend_url.starts_with("https://");
+    let secure = frontend_url.starts_with("https://");
     let same_site = "Lax";
     // HttpOnly + SameSite keeps it safe from CSRF/XSS in the common case.
     let value = format!(
@@ -1383,6 +1429,440 @@ async fn verify_password(db: &PgPool, user: &str, pass: &str) -> Option<User> {
         }
     }
     None
+}
+
+// ── Passkeys ──────────────────────────────────────────────────────────────
+
+#[derive(Serialize, sqlx::FromRow)]
+pub struct PasskeySummary {
+    pub id: Uuid,
+    pub name: String,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub last_used_at: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+#[derive(sqlx::FromRow)]
+struct StoredPasskey {
+    passkey: serde_json::Value,
+}
+
+#[derive(Serialize, Deserialize)]
+struct RegistrationState {
+    user_id: Uuid,
+    state: PasskeyRegistration,
+}
+
+#[derive(Serialize, Deserialize)]
+struct AuthenticationState {
+    user_id: Uuid,
+    state: PasskeyAuthentication,
+}
+
+#[derive(Deserialize)]
+pub struct PasskeyLoginStart {
+    pub username: String,
+    #[serde(default)]
+    pub turnstile_token: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub struct PasskeyFinish<T> {
+    pub challenge_id: String,
+    pub credential: T,
+}
+
+#[derive(Deserialize)]
+pub struct PasskeyRegistrationFinish {
+    pub challenge_id: String,
+    pub credential: RegisterPublicKeyCredential,
+    #[serde(default)]
+    pub name: Option<String>,
+}
+
+fn passkey_config(state: &AppState) -> Result<&PasskeyConfig, Response> {
+    state.passkey.as_deref().ok_or_else(|| {
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({ "error": "passkey_unavailable" })),
+        )
+            .into_response()
+    })
+}
+
+async fn consume_passkey_state<T: for<'de> Deserialize<'de>>(
+    state: &AppState,
+    kind: &str,
+    challenge_id: &str,
+) -> Result<T, Response> {
+    if challenge_id.len() < 20 || challenge_id.len() > 100 {
+        return Err(StatusCode::BAD_REQUEST.into_response());
+    }
+    let mut redis = state.redis.clone();
+    let value: Option<String> = redis::cmd("GETDEL")
+        .arg(format!("terusin:passkey:{kind}:{challenge_id}"))
+        .query_async(&mut redis)
+        .await
+        .map_err(|_| StatusCode::SERVICE_UNAVAILABLE.into_response())?;
+    value
+        .and_then(|value| serde_json::from_str(&value).ok())
+        .ok_or_else(|| StatusCode::UNAUTHORIZED.into_response())
+}
+
+async fn store_passkey_state<T: Serialize>(
+    state: &AppState,
+    kind: &str,
+    challenge_id: &str,
+    value: &T,
+) -> Result<(), Response> {
+    let encoded = serde_json::to_string(value)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())?;
+    let mut redis = state.redis.clone();
+    redis::cmd("SETEX")
+        .arg(format!("terusin:passkey:{kind}:{challenge_id}"))
+        .arg(300)
+        .arg(encoded)
+        .query_async::<()>(&mut redis)
+        .await
+        .map_err(|_| StatusCode::SERVICE_UNAVAILABLE.into_response())
+}
+
+async fn passkeys_for_user(db: &PgPool, user_id: Uuid) -> Result<Vec<StoredPasskey>, Response> {
+    sqlx::query_as("SELECT passkey FROM user_passkeys WHERE user_id = $1")
+        .bind(user_id)
+        .fetch_all(db)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
+}
+
+fn decode_passkeys(rows: &[StoredPasskey]) -> Result<Vec<Passkey>, Response> {
+    rows.iter()
+        .map(|row| {
+            serde_json::from_value(row.passkey.clone())
+                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
+        })
+        .collect()
+}
+
+pub async fn list_passkeys(
+    State(state): State<Arc<AppState>>,
+    axum::Extension(user): axum::Extension<CurrentUser>,
+) -> Result<Json<Vec<PasskeySummary>>, StatusCode> {
+    let rows = sqlx::query_as::<_, PasskeySummary>(
+        "SELECT id, name, created_at, last_used_at FROM user_passkeys WHERE user_id = $1 ORDER BY created_at DESC",
+    )
+    .bind(user.id)
+    .fetch_all(&state.db)
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(rows))
+}
+
+pub async fn passkey_register_start(
+    State(state): State<Arc<AppState>>,
+    axum::Extension(user): axum::Extension<CurrentUser>,
+) -> Response {
+    let config = match passkey_config(&state) {
+        Ok(config) => config,
+        Err(response) => return response,
+    };
+    let account = match sqlx::query_as::<_, User>("SELECT * FROM users WHERE id = $1")
+        .bind(user.id)
+        .fetch_optional(&state.db)
+        .await
+    {
+        Ok(Some(account)) => account,
+        Ok(None) => return StatusCode::UNAUTHORIZED.into_response(),
+        Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    };
+    let rows = match passkeys_for_user(&state.db, user.id).await {
+        Ok(rows) => rows,
+        Err(response) => return response,
+    };
+    let credentials = match decode_passkeys(&rows) {
+        Ok(keys) => keys,
+        Err(response) => return response,
+    };
+    let name = account
+        .email
+        .clone()
+        .or(account.username.clone())
+        .unwrap_or_else(|| user.id.to_string());
+    let display_name = account.display_name.clone().unwrap_or_else(|| name.clone());
+    let exclude = credentials
+        .iter()
+        .map(|key| key.cred_id().clone())
+        .collect();
+    let (options, ceremony) = match config.webauthn.start_passkey_registration(
+        user.id,
+        &name,
+        &display_name,
+        Some(exclude),
+    ) {
+        Ok(value) => value,
+        Err(error) => {
+            tracing::warn!("passkey registration start failed: {error}");
+            return StatusCode::BAD_REQUEST.into_response();
+        }
+    };
+    let challenge_id = generate_oauth_secret();
+    if let Err(response) = store_passkey_state(
+        &state,
+        "register",
+        &challenge_id,
+        &RegistrationState {
+            user_id: user.id,
+            state: ceremony,
+        },
+    )
+    .await
+    {
+        return response;
+    }
+    Json(serde_json::json!({ "challenge_id": challenge_id, "options": options })).into_response()
+}
+
+pub async fn passkey_register_finish(
+    State(state): State<Arc<AppState>>,
+    axum::Extension(user): axum::Extension<CurrentUser>,
+    Json(input): Json<PasskeyRegistrationFinish>,
+) -> Response {
+    let config = match passkey_config(&state) {
+        Ok(config) => config,
+        Err(response) => return response,
+    };
+    let ceremony: RegistrationState =
+        match consume_passkey_state(&state, "register", &input.challenge_id).await {
+            Ok(value) => value,
+            Err(response) => return response,
+        };
+    if ceremony.user_id != user.id {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+    let passkey = match config
+        .webauthn
+        .finish_passkey_registration(&input.credential, &ceremony.state)
+    {
+        Ok(key) => key,
+        Err(error) => {
+            tracing::warn!("passkey registration failed: {error}");
+            return StatusCode::BAD_REQUEST.into_response();
+        }
+    };
+    let credential_id = match serde_json::to_value(passkey.cred_id())
+        .ok()
+        .and_then(|value| value.as_str().map(str::to_string))
+    {
+        Some(value) => value,
+        None => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    };
+    let name = input
+        .name
+        .unwrap_or_else(|| "Passkey".to_string())
+        .trim()
+        .chars()
+        .take(120)
+        .collect::<String>();
+    if name.is_empty() {
+        return StatusCode::BAD_REQUEST.into_response();
+    }
+    let stored = match serde_json::to_value(&passkey) {
+        Ok(value) => value,
+        Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    };
+    let inserted = sqlx::query("INSERT INTO user_passkeys (id, user_id, credential_id, passkey, name) VALUES ($1, $2, $3, $4, $5)")
+        .bind(Uuid::new_v4()).bind(user.id).bind(credential_id).bind(stored).bind(&name).execute(&state.db).await;
+    if inserted.is_err() {
+        return (
+            StatusCode::CONFLICT,
+            Json(serde_json::json!({ "error": "passkey_exists" })),
+        )
+            .into_response();
+    }
+    crate::audit::record(
+        &state,
+        Some(&user),
+        "auth.passkey_registered",
+        "passkey",
+        None,
+        serde_json::json!({ "name": name }),
+    )
+    .await;
+    StatusCode::NO_CONTENT.into_response()
+}
+
+pub async fn delete_passkey(
+    State(state): State<Arc<AppState>>,
+    axum::Extension(user): axum::Extension<CurrentUser>,
+    Path(id): Path<Uuid>,
+) -> Result<StatusCode, StatusCode> {
+    let result = sqlx::query("DELETE FROM user_passkeys WHERE id = $1 AND user_id = $2")
+        .bind(id)
+        .bind(user.id)
+        .execute(&state.db)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    if result.rows_affected() == 0 {
+        return Err(StatusCode::NOT_FOUND);
+    }
+    crate::audit::record(
+        &state,
+        Some(&user),
+        "auth.passkey_deleted",
+        "passkey",
+        Some(id.to_string()),
+        serde_json::json!({}),
+    )
+    .await;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+pub async fn passkey_login_start(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(input): Json<PasskeyLoginStart>,
+) -> Response {
+    let ip = crate::client_ip_from(&headers)
+        .unwrap_or(std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED));
+    if let Some(response) = crate::check_rate_limit(&state.login_limiter, ip) {
+        return response;
+    }
+    let config = match passkey_config(&state) {
+        Ok(config) => config,
+        Err(response) => return response,
+    };
+    if let Some(turnstile) = state.turnstile.as_ref() {
+        let Some(token) = input
+            .turnstile_token
+            .as_deref()
+            .filter(|value| !value.is_empty())
+        else {
+            return captcha_error(StatusCode::BAD_REQUEST, "captcha_required");
+        };
+        if !turnstile.verify(token, Some(&ip.to_string())).await {
+            return captcha_error(StatusCode::BAD_REQUEST, "captcha_failed");
+        }
+    }
+    let identifier = input.username.trim();
+    let account = match sqlx::query_as::<_, User>(
+        "SELECT * FROM users WHERE username = $1 OR lower(email) = lower($1) LIMIT 1",
+    )
+    .bind(identifier)
+    .fetch_optional(&state.db)
+    .await
+    {
+        Ok(Some(account)) => account,
+        Ok(None) => return StatusCode::UNAUTHORIZED.into_response(),
+        Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    };
+    let rows = match passkeys_for_user(&state.db, account.id).await {
+        Ok(rows) => rows,
+        Err(response) => return response,
+    };
+    let credentials = match decode_passkeys(&rows) {
+        Ok(keys) if !keys.is_empty() => keys,
+        Ok(_) => return StatusCode::NOT_FOUND.into_response(),
+        Err(response) => return response,
+    };
+    let (options, ceremony) = match config.webauthn.start_passkey_authentication(&credentials) {
+        Ok(value) => value,
+        Err(_) => return StatusCode::BAD_REQUEST.into_response(),
+    };
+    let challenge_id = generate_oauth_secret();
+    if let Err(response) = store_passkey_state(
+        &state,
+        "login",
+        &challenge_id,
+        &AuthenticationState {
+            user_id: account.id,
+            state: ceremony,
+        },
+    )
+    .await
+    {
+        return response;
+    }
+    Json(serde_json::json!({ "challenge_id": challenge_id, "options": options })).into_response()
+}
+
+pub async fn passkey_login_finish(
+    State(state): State<Arc<AppState>>,
+    Json(input): Json<PasskeyFinish<PublicKeyCredential>>,
+) -> Response {
+    let config = match passkey_config(&state) {
+        Ok(config) => config,
+        Err(response) => return response,
+    };
+    let ceremony: AuthenticationState =
+        match consume_passkey_state(&state, "login", &input.challenge_id).await {
+            Ok(value) => value,
+            Err(response) => return response,
+        };
+    let rows = match passkeys_for_user(&state.db, ceremony.user_id).await {
+        Ok(rows) => rows,
+        Err(response) => return response,
+    };
+    let mut credentials = match decode_passkeys(&rows) {
+        Ok(keys) => keys,
+        Err(response) => return response,
+    };
+    let result = match config
+        .webauthn
+        .finish_passkey_authentication(&input.credential, &ceremony.state)
+    {
+        Ok(result) => result,
+        Err(error) => {
+            tracing::warn!("passkey login failed: {error}");
+            return StatusCode::UNAUTHORIZED.into_response();
+        }
+    };
+    let Some(index) = credentials
+        .iter_mut()
+        .position(|key| key.update_credential(&result).is_some())
+    else {
+        return StatusCode::UNAUTHORIZED.into_response();
+    };
+    let credential_id = match serde_json::to_value(credentials[index].cred_id())
+        .ok()
+        .and_then(|value| value.as_str().map(str::to_string))
+    {
+        Some(value) => value,
+        None => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    };
+    if let Ok(value) = serde_json::to_value(&credentials[index]) {
+        let _ = sqlx::query("UPDATE user_passkeys SET passkey = $1, last_used_at = NOW() WHERE user_id = $2 AND credential_id = $3").bind(value).bind(ceremony.user_id).bind(credential_id).execute(&state.db).await;
+    }
+    let account = match sqlx::query_as::<_, User>("SELECT * FROM users WHERE id = $1")
+        .bind(ceremony.user_id)
+        .fetch_optional(&state.db)
+        .await
+    {
+        Ok(Some(account)) => account,
+        _ => return StatusCode::UNAUTHORIZED.into_response(),
+    };
+    let jwt = match issue_jwt(&account.id, &config.jwt_secret) {
+        Ok(jwt) => jwt,
+        Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    };
+    let mut response = user_json(account.clone()).into_response();
+    let (header_name, value) = build_cookie_for_frontend(&jwt, &config.frontend_url);
+    response.headers_mut().insert(header_name, value);
+    let current_user = CurrentUser {
+        id: account.id,
+        organization_id: account.organization_id,
+        role: account.role,
+        scopes: vec![],
+        is_platform_operator: account.is_platform_operator,
+    };
+    crate::audit::record(
+        &state,
+        Some(&current_user),
+        "auth.passkey_login",
+        "user",
+        Some(current_user.id.to_string()),
+        serde_json::json!({}),
+    )
+    .await;
+    response
 }
 
 // ── Endpoint: POST /api/auth/login ────────────────────────────────────────

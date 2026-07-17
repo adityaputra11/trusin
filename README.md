@@ -132,6 +132,23 @@ cargo run --bin backend
 The backend sends only redacted and truncated event context to the configured provider. Explanations are generated on demand and are not stored; they never retry, reroute, or modify webhook events.
 `AI_EXPLAIN_RATE_LIMIT` limits each authenticated user to five explanations per hour by default; set it between `1` and `100` to control spend. `AI_PROVIDER=openai` remains available for an OpenAI-compatible fallback.
 
+## Passkeys
+
+Passkeys are optional and let dashboard users sign in with Touch ID, Face ID,
+Windows Hello, or a security key. Enable them only over HTTPS:
+
+```sh
+PASSKEY_ENABLED=true \
+PASSKEY_RP_ORIGIN=https://app.trusin.my.id \
+PASSKEY_RP_ID=trusin.my.id \
+JWT_SECRET=replace-with-a-strong-secret
+```
+
+After signing in with an existing method, open **Settings → Developer →
+Passkeys** to add a device. Passkey sign-in uses the email address or username
+in the login form and is protected by the same Turnstile and per-IP limits as
+other browser sign-in flows.
+
 ## MCP for AI agents
 
 ```json
